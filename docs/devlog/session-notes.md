@@ -405,6 +405,13 @@
 - `go build ./...` ✅ / `go vet ./...` ✅ / `go test ./...` ✅
 - `go build -ldflags "-X main.version=0.0.2"` → `supd version` 输出 `supd 0.0.2` ✅
 
+### 发布（远程推送 + tag）
+- `git push origin main`：`9baaa44..e4fa75c  main -> main`
+- 创建 annotated tag `v0.0.2` 并推送：`[new tag] v0.0.2 -> v0.0.2`
+- release workflow（"自动 Release（版本 tag 触发）"）已被 tag push 事件触发，`status: in_progress`，head_sha = e4fa75c
+- 远程 main 与本地一致（HEAD = e4fa75c）；本地与远程均含 `v0.0.1`、`v0.0.2` 两个 tag
+- 待 workflow 完成后将在 GitHub Releases 生成 v0.0.2 Release 及二进制/Docker 镜像产物
+
 ---
 
-*最近一次更新：2026-07-21（版本升级 v0.0.2，修复 API 版本不一致）*
+*最近一次更新：2026-07-21（v0.0.2 发布：push main + tag，release workflow 进行中）*
