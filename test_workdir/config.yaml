@@ -1,38 +1,36 @@
 settings:
-  http_listen: ":8080"
-  auth_mode: none
-  local_networks:
-    - "192.168.0.0/16"
-    - "10.0.0.0/8"
-    - "127.0.0.0/8"
-    - "172.16.0.0/12"
-  log_max_size_mb: 10
-  log_max_files: 5
-  log_level: info
-  shutdown_grace_seconds: 30
-  extension_default_timeout_seconds: 600
-  extension_hard_limit_seconds: 1800
-  run_history_retention_seconds: 604800
-  file_history_versions: 50
-  max_upload_size_mb: 100
-
+    http_listen: :8080
+    auth_mode: none
+    auth_token: ""
+    local_networks:
+        - 192.168.0.0/16
+        - 10.0.0.0/8
+        - 127.0.0.0/8
+        - 172.16.0.0/12
+    log_max_size_mb: 10
+    log_max_files: 5
+    log_level: info
+    shutdown_grace_seconds: 30
+    extension_default_timeout_seconds: 600
+    extension_hard_limit_seconds: 1800
+    run_history_retention_seconds: 604800
+    file_history_versions: 50
+    max_upload_size_mb: 100
 env_files:
-  - env/00-base.yaml
-
+    - env/00-base.yaml
 extension_dirs:
-  - extensions/
-
+    - extensions/
 runtimes:
-  bash: /bin/bash
-  python: /usr/bin/python3
-  node: /usr/bin/node
-  tjs: /usr/local/bin/tjs
-
+    bash: /bin/bash
+    node: /usr/bin/node
+    python: /usr/bin/python3
+    python3: /sbin/python3
+    sh: /bin/sh
 defaults:
-  restart:
-    policy: always
-    backoff_ms: 1000
-    max_backoff_ms: 30000
-    multiplier: 2
-    max_retries: 0
-    reset_after_seconds: 300
+    restart:
+        policy: always
+        backoff_ms: 1000
+        max_backoff_ms: 30000
+        multiplier: 2
+        max_retries: 0
+        reset_after_seconds: 300

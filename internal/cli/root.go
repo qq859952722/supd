@@ -115,10 +115,10 @@ func getConfigPath() string {
 // REQ-F-039: CLI 命令通过 HTTP API 与 supd 通信
 //
 // L-04-003 修复：改为变量形式以便测试覆盖。
-// 原函数形式使得 *WithoutSupd 类测试依赖 localhost:8080 不可连接，
+// 原函数形式使得 *WithoutSupd 类测试依赖 localhost:7979 不可连接，
 // 当真实 supd 运行时测试会间歇性失败。改为变量后，测试可临时覆盖为不可连接地址。
 var getAPIClient = func() *APIClient {
-	baseURL := "http://localhost:8080"
+	baseURL := "http://localhost:7979"
 	token := ""
 	return NewAPIClient(baseURL, token)
 }

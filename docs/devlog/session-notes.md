@@ -324,4 +324,87 @@
 
 ---
 
-*最近一次更新：2026-07-21（远程仓库历史彻底清理完成，release workflow 运行中）*
+## 2026-07-21 Docker 运行状态测试 + script readiness bug 修复
+
+### 背景
+用户要求"通过 docker 进行运行状态的测试"。当前环境为 LXC 容器（`systemd-detect-virt` 返回 `lxc`），内核拒绝嵌套容器应用 capabilities，Docker 无法启动新容器。改用直接运行二进制方式测试（功能等价于 Docker 镜像内的 supd 运行）。
+
+### 测试方案与执行（8 阶段 A-H，全部通过）
+
+| 阶段 | 内容 | 结果 |
+|------|------|------|
+| A | 准备环境（LXC 限制 → 改用二进制） | ✅ 构建 /tmp/supd-docker-test（含嵌入前端）+ supd init 生成 workdir |
+| B | 启动 supd + autostart 验证 | ✅ 端口 7979；web-demo(http_check)/tcp-echo(tcp_check) 均 ready |
+| C | init 配置与示例验证 | ✅ 20 文件；4 readiness+4 触发器+4 并发+3 restart 全覆盖；发现并修复 config 注释 bug |
+| D | HTTP API 验证 | ✅ health/system-status/services/extensions/runs/events 全正常；103 事件 6 类型；auth local_skip 安全 |
+| E | 服务运行与管理 | ✅ 修复 script readiness cmd.Dir bug；4 readiness 全 ready；HUP/USR1 信号捕获；优雅停止 |
+| F | 扩展执行 | ✅ 4 触发器+4 并发策略+stdout 协议全验证；6 次运行全 success |
+| G | Web UI | ✅ 前端嵌入+资源加载+SPA 路由+浏览器渲染（4 服务/4 扩展可见，暗色主题正常） |
+| H | 优雅退出 | ✅ SIGTERM 后 10s 退出（grace 30s 内）；pre_shutdown 扩展执行；无孤儿进程 |
+
+### 发现并修复的 Bug
+
+#### Bug 1（文档）：config.yaml 注释与 script-ready-demo 描述把 `never` 误写为 `no`
+- **位置**：`internal/cli/init.go:227`（config 模板注释）、`internal/cli/init_examples.go:252,255`（script-ready-demo 描述与注释）
+- **原因**：restart.policy 有效值为 `always/on-failure/never`（见 `internal/config/validate.go:68`），但模板注释/描述误写为 `no`
+- **修复**：`no` → `never`
+- **影响**：仅文档，不影响运行（实际 policy 值为 `never` 已正确）
+
+#### Bug 2（功能，重要）：script readiness 检查未设置 cmd.Dir
+- **位置**：`internal/core/readiness_script.go:41`
+- **现象**：script-ready-demo 的 readiness check `bash check_ready.sh`（相对路径）在 supd 进程 CWD 下执行，而非服务目录，导致 bash 找不到 check_ready.sh（exit 127），readiness 永不通过，15s 超时 → 服务 failed
+- **根因**：`scriptChecker.Check()` 用 `exec.CommandContext` 创建命令但未设 `cmd.Dir`；而主服务命令（`process.go:43`）正确设置了 `cmd.Dir = dir`
+- **修复**（最小化）：
+  1. `readiness_script.go`：scriptChecker 增加 `dir` 字段，`Check()` 中 `if s.dir != "" { cmd.Dir = s.dir }`
+  2. `readiness.go`：`NewReadinessChecker(cfg)` → `NewReadinessChecker(cfg, dir string)`，仅 script 类型使用 dir
+  3. `bootstrap.go`：`checkReadiness` 增加 `workdir string` 参数，两处调用点（初始启动 +473、重启 +857）传入 workdir
+  4. `service_operator.go`：3 处 `core.NewReadinessChecker` 调用传入 workdir
+  5. `readiness_test.go`：现有测试传 `""`（保持原行为），新增 `TestScriptChecker_DirRelativePath` 验证 dir 使相对路径脚本可解析
+- **验证**：修复后 script-ready-demo 正常进入 ready（starting→up→readiness_passed→ready）；全量 go test 通过
+
+### 修改文件清单
+- `internal/core/readiness_script.go` — scriptChecker 增加 dir 字段 + cmd.Dir 设置
+- `internal/core/readiness.go` — NewReadinessChecker 增加 dir 参数
+- `internal/core/bootstrap.go` — checkReadiness 增加 workdir 参数 + 2 处调用点
+- `internal/api/service_operator.go` — 3 处 NewReadinessChecker 调用传入 workdir
+- `internal/core/readiness_test.go` — 测试适配 + 新增 DirRelativePath 测试
+- `internal/cli/init.go` — config 模板注释 no→never
+- `internal/cli/init_examples.go` — script-ready-demo 描述/注释 no→never
+
+### 验证
+- `go build ./...` ✅
+- `go vet ./...` ✅
+- `go test ./... -count=1` ✅（全包通过，含新测试）
+- 8 阶段运行状态测试全通过
+
+### 遗留事项
+- 无未解决问题
+- 测试环境已清理（/tmp/supd-docker-*、临时 workdir/logs、stale ready 文件均删除）
+- 本次修改未提交 git（等待用户确认）
+
+### 下次会话注意
+- script readiness 的 cmd.Dir 修复是本次重要变更，已通过单元测试 + 运行状态测试双重验证
+- 若要测试真正的 Docker 镜像，需在非 LXC 环境（支持嵌套容器）运行
+
+---
+
+## 2026-07-21 版本升级 v0.0.2
+
+### 变更
+- **修复 API 版本不一致**：`internal/api/system_provider.go` 原硬编码 `Version: "0.1.0"`，与 ldflags 注入的版本脱节。改为 `CoreSystemProvider.Version` 字段，由 `cli/run.go` 注入 `cli.Version`，使 API `/api/system/status` 与 `supd version` 命令版本一致。
+- **README 版本号**：`v0.0.1` → `v0.0.2`（docker pull 示例 + 项目状态表）。
+- 版本号本身通过 git tag `v0.0.2` + CI ldflags 注入，源码默认值仍为 `dev`。
+
+### 修改文件
+- `internal/api/system_provider.go` — 增加 Version 字段，GetSystemStatus 透传
+- `internal/cli/run.go` — 构造 CoreSystemProvider 时注入 Version
+- `internal/api/adapters_test.go` — 测试改为验证 Version 透传（不再断言硬编码值）
+- `README.md` — 版本号 v0.0.1 → v0.0.2
+
+### 验证
+- `go build ./...` ✅ / `go vet ./...` ✅ / `go test ./...` ✅
+- `go build -ldflags "-X main.version=0.0.2"` → `supd version` 输出 `supd 0.0.2` ✅
+
+---
+
+*最近一次更新：2026-07-21（版本升级 v0.0.2，修复 API 版本不一致）*

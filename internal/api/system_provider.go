@@ -17,6 +17,7 @@ type CoreSystemProvider struct {
 	Config    *config.Config
 	StartTime time.Time
 	BaseDir   string
+	Version   string // supd 版本号（由 cli.Version 注入，避免与 ldflags 注入的版本不一致）
 	proc      *process.Process // 缓存 gopsutil Process 对象，CPUPercent 需要基线
 	procOnce  sync.Once
 }
@@ -58,7 +59,7 @@ func (p *CoreSystemProvider) GetSystemStatus() SystemStatusInfo {
 
 	return SystemStatusInfo{
 		StartTime:   p.StartTime,
-		Version:     "0.1.0",
+		Version:     p.Version,
 		Uptime:      int64(time.Since(p.StartTime).Seconds()),
 		HTTPListen:  p.Config.Settings.HTTPListen,
 		AuthMode:    p.Config.Settings.AuthMode,

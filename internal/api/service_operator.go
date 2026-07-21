@@ -194,7 +194,7 @@ func (o *CoreServiceOperator) StartService(name string) error {
 			// fd_notify: 使用在 StartProcess 前创建的 checker
 			go o.runReadinessCheck(context.Background(), name, svcConfig.Readiness, sm, proc, preChecker)
 		} else {
-			checker, cerr := core.NewReadinessChecker(svcConfig.Readiness)
+			checker, cerr := core.NewReadinessChecker(svcConfig.Readiness, workdir)
 			if cerr != nil {
 				slog.Error("create readiness checker failed", "service", name, "error", cerr)
 				sm.Transition(core.EventReadinessTimeout)
@@ -422,7 +422,7 @@ func (o *CoreServiceOperator) superviseService(ctx context.Context, name string,
 	var preChecker core.ReadinessChecker
 	var extraFiles []*os.File
 	if svcConfig.Readiness != nil && svcConfig.Readiness.Type == "fd_notify" {
-		checker, cerr := core.NewReadinessChecker(svcConfig.Readiness)
+		checker, cerr := core.NewReadinessChecker(svcConfig.Readiness, workdir)
 		if cerr != nil {
 			slog.Error("readiness fd_notify for restart", "service", name, "error", cerr)
 			sm.Transition(core.EventMaxRetries)
@@ -504,7 +504,7 @@ func (o *CoreServiceOperator) superviseService(ctx context.Context, name string,
 			// fd_notify: 使用 preChecker
 			go o.runReadinessCheck(newCtx, name, svcConfig.Readiness, sm, newProc, preChecker)
 		} else {
-			checker, cerr := core.NewReadinessChecker(svcConfig.Readiness)
+			checker, cerr := core.NewReadinessChecker(svcConfig.Readiness, workdir)
 			if cerr != nil {
 				slog.Error("create readiness checker failed on restart", "service", name, "error", cerr)
 				sm.Transition(core.EventReadinessTimeout)

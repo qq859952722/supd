@@ -470,7 +470,7 @@ func (b *Bootstrap) startService(ctx context.Context, name string, svcEntry *wat
 
 	// readiness 检查
 	if svcConfig.Readiness != nil {
-		err := b.checkReadiness(ctx, name, svcConfig.Readiness, sm, proc, preChecker)
+		err := b.checkReadiness(ctx, name, svcConfig.Readiness, sm, proc, preChecker, workdir)
 		return proc, svcLogger, engine, svcCancel, err
 	}
 
@@ -482,6 +482,7 @@ func (b *Bootstrap) startService(ctx context.Context, name string, svcEntry *wat
 // REQ-F-009: 4种readiness检查类型
 // REQ-F-033: readiness 通过则 Transition(StateReady)
 // A-03-002 修复：preChecker 用于 fd_notify 类型，需在 StartProcess 前创建以传递写端 fd
+// workdir 为服务目录，传递给 script 类型 checker 以解析相对路径
 func (b *Bootstrap) checkReadiness(
 	ctx context.Context,
 	name string,
@@ -489,6 +490,7 @@ func (b *Bootstrap) checkReadiness(
 	sm *StateMachine,
 	proc *Process,
 	preChecker ReadinessChecker,
+	workdir string,
 ) error {
 	var checker ReadinessChecker
 	if preChecker != nil {
@@ -496,7 +498,7 @@ func (b *Bootstrap) checkReadiness(
 		checker = preChecker
 	} else {
 		var err error
-		checker, err = NewReadinessChecker(readinessCfg)
+		checker, err = NewReadinessChecker(readinessCfg, workdir)
 		if err != nil {
 			sm.Transition(EventReadinessTimeout)
 			return fmt.Errorf("readiness checker for %s: %w", name, err)
@@ -852,7 +854,7 @@ func (b *Bootstrap) superviseService(ctx context.Context, name string, svcEntry 
 
 	// 重启后执行 readiness 检查
 	if svcEntry.Config.Readiness != nil {
-		if err := b.checkReadiness(ctx, name, svcEntry.Config.Readiness, sm, newProc, preChecker); err != nil {
+		if err := b.checkReadiness(ctx, name, svcEntry.Config.Readiness, sm, newProc, preChecker, workdir); err != nil {
 			// 检查是否是进程退出导致的错误
 			select {
 			case <-newProc.Done():

@@ -37,7 +37,7 @@ docker run --rm \
 docker run -d \
   --name supd \
   --restart unless-stopped \
-  -p 8080:8080 \
+  -p 7979:7979 \
   -v /opt/supd/etc:/etc/supd \
   -v /opt/supd/logs:/var/log/supd \
   ghcr.io/qq859952722/supd:latest
@@ -99,7 +99,7 @@ ls -l supd
 
 ### 3. 访问 Web 控制台
 
-打开浏览器访问：[http://localhost:8080](http://localhost:8080)
+打开浏览器访问：[http://localhost:7979](http://localhost:7979)
 （如果在初始化时修改了配置，以您的 `config.yaml` 中配置的 `settings.http_listen` 为准）。
 
 ---
@@ -243,7 +243,7 @@ triggers:
 docker pull ghcr.io/qq859952722/supd:latest
 
 # 或指定具体版本
-docker pull ghcr.io/qq859952722/supd:v0.0.1
+docker pull ghcr.io/qq859952722/supd:v0.0.2
 ```
 
 > 也可从源码自行构建：`docker build -t supd:latest .`（多阶段：`node:20-alpine` → `golang:1.25-alpine` → `alpine:3.20`，最终以非 root 用户 `supd` 运行）。
@@ -263,7 +263,7 @@ docker run --rm \
 docker run -d \
   --name supd \
   --restart unless-stopped \
-  -p 8080:8080 \
+  -p 7979:7979 \
   -v /opt/supd/etc:/etc/supd \
   -v /opt/supd/logs:/var/log/supd \
   ghcr.io/qq859952722/supd:latest
@@ -302,7 +302,7 @@ docker run -d --stop-grace-period 30s ...
 
 | 项目 | 说明 |
 |------|------|
-| 当前版本 | `v0.0.1` |
+| 当前版本 | `v0.0.2` |
 | 平台支持 | Linux amd64 / Linux arm64 |
 | 后端语言 | Go 1.25+ |
 | 前端技术栈 | React 19 + TypeScript + Vite + Tailwind CSS 4 |

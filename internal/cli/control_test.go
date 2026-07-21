@@ -1388,8 +1388,8 @@ func TestGetAPIClient(t *testing.T) {
 	if client == nil {
 		t.Fatalf("getAPIClient 不应返回 nil")
 	}
-	if client.baseURL != "http://localhost:8080" {
-		t.Errorf("baseURL = %q, want http://localhost:8080", client.baseURL)
+	if client.baseURL != "http://localhost:7979" {
+		t.Errorf("baseURL = %q, want http://localhost:7979", client.baseURL)
 	}
 }
 

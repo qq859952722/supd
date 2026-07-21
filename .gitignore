@@ -4,6 +4,7 @@ Thumbs.db
 *.db
 
 # IDEs and editors
+.trae/
 .idea/
 .vscode/
 *.suo

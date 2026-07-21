@@ -37,7 +37,7 @@ func DefaultRunHistoryRetentionSeconds() int {
 func SetDefaults(cfg *Config) {
 	s := &cfg.Settings
 	if s.HTTPListen == "" {
-		s.HTTPListen = ":8080"
+		s.HTTPListen = ":7979"
 	}
 	if s.AuthMode == "" {
 		s.AuthMode = "local_skip"

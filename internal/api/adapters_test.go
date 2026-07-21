@@ -437,11 +437,11 @@ func TestConfigAuthProvider_VerifyToken(t *testing.T) {
 
 // TestConfigSettingsProvider_GetSettings 验证 GetSettings 返回配置中的 Settings 引用。
 func TestConfigSettingsProvider_GetSettings(t *testing.T) {
-	cfg := &config.Config{Settings: config.Settings{HTTPListen: ":8080", AuthMode: "none"}}
+	cfg := &config.Config{Settings: config.Settings{HTTPListen: ":7979", AuthMode: "none"}}
 	p := &ConfigSettingsProvider{Config: cfg, BaseDir: t.TempDir()}
 	s := p.GetSettings()
-	if s.HTTPListen != ":8080" {
-		t.Errorf("HTTPListen = %q, want ':8080'", s.HTTPListen)
+	if s.HTTPListen != ":7979" {
+		t.Errorf("HTTPListen = %q, want ':7979'", s.HTTPListen)
 	}
 	if s.AuthMode != "none" {
 		t.Errorf("AuthMode = %q, want 'none'", s.AuthMode)
@@ -2167,19 +2167,20 @@ func TestCoreServiceOperator_StopService_NoProcess(t *testing.T) {
 
 // TestCoreSystemProvider_GetSystemStatus 验证系统状态字段填充。
 func TestCoreSystemProvider_GetSystemStatus(t *testing.T) {
-	cfg := &config.Config{Settings: config.Settings{HTTPListen: ":8080", AuthMode: "none"}}
+	cfg := &config.Config{Settings: config.Settings{HTTPListen: ":7979", AuthMode: "none"}}
 	p := &CoreSystemProvider{
 		Config:    cfg,
 		StartTime: time.Now().Add(-100 * time.Second),
 		BaseDir:   t.TempDir(),
+		Version:   "0.0.2-test",
 	}
 
 	info := p.GetSystemStatus()
-	if info.Version != "0.1.0" {
-		t.Errorf("Version = %q, want '0.1.0'", info.Version)
+	if info.Version != "0.0.2-test" {
+		t.Errorf("Version = %q, want '0.0.2-test' (应透传 CoreSystemProvider.Version)", info.Version)
 	}
-	if info.HTTPListen != ":8080" {
-		t.Errorf("HTTPListen = %q, want ':8080'", info.HTTPListen)
+	if info.HTTPListen != ":7979" {
+		t.Errorf("HTTPListen = %q, want ':7979'", info.HTTPListen)
 	}
 	if info.AuthMode != "none" {
 		t.Errorf("AuthMode = %q, want 'none'", info.AuthMode)

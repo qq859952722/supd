@@ -258,7 +258,7 @@ func TestDoValidate_MultipleErrors(t *testing.T) {
 // TestValidateSettingsV2_ValidSettings 测试合法 settings 通过校验
 func TestValidateSettingsV2_ValidSettings(t *testing.T) {
 	settings := map[string]interface{}{
-		"http_listen":                     ":8080",
+		"http_listen":                     ":7979",
 		"auth_mode":                       "local_skip",
 		"log_level":                       "info",
 		"log_max_size_mb":                 10,
@@ -445,7 +445,7 @@ func TestRunValidate_ValidConfigText(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "config.yaml")
 	content := `settings:
-  http_listen: ":8080"
+  http_listen: ":7979"
   auth_mode: "none"
   log_level: "info"
 `
@@ -490,7 +490,7 @@ func TestRunValidate_JSONOutput(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "config.yaml")
 	content := `settings:
-  http_listen: ":8080"
+  http_listen: ":7979"
   auth_mode: "none"
 `
 	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
@@ -517,7 +517,7 @@ func TestRunValidate_NoArgsUsesConfigPath(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfgPath = filepath.Join(tmpDir, "config.yaml")
 	content := `settings:
-  http_listen: ":8080"
+  http_listen: ":7979"
   auth_mode: "none"
 `
 	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {

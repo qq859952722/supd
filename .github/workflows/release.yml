@@ -329,7 +329,7 @@ jobs:
             echo ""
             echo "# 启动"
             echo "docker run -d --name supd \\"
-            echo "  -p 8080:8080 \\"
+            echo "  -p 7979:7979 \\"
             echo "  -v /your/supd/config:/etc/supd \\"
             echo "  ${IMAGE}:${CURRENT_TAG}"
             echo '```'

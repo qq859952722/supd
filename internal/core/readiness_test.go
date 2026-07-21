@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
@@ -238,7 +239,7 @@ func TestScriptChecker_Ready(t *testing.T) {
 		TimeoutSeconds:  5,
 	}
 
-	checker, err := newScriptChecker(cfg)
+	checker, err := newScriptChecker(cfg, "")
 	if err != nil {
 		t.Fatalf("newScriptChecker: %v", err)
 	}
@@ -260,7 +261,7 @@ func TestScriptChecker_NotReady(t *testing.T) {
 		TimeoutSeconds:  2,
 	}
 
-	checker, err := newScriptChecker(cfg)
+	checker, err := newScriptChecker(cfg, "")
 	if err != nil {
 		t.Fatalf("newScriptChecker: %v", err)
 	}
@@ -282,7 +283,7 @@ func TestScriptChecker_Timeout(t *testing.T) {
 		TimeoutSeconds:  1,
 	}
 
-	checker, err := newScriptChecker(cfg)
+	checker, err := newScriptChecker(cfg, "")
 	if err != nil {
 		t.Fatalf("newScriptChecker: %v", err)
 	}
@@ -293,6 +294,48 @@ func TestScriptChecker_Timeout(t *testing.T) {
 
 	if err := checker.Check(ctx); err == nil {
 		t.Error("Check should return error on timeout")
+	}
+}
+
+// TestScriptChecker_DirRelativePath 验证 dir 字段使 check 中的相对路径脚本可解析。
+// 不传 dir 时，相对路径脚本无法找到（exit 127）；传 dir 后正常执行（exit 0）。
+func TestScriptChecker_DirRelativePath(t *testing.T) {
+	dir := t.TempDir()
+	// 在临时目录下创建 ready.sh（exit 0）
+	scriptPath := dir + "/ready.sh"
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write ready.sh: %v", err)
+	}
+
+	cfg := &config.ReadinessConfig{
+		Type:            "script",
+		Check:           []string{"sh", "ready.sh"}, // 相对路径，依赖 cmd.Dir 解析
+		IntervalSeconds: 1,
+		TimeoutSeconds:  3,
+	}
+
+	// 不传 dir：sh 找不到 ready.sh → 非零退出 → 超时失败
+	noDirChecker, err := newScriptChecker(cfg, "")
+	if err != nil {
+		t.Fatalf("newScriptChecker: %v", err)
+	}
+	defer noDirChecker.Close()
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel1()
+	if err := noDirChecker.Check(ctx1); err == nil {
+		t.Error("Check without dir should fail (relative script not found)")
+	}
+
+	// 传 dir：sh 在 dir 下找到 ready.sh → exit 0 → 立即就绪
+	dirChecker, err := newScriptChecker(cfg, dir)
+	if err != nil {
+		t.Fatalf("newScriptChecker: %v", err)
+	}
+	defer dirChecker.Close()
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel2()
+	if err := dirChecker.Check(ctx2); err != nil {
+		t.Errorf("Check with dir should succeed (relative script resolved), got: %v", err)
 	}
 }
 
@@ -338,7 +381,7 @@ func TestNewReadinessChecker_Factory(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			checker, err := NewReadinessChecker(tt.cfg)
+			checker, err := NewReadinessChecker(tt.cfg, "")
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewReadinessChecker() error = %v, wantErr %v", err, tt.wantErr)
 				return

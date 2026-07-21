@@ -292,7 +292,7 @@ func TestDoValidate(t *testing.T) {
 
 	// 创建有效配置
 	validConfig := `settings:
-  http_listen: ":8080"
+  http_listen: ":7979"
   auth_mode: "local_skip"
   auth_token: "abc123"
   log_level: "info"
@@ -321,7 +321,7 @@ extension_dirs:
 
 	// 创建无效配置（错误的 auth_mode）
 	invalidConfig := `settings:
-  http_listen: ":8080"
+  http_listen: ":7979"
   auth_mode: "invalid_mode"
   auth_token: "abc123"
   log_level: "info"
@@ -488,7 +488,7 @@ func TestPutJSONMethod(t *testing.T) {
 // TestExtractAuthToken 测试从配置中提取 auth_token
 func TestExtractAuthToken(t *testing.T) {
 	config := `settings:
-  http_listen: ":8080"
+  http_listen: ":7979"
   auth_mode: "local_skip"
   auth_token: "abc123def456"
   log_level: "info"

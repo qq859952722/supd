@@ -307,7 +307,7 @@ export default function SettingsPage() {
                 <Input
                   value={formState.http_listen ?? ''}
                   onChange={(e) => setFormState({ ...formState, http_listen: e.target.value })}
-                  placeholder="默认: :8080"
+                  placeholder="默认: :7979"
                 />
                 <p className="mt-1 text-xs text-[var(--color-text-tertiary)]">supd Web 服务和 API 的监听地址，格式为 主机:端口</p>
                 <p className="mt-0.5 text-xs text-[var(--color-text-warning)]">⚠ 修改后需重启 supd 生效</p>

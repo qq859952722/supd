@@ -25,8 +25,8 @@ settings:
 	}
 
 	// 验证默认值
-	if cfg.Settings.HTTPListen != ":8080" {
-		t.Errorf("HTTPListen = %q, want :8080", cfg.Settings.HTTPListen)
+	if cfg.Settings.HTTPListen != ":7979" {
+		t.Errorf("HTTPListen = %q, want :7979", cfg.Settings.HTTPListen)
 	}
 	if cfg.Settings.AuthMode != "local_skip" {
 		t.Errorf("AuthMode = %q, want local_skip", cfg.Settings.AuthMode)

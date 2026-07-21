@@ -14,15 +14,17 @@ import (
 type scriptChecker struct {
 	check           []string
 	intervalSeconds int
+	dir             string // 工作目录（服务目录），使 check 中的相对路径可解析
 }
 
-func newScriptChecker(cfg *config.ReadinessConfig) (*scriptChecker, error) {
+func newScriptChecker(cfg *config.ReadinessConfig, dir string) (*scriptChecker, error) {
 	if len(cfg.Check) == 0 {
 		return nil, fmt.Errorf("readiness script: check command is required")
 	}
 	return &scriptChecker{
 		check:           cfg.Check,
 		intervalSeconds: cfg.IntervalSeconds,
+		dir:             dir,
 	}, nil
 }
 
@@ -39,6 +41,10 @@ func (s *scriptChecker) Check(ctx context.Context) error {
 		}
 
 		cmd := exec.CommandContext(ctx, s.check[0], s.check[1:]...)
+		// 与主服务命令一致，在服务目录下执行 check 脚本，使相对路径（如 check_ready.sh）可解析
+		if s.dir != "" {
+			cmd.Dir = s.dir
+		}
 		err := cmd.Run()
 		if err == nil {
 			return nil

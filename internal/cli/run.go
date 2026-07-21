@@ -30,7 +30,7 @@ var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "启动 supd 监督器",
 	Long:  "启动 supd 进程监督器。若工作目录不存在，自动调用 init 流程。",
-	Example: `  # 启动监督器（使用默认工作目录与默认监听 :8080）
+	Example: `  # 启动监督器（使用默认工作目录与默认监听 :7979）
   supd run
 
   # 指定工作目录与监听地址
@@ -45,7 +45,7 @@ var runCmd = &cobra.Command{
 }
 
 func init() {
-	runCmd.Flags().StringVar(&runListen, "listen", "", "指定监听地址 (如 :8080)")
+	runCmd.Flags().StringVar(&runListen, "listen", "", "指定监听地址 (如 :7979)")
 	runCmd.Flags().StringVar(&runLogLevel, "log-level", "", "日志级别 (debug/info/warn/error)")
 	runCmd.Flags().BoolVar(&runNoPID1, "no-pid1", false,
 		"不启用 PID1 模式（仅适用于 systemd 服务场景，Docker 容器中禁用）")
@@ -426,6 +426,7 @@ func injectProviders(server *api.Server, result *core.BootstrapResult, cfg *conf
 			Config:    cfg,
 			StartTime: startTime,
 			BaseDir:   baseDir,
+			Version:   Version,
 		},
 		&api.OsFileProvider{
 			BaseDir:       baseDir,

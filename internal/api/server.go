@@ -352,7 +352,7 @@ func (s *Server) setupRoutes() {
 
 // Start 启动 HTTP 服务器。
 func (s *Server) Start() error {
-	addr := ":8080"
+	addr := ":7979"
 	if s.config != nil && s.config.Settings.HTTPListen != "" {
 		addr = s.config.Settings.HTTPListen
 	}

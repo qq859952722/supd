@@ -834,7 +834,7 @@ export function ServiceForm({ initial, onSubmit, onCancel, submitLabel = '提交
               <Input
                 value={form.readinessUrl}
                 onChange={(e) => set('readinessUrl', e.target.value)}
-                placeholder="http://localhost:8080/health"
+                placeholder="http://localhost:7979/health"
               />
             </Field>
             <Field label="期望状态码（expected_status）" error={errors.readinessExpectedStatus}>

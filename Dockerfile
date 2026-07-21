@@ -50,7 +50,7 @@ RUN printf '#!/bin/sh\ncase "$1" in\n  run|eval|test|serve|bundle|compile|app|-v
 
 WORKDIR /etc/supd
 USER supd
-EXPOSE 8080
+EXPOSE 7979
 VOLUME ["/etc/supd", "/var/log/supd"]
 ENTRYPOINT ["/usr/local/bin/supd"]
 CMD ["--workdir", "/etc/supd", "run"]
