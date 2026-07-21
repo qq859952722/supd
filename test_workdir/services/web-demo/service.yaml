@@ -1,0 +1,29 @@
+name: web-demo
+version: "1.0.0"
+description: "Python HTTP 演示服务（http_check readiness）"
+icon: globe
+autostart: true
+command:
+  - python3
+  - run.py
+tags:
+  - test
+  - http
+# depends_on: 依赖演示（规格 §2.1.2 拓扑排序）
+# web-demo 依赖 tcp-echo，supd 会先启动 tcp-echo 再启动 web-demo
+# 反向停止时会先停 web-demo 再停 tcp-echo
+depends_on:
+  - tcp-echo
+readiness:
+  type: http_check
+  url: http://127.0.0.1:9001/health
+  expected_status: 200
+  interval_seconds: 1
+  timeout_seconds: 10
+stop:
+  grace_seconds: 5
+  timeout_seconds: 30
+logging:
+  enabled: true
+  max_size_mb: 5
+  max_files: 3

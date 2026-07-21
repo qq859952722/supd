@@ -1,0 +1,357 @@
+name: 自动 Release（版本 tag 触发）
+
+# 推送 vX.Y.Z 格式的 git tag 时自动触发
+# 使用方式：
+#   git tag v0.0.1 && git push origin v0.0.1
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"        # 正式版：v0.0.1
+      - "v[0-9]+.[0-9]+.[0-9]+-*"       # 预发布：v0.0.1-beta, v1.0.0-rc.1
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  # txiki.js 版本，升级时同步修改此处
+  TJS_VERSION: "v26.6.0"
+
+jobs:
+  # ────────────────────────────────────────────────────────────
+  # Job 0: 解析版本信息
+  # ────────────────────────────────────────────────────────────
+  meta:
+    name: "解析版本元数据"
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.parse.outputs.version }}
+      is_prerelease: ${{ steps.parse.outputs.is_prerelease }}
+
+    steps:
+      - name: 解析 tag
+        id: parse
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          echo "version=${TAG}" >> "$GITHUB_OUTPUT"
+          if echo "$TAG" | grep -qE -- '-'; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "预发布版本: ${TAG}"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "正式版本: ${TAG}"
+          fi
+
+  # ────────────────────────────────────────────────────────────
+  # Job 1: 编译 tjs（矩阵构建 amd64 / arm64 并缓存）
+  # ────────────────────────────────────────────────────────────
+  build-tjs:
+    name: "编译 tjs (${{ matrix.arch }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm  # 原生 ARM64 编译，避免 QEMU 模拟导致速度极慢
+    runs-on: ${{ matrix.runner }}
+    needs: meta
+
+    steps:
+      - name: 查找 tjs 缓存
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/tjs-binary
+          key: tjs-${{ matrix.arch }}-${{ env.TJS_VERSION }}
+
+      - name: 安装编译依赖
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build \
+            libcurl4-openssl-dev libtool libltdl-dev \
+            git ca-certificates
+
+      - name: 克隆并编译 txiki.js
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --recursive --depth 1 --branch "${TJS_VERSION}" \
+            https://github.com/saghul/txiki.js.git /tmp/txiki-src
+          cd /tmp/txiki-src && make
+          TJS_BIN="$(find /tmp/txiki-src/build -name 'tjs' -type f | head -1)"
+          mkdir -p /tmp/tjs-binary
+          cp "$TJS_BIN" /tmp/tjs-binary/tjs
+          chmod +x /tmp/tjs-binary/tjs
+
+      - name: 验证 tjs
+        run: |
+          /tmp/tjs-binary/tjs --version
+          file /tmp/tjs-binary/tjs
+
+      - name: 上传 tjs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tjs-${{ matrix.arch }}
+          path: /tmp/tjs-binary/tjs
+          retention-days: 1
+
+  # ────────────────────────────────────────────────────────────
+  # Job 2: 构建多平台二进制（Release Assets）
+  # ────────────────────────────────────────────────────────────
+  build-binaries:
+    name: "构建 ${{ matrix.asset_suffix }} 二进制"
+    runs-on: ubuntu-latest
+    needs: meta
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            asset_suffix: linux-amd64
+          - goos: linux
+            goarch: arm64
+            asset_suffix: linux-arm64
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: 设置 Node.js 和 pnpm
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 构建前端
+        run: |
+          corepack enable && corepack prepare pnpm@10 --activate
+          cd web && pnpm install --frozen-lockfile && pnpm build
+
+      - name: 编译 supd 二进制
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          VERSION="${{ needs.meta.outputs.version }}"
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          BINARY="supd-${{ matrix.asset_suffix }}"
+
+          go build -tags '!dev' \
+            -ldflags "-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
+            -o "${BINARY}" ./cmd/supd/
+
+          # 打包（校验和在 release job 中统一生成，避免 matrix 实例间的 checksums.txt 在 artifact 合并时互相覆盖）
+          tar -czf "${BINARY}.tar.gz" "${BINARY}"
+          echo "✅ ${BINARY}.tar.gz ($(du -sh ${BINARY}.tar.gz | cut -f1))"
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.asset_suffix }}
+          path: |
+            supd-${{ matrix.asset_suffix }}.tar.gz
+          retention-days: 1
+
+  # ────────────────────────────────────────────────────────────
+  # Job 3: 原生构建与推送 Docker 镜像（两平台矩阵）
+  # ────────────────────────────────────────────────────────────
+  docker-build:
+    name: "Docker ${{ matrix.arch }} (含 tjs)"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            docker_platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            docker_platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    needs: [meta, build-tjs]
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 下载对应架构的 tjs 二进制
+        uses: actions/download-artifact@v4
+        with:
+          name: tjs-${{ matrix.arch }}
+          path: .
+
+      - run: chmod +x ./tjs
+
+      - name: 设置 Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 构建并推送 ${{ matrix.arch }} 镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: runtime
+          platforms: ${{ matrix.docker_platform }}
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.meta.outputs.version }}-${{ matrix.arch }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.version=${{ needs.meta.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          build-args: |
+            VERSION=${{ needs.meta.outputs.version }}
+            BUILD_TIME=${{ github.run_id }}
+          cache-from: type=gha,scope=release-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=release-${{ matrix.arch }}
+
+  # ────────────────────────────────────────────────────────────
+  # Job 4: 创建 manifest并自动生成 GitHub Release Notes
+  # ────────────────────────────────────────────────────────────
+  release:
+    name: "创建 Release"
+    runs-on: ubuntu-latest
+    needs: [meta, build-binaries, docker-build]
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 下载所有二进制产物
+        uses: actions/download-artifact@v4
+        with:
+          path: ./release-assets
+          pattern: binary-*
+          merge-multiple: true
+
+      - name: 生成校验和文件
+        run: |
+          cd release-assets
+          # 统一生成所有平台的校验和（原方案在 matrix 各实例中分别生成 checksums.txt，
+          # merge-multiple 下载时同名文件互相覆盖，导致只剩 1 个平台的校验和）
+          sha256sum *.tar.gz > checksums.txt
+          echo "=== Release 产物列表 ==="
+          ls -lh
+          echo "=== 校验和 ==="
+          cat checksums.txt
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 设置 Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 创建版本 manifest（例如 v0.0.1）
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          VERSION="${{ needs.meta.outputs.version }}"
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${VERSION}" \
+            "${IMAGE}:${VERSION}-amd64" \
+            "${IMAGE}:${VERSION}-arm64"
+          echo "✅ ${IMAGE}:${VERSION} (amd64 + arm64, 均含 tjs)"
+
+      - name: 更新 latest manifest（仅正式版）
+        if: needs.meta.outputs.is_prerelease == 'false'
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          VERSION="${{ needs.meta.outputs.version }}"
+          docker buildx imagetools create \
+            --tag "${IMAGE}:latest" \
+            "${IMAGE}:${VERSION}-amd64" \
+            "${IMAGE}:${VERSION}-arm64"
+          echo "✅ ${IMAGE}:latest → ${VERSION}"
+
+      - name: 生成 Release Notes
+        id: notes
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          CURRENT_TAG="${GITHUB_REF_NAME}"
+          PREV_TAG=$(git tag --sort=-version:refname | grep -v "$CURRENT_TAG" | head -1)
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+
+          {
+            echo "## 变更记录"
+            echo ""
+            if [ -z "$PREV_TAG" ]; then
+              echo "🎉 首次发布"
+            else
+              echo "与 \`${PREV_TAG}\` 相比的变更："
+              echo ""
+              git log --oneline --no-merges "${PREV_TAG}..${CURRENT_TAG}" \
+                --pretty=format:"- %s ([%h](https://github.com/${{ github.repository }}/commit/%H))" 2>/dev/null \
+                || echo "（无法生成提交记录）"
+            fi
+            echo ""
+            echo "## Docker 镜像"
+            echo ""
+            echo "| 平台 | 镜像 | 说明 |"
+            echo "|------|------|------|"
+            echo "| linux/amd64 | \`${IMAGE}:${CURRENT_TAG}\` | 含 tjs (txiki.js ${TJS_VERSION}) |"
+            echo "| linux/arm64 | \`${IMAGE}:${CURRENT_TAG}\` | 含 tjs (txiki.js ${TJS_VERSION}) |"
+            echo ""
+            echo "### 快速上手"
+            echo ""
+            echo '```bash'
+            echo "# 拉取（自动选择当前平台架构）"
+            echo "docker pull ${IMAGE}:${CURRENT_TAG}"
+            echo ""
+            echo "# 启动"
+            echo "docker run -d --name supd \\"
+            echo "  -p 8080:8080 \\"
+            echo "  -v /your/supd/config:/etc/supd \\"
+            echo "  ${IMAGE}:${CURRENT_TAG}"
+            echo '```'
+            echo ""
+            echo "## 二进制下载"
+            echo ""
+            echo "| 平台 | 文件 |"
+            echo "|------|------|"
+            echo "| Linux x86_64 | \`supd-linux-amd64.tar.gz\` |"
+            echo "| Linux ARM64  | \`supd-linux-arm64.tar.gz\` |"
+          } > /tmp/release-notes.md
+
+          echo "notes_file=/tmp/release-notes.md" >> "$GITHUB_OUTPUT"
+
+      - name: 创建 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.meta.outputs.version }}
+          name: "supd ${{ needs.meta.outputs.version }}"
+          body_path: ${{ steps.notes.outputs.notes_file }}
+          prerelease: ${{ needs.meta.outputs.is_prerelease == 'true' }}
+          draft: false
+          files: |
+            release-assets/*.tar.gz
+            release-assets/checksums.txt

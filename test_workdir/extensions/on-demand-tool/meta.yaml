@@ -1,0 +1,24 @@
+name: on-demand-tool
+version: "1.0.0"
+description: "on_demand 演示扩展（多 action、stdout 协议）"
+enabled: true
+runtime: bash
+entry: run.sh
+timeout_seconds: 30
+concurrency: replace
+ui:
+  show_logs: true
+  button_style: default
+  icon: wrench
+actions:
+  - id: ping
+    label: "Ping 测试"
+    button_style: default
+  - id: status
+    label: "系统状态"
+    button_style: primary
+  - id: progress
+    label: "进度演示"
+    button_style: default
+triggers:
+  on_demand: true

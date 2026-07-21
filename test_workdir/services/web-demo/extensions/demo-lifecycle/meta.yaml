@@ -1,0 +1,21 @@
+name: demo-lifecycle
+version: "1.0.0"
+description: "web-demo 服务级 service_lifecycle 扩展（post_ready/pre_stop）"
+enabled: true
+runtime: bash
+entry: run.sh
+timeout_seconds: 30
+concurrency: parallel
+triggers:
+  service_lifecycle:
+    - event: post_ready
+      action: on_ready
+    - event: pre_stop
+      action: on_stop
+actions:
+  - id: on_ready
+    label: "服务就绪钩子"
+    button_style: default
+  - id: on_stop
+    label: "服务停止钩子"
+    button_style: default

@@ -1,0 +1,67 @@
+# OS files
+.DS_Store
+Thumbs.db
+*.db
+
+# IDEs and editors
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+*.swo
+
+# Project Build & Test binaries
+# 注意：/supd 仅匹配根目录的二进制产物，不会误伤 cmd/supd/ 源代码目录
+/supd
+config.test
+extension.test
+
+# Go test / coverage files
+*.out
+*.test
+coverage.out
+
+# Node / Frontend build & dependencies
+node_modules/
+web/node_modules/
+web/dist/
+web/dist-ssr/
+web/.eslintcache
+web/.pnpm-store/
+web/.vite/
+web/*.tsbuildinfo
+# 注意：pnpm-lock.yaml 必须纳入版本控制以确保依赖一致性，不应排除
+webdist/
+
+# Test workdir configuration - Keep test cases but ignore runtime data
+test_workdir/.supd/
+test_workdir/logs/
+test_workdir/history/
+test_workdir/data/
+test_workdir/script_tmp/
+test_workdir/runtimes/
+# 通用规则：所有服务下的 bin/（下载的二进制）与 data/（运行时数据）均不纳入版本控制
+test_workdir/services/*/bin/
+test_workdir/services/*/data/
+test_workdir/services/short-task-demo/test-f03.txt
+test_workdir/services/short-task-demo/test-f04-moved.txt
+test_workdir/symlink-escape-test
+test_workdir/ex/
+# Temporary / Log files globally
+*.log
+*.pid
+# tmp/ 目录内容默认全部忽略，但保留 audit_plan.md（用户明确要求保留的审计计划文档）
+tmp/*
+!tmp/audit_plan.md
+
+# Docker 本地测试产物（CI 中由工作流下载，不纳入版本控制）
+tjs
+tjs-bin
+tjs-wrapper
+supd-docker
+
+# 临时备份目录（历史清理时的 .git 备份，确认推送成功后可手动删除）
+.git.backup/

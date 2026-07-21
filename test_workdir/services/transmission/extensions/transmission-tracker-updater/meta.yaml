@@ -1,0 +1,23 @@
+name: transmission-tracker-updater
+version: "1.0.0"
+description: "定时通过 Transmission RPC 更新所有种子的 tracker 列表 (来源: adysec/tracker trackers_best.txt)"
+enabled: true
+runtime: bash
+entry: run.sh
+timeout_seconds: 180
+concurrency: replace
+ui:
+  show_logs: true
+  button_style: default
+triggers:
+  on_schedule:
+    - cron: "0 */12 * * *"
+      action: update
+  on_demand: true
+actions:
+  - id: update
+    label: "更新 Tracker"
+    button_style: primary
+  - id: check
+    label: "检查状态"
+    button_style: default

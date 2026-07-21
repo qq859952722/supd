@@ -1,0 +1,40 @@
+{
+  "name": "supd-web",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router": "^7.0.0",
+    "lucide-react": "^1.23.0",
+    "@tanstack/react-query": "^5.65.0",
+    "zustand": "^5.0.0",
+    "zod": "^3.24.0",
+    "monaco-editor": "^0.55.1",
+    "@monaco-editor/react": "^4.6.0",
+    "monaco-yaml": "^5.5.0",
+    "sonner": "^1.7.0",
+    "clsx": "^2.1.0",
+    "tailwind-merge": "^2.6.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0",
+    "tailwindcss": "^4.0.0",
+    "@tailwindcss/vite": "^4.0.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "dompurify": "^3.4.12"
+    }
+  }
+}

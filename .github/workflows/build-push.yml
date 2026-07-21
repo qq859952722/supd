@@ -1,0 +1,178 @@
+name: 手动构建并推送 Docker 镜像
+
+# 手动触发：在 GitHub Actions 页面点击 "Run workflow"
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本标签（如 v0.0.1，留空则使用 latest）"
+        required: false
+        default: ""
+      push:
+        description: "推送到 GHCR？"
+        required: false
+        type: boolean
+        default: true
+      tjs_version:
+        description: "txiki.js 版本（默认 v26.6.0）"
+        required: false
+        default: "v26.6.0"
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ────────────────────────────────────────────────────────────
+  # 矩阵 Job：在对应平台原生编译 tjs + 构建 Docker 镜像
+  # - ubuntu-latest       → linux/amd64
+  # - ubuntu-24.04-arm    → linux/arm64  (GitHub 原生 ARM64 runner)
+  # ────────────────────────────────────────────────────────────
+  build-platform:
+    name: "[${{ matrix.arch }}] 编译 tjs + 构建镜像"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            docker_platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            docker_platform: linux/arm64
+
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      # ── 确定版本标签 ──
+      - name: 确定版本
+        id: ver
+        run: |
+          INPUT="${{ inputs.version }}"
+          if [ -z "$INPUT" ]; then
+            echo "tag=latest"    >> "$GITHUB_OUTPUT"
+            echo "version=dev"   >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${INPUT}"  >> "$GITHUB_OUTPUT"
+            echo "version=${INPUT}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── 查找 tjs 缓存（以 tjs 版本 + 平台为 key）──
+      - name: 查找 tjs 构建缓存
+        id: tjs-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/tjs-binary
+          key: tjs-${{ matrix.arch }}-${{ inputs.tjs_version }}
+
+      # ── 仅在 cache miss 时安装依赖并编译 ──
+      - name: 安装 tjs 编译依赖
+        if: steps.tjs-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build \
+            libcurl4-openssl-dev libtool libltdl-dev \
+            git ca-certificates
+
+      - name: 编译 txiki.js（${{ matrix.arch }}）
+        if: steps.tjs-cache.outputs.cache-hit != 'true'
+        run: |
+          TJS_VER="${{ inputs.tjs_version }}"
+          git clone --recursive --depth 1 --branch "${TJS_VER}" \
+            https://github.com/saghul/txiki.js.git /tmp/txiki-src
+          cd /tmp/txiki-src && make
+          TJS_BIN="$(find /tmp/txiki-src/build -name 'tjs' -type f | head -1)"
+          mkdir -p /tmp/tjs-binary
+          cp "$TJS_BIN" /tmp/tjs-binary/tjs
+          chmod +x /tmp/tjs-binary/tjs
+
+      - name: 验证 tjs
+        run: |
+          /tmp/tjs-binary/tjs --version
+          file /tmp/tjs-binary/tjs
+
+      # ── 把编译好的 tjs 复制到 build context ──
+      - name: 准备 tjs 到 build context
+        run: cp /tmp/tjs-binary/tjs ./tjs && chmod +x ./tjs
+
+      # ── 构建 Docker 镜像 ──
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        if: inputs.push
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 构建并推送 ${{ matrix.arch }} 镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: runtime
+          platforms: ${{ matrix.docker_platform }}
+          push: ${{ inputs.push }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.tag }}-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.repository.updated_at }}
+          build-args: |
+            VERSION=${{ steps.ver.outputs.version }}
+            BUILD_TIME=${{ github.run_id }}
+          cache-from: type=gha,scope=manual-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=manual-${{ matrix.arch }}
+
+  # ────────────────────────────────────────────────────────────
+  # 合并 manifest：将 amd64 + arm64 合并为单一多架构镜像
+  # ────────────────────────────────────────────────────────────
+  create-manifest:
+    name: "合并 multi-arch manifest"
+    runs-on: ubuntu-latest
+    needs: build-platform
+    if: inputs.push
+    permissions:
+      packages: write
+
+    steps:
+      - name: 确定标签
+        id: ver
+        run: |
+          INPUT="${{ inputs.version }}"
+          echo "tag=${INPUT:-latest}" >> "$GITHUB_OUTPUT"
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 设置 Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 合并并推送 manifest
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          TAG="${{ steps.ver.outputs.tag }}"
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${TAG}" \
+            "${IMAGE}:${TAG}-amd64" \
+            "${IMAGE}:${TAG}-arm64"
+          echo "✅ ${IMAGE}:${TAG} (amd64 + arm64，均含 tjs)"
+
+      - name: 验证 manifest
+        run: |
+          docker buildx imagetools inspect \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.tag }}"

@@ -1,0 +1,26 @@
+name: script-ready-demo
+version: "1.0.0"
+description: "script readiness 演示（脚本检查就绪状态）"
+icon: check-circle
+autostart: true
+command:
+  - bash
+  - run.sh
+tags:
+  - test
+  - script
+readiness:
+  type: script
+  check:
+    - test
+    - -f
+    - /tmp/script-ready-demo.ready
+  interval_seconds: 2
+  timeout_seconds: 15
+stop:
+  grace_seconds: 5
+  timeout_seconds: 30
+logging:
+  enabled: true
+  max_size_mb: 5
+  max_files: 3

@@ -1,0 +1,29 @@
+name: restart-always-demo
+version: "1.0.0"
+description: "重启策略演示：always（崩溃自动重启，指数退避）"
+icon: refresh-cw
+autostart: false
+command:
+  - bash
+  - run.sh
+tags:
+  - test
+  - restart
+readiness:
+  type: fd_notify
+  fd: 3
+  timeout_seconds: 5
+stop:
+  grace_seconds: 5
+  timeout_seconds: 30
+restart:
+  policy: always
+  backoff_ms: 1000
+  max_backoff_ms: 10000
+  multiplier: 2
+  max_retries: 5
+  reset_after_seconds: 60
+logging:
+  enabled: true
+  max_size_mb: 5
+  max_files: 3

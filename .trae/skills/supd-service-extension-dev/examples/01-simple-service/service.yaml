@@ -1,0 +1,24 @@
+name: web-demo
+version: "1.0.0"
+description: "Python HTTP server for testing http_check readiness"
+icon: globe
+autostart: false
+command:
+  - python3
+  - run.py
+tags:
+  - test
+  - http
+readiness:
+  type: http_check
+  url: http://127.0.0.1:9001/health
+  expected_status: 200
+  interval_seconds: 1
+  timeout_seconds: 10
+stop:
+  grace_seconds: 5
+  timeout_seconds: 30
+logging:
+  enabled: true
+  max_size_mb: 5
+  max_files: 3

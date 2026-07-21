@@ -1,0 +1,21 @@
+name: demo-action
+version: "1.0.0"
+description: "On-demand action extension for web-demo"
+enabled: true
+runtime: bash
+entry: ./run.sh
+timeout_seconds: 30
+ui:
+  show_logs: true
+  button_style: default
+actions:
+  - id: greet
+    label: "打招呼"
+    button_style: primary
+    args:
+      - "World"
+  - id: status
+    label: "状态查询"
+    button_style: default
+triggers:
+  on_demand: true

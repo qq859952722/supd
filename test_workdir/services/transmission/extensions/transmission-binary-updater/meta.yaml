@@ -1,0 +1,20 @@
+name: transmission-binary-updater
+version: "1.0.0"
+description: "检查并更新 transmission-daemon 静态编译二进制 (来源: qq859952722/transmission-builder)"
+enabled: true
+runtime: bash
+entry: run.sh
+timeout_seconds: 300
+concurrency: replace
+ui:
+  show_logs: true
+  button_style: default
+triggers:
+  on_demand: true
+actions:
+  - id: check
+    label: "检查版本"
+    button_style: default
+  - id: update
+    label: "下载更新"
+    button_style: primary

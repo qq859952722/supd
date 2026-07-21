@@ -1,0 +1,22 @@
+name: qbittorrent-health-check
+version: "1.0.0"
+description: qBittorrent 健康检查扩展，检测 WebUI 可用性与种子状态
+enabled: true
+runtime: bash
+entry: ./run.sh
+timeout_seconds: 60
+concurrency: replace
+triggers:
+  on_demand: true
+  service_lifecycle:
+    - event: post_ready
+      action: check
+    - event: on_failure
+      action: diagnose
+actions:
+  - id: check
+    label: 健康检查
+    button_style: primary
+  - id: diagnose
+    label: 诊断故障
+    button_style: danger

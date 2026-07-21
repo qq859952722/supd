@@ -1,0 +1,17 @@
+name: torrent-stats-report
+version: "1.0.0"
+description: 生成种子统计报告，包含做种数、下载者数、分享率等
+enabled: true
+runtime: bash
+entry: ./run.sh
+timeout_seconds: 90
+concurrency: replace
+triggers:
+  on_demand: true
+  on_schedule:
+    - cron: "*/30 * * * *"
+      action: report
+actions:
+  - id: report
+    label: 生成报告
+    button_style: primary

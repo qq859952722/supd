@@ -1,0 +1,264 @@
+@import "tailwindcss";
+
+/* REQ-U-003: 设计系统 - 深色科技风色彩方案 */
+/* 主色调: 青蓝色(cyan/teal), 强调色: 琥珀色(amber) */
+
+@theme {
+  /* 字体栈 */
+  --font-sans: 'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+
+  /* 动画时长 */
+  --animate-duration-fast: 150ms;
+  --animate-duration-normal: 250ms;
+  --animate-duration-slow: 350ms;
+}
+
+/* 深色主题（默认） */
+:root,
+[data-theme="dark"] {
+  /* 背景色 */
+  --color-bg-primary: #0a0e17;
+  --color-bg-secondary: #111827;
+  --color-bg-tertiary: #1a2235;
+  --color-bg-elevated: #1e293b;
+
+  /* 表面色 */
+  --color-surface-primary: #111827;
+  --color-surface-secondary: #1e293b;
+  --color-surface-tertiary: #253049;
+  --color-surface-hover: #1e3a5f;
+  --color-surface-active: #264063;
+  --color-surface-error: rgba(239, 68, 68, 0.1);
+  --color-surface-success: rgba(34, 197, 94, 0.1);
+  --color-surface-warning: rgba(245, 158, 11, 0.1);
+  --color-surface-info: rgba(6, 182, 212, 0.1);
+
+  /* 文字色 */
+  --color-text-primary: #f1f5f9;
+  --color-text-secondary: #94a3b8;
+  --color-text-tertiary: #7c8995; /* E-06 修复：提亮至 AA 4.5:1+ 对比度 */
+  --color-text-inverse: #0f172a;
+  --color-text-error: #f87171;
+  --color-text-success: #4ade80;
+  --color-text-warning: #fbbf24;
+  --color-text-info: #22d3ee;
+
+  /* 边框色 */
+  --color-border-primary: #1e293b;
+  --color-border-secondary: #334155;
+  --color-border-focus: #06b6d4;
+  --color-border-error: #ef4444;
+
+  /* 品牌色 - 青蓝色 */
+  --color-brand-primary: #06b6d4;
+  --color-brand-primary-hover: #22d3ee;
+  --color-brand-primary-active: #0891b2;
+  --color-brand-secondary: #0e7490;
+
+  /* 强调色 - 琥珀色 */
+  --color-accent-warning: #f59e0b;
+  --color-accent-warning-hover: #fbbf24;
+  --color-accent-danger: #ef4444;
+  --color-accent-danger-hover: #f87171;
+
+  /* 按钮色 */
+  --color-btn-primary-bg: #06b6d4;
+  --color-btn-primary-text: #0f172a;
+  --color-btn-primary-hover: #22d3ee;
+  --color-btn-default-bg: #1e293b;
+  --color-btn-default-text: #e2e8f0;
+  --color-btn-default-hover: #334155;
+  --color-btn-danger-bg: #dc2626;
+  --color-btn-danger-text: #ffffff;
+  --color-btn-danger-hover: #ef4444;
+
+  /* 滚动条色 */
+  --color-scrollbar-thumb: #334155;
+  --color-scrollbar-track: transparent;
+
+  /* E-06 修复：选中文本背景色使用变量统一管理 */
+  --color-selection-bg: rgba(6, 182, 212, 0.3);
+
+  /* 阴影 */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.4);
+}
+
+/* 浅色主题 */
+[data-theme="light"] {
+  --color-bg-primary: #f8fafc;
+  --color-bg-secondary: #ffffff;
+  --color-bg-tertiary: #f1f5f9;
+  --color-bg-elevated: #ffffff;
+
+  --color-surface-primary: #ffffff;
+  --color-surface-secondary: #f8fafc;
+  --color-surface-tertiary: #f1f5f9;
+  --color-surface-elevated: #ffffff;
+  --color-surface-hover: #e0f2fe;
+  --color-surface-active: #bae6fd;
+  --color-surface-error: rgba(239, 68, 68, 0.08);
+  --color-surface-success: rgba(34, 197, 94, 0.08);
+  --color-surface-warning: rgba(245, 158, 11, 0.08);
+  --color-surface-info: rgba(6, 182, 212, 0.08);
+
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-tertiary: #94a3b8;
+  --color-text-inverse: #f8fafc;
+  --color-text-error: #dc2626;
+  --color-text-success: #16a34a;
+  --color-text-warning: #d97706;
+  --color-text-info: #0891b2;
+
+  --color-border-primary: #e2e8f0;
+  --color-border-secondary: #cbd5e1;
+  --color-border-focus: #06b6d4;
+  --color-border-error: #dc2626;
+
+  --color-brand-primary: #0891b2;
+  --color-brand-primary-hover: #06b6d4;
+  --color-brand-primary-active: #0e7490;
+  --color-brand-secondary: #155e75;
+
+  --color-accent-warning: #d97706;
+  --color-accent-warning-hover: #f59e0b;
+  --color-accent-danger: #dc2626;
+  --color-accent-danger-hover: #ef4444;
+
+  --color-btn-primary-bg: #0891b2;
+  --color-btn-primary-text: #ffffff;
+  --color-btn-primary-hover: #06b6d4;
+  --color-btn-default-bg: #f1f5f9;
+  --color-btn-default-text: #334155;
+  --color-btn-default-hover: #e2e8f0;
+  --color-btn-danger-bg: #dc2626;
+  --color-btn-danger-text: #ffffff;
+  --color-btn-danger-hover: #ef4444;
+
+  --color-scrollbar-thumb: #cbd5e1;
+  --color-scrollbar-track: transparent;
+
+  /* E-06 修复：浅色主题选中文本背景色 */
+  --color-selection-bg: rgba(8, 145, 178, 0.25);
+
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
+}
+
+/* 基础样式 */
+html {
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-scrollbar-thumb);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-brand-primary);
+}
+
+/* Firefox 滚动条 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track);
+}
+
+/* 选中文本颜色 */
+::selection {
+  background-color: var(--color-selection-bg);
+  color: var(--color-text-primary);
+}
+
+/* 焦点环样式 */
+:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+
+/* 标题排版 */
+h1, h2, h3, h4, h5, h6 {
+  color: var(--color-text-primary);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+h1 { font-size: 1.875rem; }
+h2 { font-size: 1.5rem; }
+h3 { font-size: 1.25rem; }
+h4 { font-size: 1.125rem; }
+
+/* 代码样式 */
+code, pre {
+  font-family: var(--font-mono);
+}
+
+/* 链接样式 */
+a {
+  color: var(--color-brand-primary);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--color-brand-primary-hover);
+  text-decoration: underline;
+}
+
+/* 响应式布局优化 */
+/* 窄屏下导航栏可横向滚动 */
+@media (max-width: 768px) {
+  .flex.items-center.gap-1:has(nav) {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .flex.items-center.gap-1:has(nav)::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* flex 子元素防止溢出 */
+  .flex > * {
+    min-width: 0;
+  }
+
+  /* 内容区域全宽 */
+  main {
+    padding: 0.75rem !important;
+  }
+}
+
+/* 防止 flex 子元素内容溢出 */
+.flex {
+  min-width: 0;
+}

@@ -1,0 +1,26 @@
+name: qbittorrent
+version: "5.2.3"
+description: "qBittorrent BitTorrent client"
+icon: database
+autostart: true
+command:
+  - ./bin/qbittorrent-nox
+  - --confirm-legal-notice
+  - --webui-port=9091
+  - --profile=./data/qbittorrent
+workdir: ""
+tags:
+  - download
+  - media
+readiness:
+  type: tcp_check
+  port: 9091
+  interval_seconds: 1
+  timeout_seconds: 5
+stop:
+  grace_seconds: 10
+  timeout_seconds: 60
+logging:
+  enabled: true
+  max_size_mb: 10
+  max_files: 5

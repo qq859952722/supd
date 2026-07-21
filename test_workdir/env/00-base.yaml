@@ -1,0 +1,3 @@
+# 全局环境变量 - 所有服务和扩展共享
+PATH: /usr/local/bin:/usr/bin:/bin
+LANG: C.UTF-8

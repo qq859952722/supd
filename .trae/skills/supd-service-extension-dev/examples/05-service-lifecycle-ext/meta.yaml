@@ -1,0 +1,25 @@
+name: demo-lifecycle
+version: "1.0.0"
+description: "Service lifecycle hooks for web-demo"
+enabled: true
+runtime: bash
+entry: ./run.sh
+timeout_seconds: 10
+ui:
+  show_logs: true
+  button_style: default
+triggers:
+  service_lifecycle:
+    - event: post_ready
+      action: on-ready
+    - event: on_failure
+      action: on-fail
+    - event: pre_stop
+      action: on-stop
+actions:
+  - id: on-ready
+    label: "就绪钩子"
+  - id: on-fail
+    label: "失败钩子"
+  - id: on-stop
+    label: "停止钩子"

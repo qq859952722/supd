@@ -1,0 +1,8 @@
+name: tjs-test-ext
+version: 1.0.0
+description: "tjs runtime test extension"
+entry: run.js
+runtime: tjs
+timeout_seconds: 30
+triggers:
+  on_demand: true

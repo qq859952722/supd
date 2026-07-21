@@ -1,0 +1,23 @@
+name: tcp-echo
+version: "1.0.0"
+description: "TCP 回显服务（tcp_check readiness，端口 9002）"
+icon: radio
+autostart: true
+command:
+  - bash
+  - run.sh
+tags:
+  - test
+  - tcp
+readiness:
+  type: tcp_check
+  port: 9002
+  interval_seconds: 1
+  timeout_seconds: 10
+stop:
+  grace_seconds: 5
+  timeout_seconds: 30
+logging:
+  enabled: true
+  max_size_mb: 5
+  max_files: 3

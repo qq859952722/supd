@@ -1,0 +1,39 @@
+# Git
+.git
+.gitignore
+
+# 构建产物
+supd
+*.exe
+*.dll
+*.so
+*.dylib
+
+# 依赖
+web/node_modules
+
+# 测试工作目录
+test_workdir
+
+# 文档和日志
+docs/
+*.md
+!web/README.md
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# 临时文件
+tmp/
+*.tmp
+*.log
+
+# CI
+.github
+
+# Go 缓存
+*.test
+*.out
