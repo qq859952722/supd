@@ -2,7 +2,9 @@
 // REQ-2.10: 可视化表单包含所有 service.yaml 字段
 // 用于创建服务和编辑服务配置
 
-import { useState, type ReactNode } from 'react'
+import { useState, useMemo, type ReactNode } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { apiGet } from '@/lib/api-client'
 import { z } from 'zod'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { Input } from '@/components/ui/Input'
@@ -563,15 +565,6 @@ const RESTART_POLICY_OPTIONS = [
   { value: 'never', label: 'never（从不重启）' },
 ]
 
-const RUNTIME_OPTIONS = [
-  { value: '', label: '无（直接执行）' },
-  { value: 'bash', label: 'bash' },
-  { value: 'sh', label: 'sh' },
-  { value: 'python3', label: 'python3' },
-  { value: 'node', label: 'node' },
-  { value: 'bun', label: 'bun' },
-]
-
 // ===== 辅助组件 =====
 
 function Field({
@@ -660,6 +653,35 @@ export function ServiceForm({ initial, onSubmit, onCancel, submitLabel = '提交
   const [form, setForm] = useState<FormState>(() => formStateFromConfig(initial))
   // E-03-001: 字段级校验错误状态
   const [errors, setErrors] = useState<FormErrors>({})
+
+  // 运行时列表从 /api/runtimes 动态获取（含兜底内置）
+  const { data: runtimesData } = useQuery({
+    queryKey: ['runtimes'],
+    queryFn: () => apiGet<{ runtimes: Array<{ alias: string; available: boolean }> }>('/api/runtimes'),
+  })
+  const runtimeOptions = useMemo(() => {
+    const opts = [{ value: '', label: '无（直接执行）' }]
+    const seen = new Set<string>()
+    if (runtimesData?.runtimes) {
+      for (const rt of runtimesData.runtimes) {
+        if (rt.available && !seen.has(rt.alias)) {
+          seen.add(rt.alias)
+          opts.push({ value: rt.alias, label: rt.alias })
+        }
+      }
+    }
+    // 兜底：API 无结果时显示内置运行时
+    if (opts.length === 1) {
+      for (const r of ['bash', 'sh', 'python3', 'node']) {
+        opts.push({ value: r, label: r })
+      }
+    }
+    // 当前值不在列表中时追加（如自定义路径）
+    if (form.runtime && !seen.has(form.runtime)) {
+      opts.push({ value: form.runtime, label: form.runtime })
+    }
+    return opts
+  }, [runtimesData, form.runtime])
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setForm((f) => ({ ...f, [key]: value }))
@@ -759,7 +781,7 @@ export function ServiceForm({ initial, onSubmit, onCancel, submitLabel = '提交
               list="service-form-runtime-options"
             />
             <datalist id="service-form-runtime-options">
-              {RUNTIME_OPTIONS.filter((o) => o.value).map((o) => (
+              {runtimeOptions.filter((o) => o.value).map((o) => (
                 <option key={o.value} value={o.value} />
               ))}
             </datalist>

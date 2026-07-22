@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/Button'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/Tabs'
 import { Input } from '@/components/ui/Input'
+import { Select } from '@/components/ui/Select'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/Table'
 import { LogViewer } from '@/components/service/LogViewer'
 import { ProcessTree } from '@/components/service/ProcessTree'
@@ -53,6 +54,8 @@ import {
   Eraser,
   Plus,
   Pencil,
+  ToggleRight,
+  ToggleLeft,
 } from 'lucide-react'
 
 // 类型定义
@@ -145,6 +148,19 @@ interface ServiceExtensionSummary {
   concurrency?: string
 }
 
+// E-09-001: 扩展创建/编辑可视化表单数据
+interface ExtFormData {
+  name: string
+  version: string
+  description: string
+  runtime: string
+  entry: string
+  timeout_seconds: number
+  run_as: string
+  concurrency: string
+  triggers_on_demand: boolean
+}
+
 // 扩展运行历史条目（与后端 RunRecord 对应）
 interface ExtRunHistory {
   run_id: string
@@ -209,7 +225,9 @@ export function ServiceDetail() {
   // E-09-001: 服务级扩展 CRUD — 创建/编辑表单对话框状态
   const [showExtFormDialog, setShowExtFormDialog] = useState(false)
   const [editingExtName, setEditingExtName] = useState<string | null>(null)
-  const [extFormContent, setExtFormContent] = useState('')
+  const [extForm, setExtForm] = useState<ExtFormData | null>(null)
+  // 编辑扩展时保存原有完整配置（防止完整更新丢失 triggers/actions/ui 等字段）
+  const [extFormOriginal, setExtFormOriginal] = useState<Record<string, unknown> | null>(null)
   const [showExtDeleteDialog, setShowExtDeleteDialog] = useState<string | null>(null)
 
   // E-01-002 修复：区分加载态与错误态，避免404时永远显示 skeleton
@@ -351,6 +369,35 @@ export function ServiceDetail() {
     onError: (err: unknown) => { toast.error(getErrorMessage(err, '清除失败')) },
   })
 
+  // 运行时列表（用于扩展表单的运行时选择）
+  const { data: runtimesData } = useQuery({
+    queryKey: ['runtimes'],
+    queryFn: () => apiGet<{ runtimes: Array<{ alias: string; available: boolean; source: string }> }>('/api/runtimes'),
+  })
+  const runtimeOptions = useMemo(() => {
+    const opts = [{ value: '', label: '无（直接执行）' }]
+    const seen = new Set<string>()
+    if (runtimesData?.runtimes) {
+      for (const rt of runtimesData.runtimes) {
+        if (rt.available && !seen.has(rt.alias)) {
+          seen.add(rt.alias)
+          opts.push({ value: rt.alias, label: rt.alias })
+        }
+      }
+    }
+    // 兜底：API 无结果时显示内置运行时
+    if (opts.length === 1) {
+      for (const r of ['bash', 'sh', 'python3', 'node']) {
+        opts.push({ value: r, label: r })
+      }
+    }
+    // 当前值不在列表中时追加
+    if (extForm?.runtime && !seen.has(extForm.runtime)) {
+      opts.push({ value: extForm.runtime, label: extForm.runtime })
+    }
+    return opts
+  }, [runtimesData, extForm?.runtime])
+
   // E-09-001: 服务级扩展 CRUD mutations
   // 创建扩展：POST /api/services/{name}/extensions，body 为 ExtensionMeta JSON
   const createExtMutation = useMutation({
@@ -386,21 +433,24 @@ export function ServiceDetail() {
     onError: (err: unknown) => { toast.error(getErrorMessage(err, '删除扩展失败')) },
   })
 
-  // 打开创建扩展对话框
+  // 打开创建扩展对话框 — 初始化表单默认值
   const handleCreateExtension = () => {
     setEditingExtName(null)
-    // 提供最小化模板，引导用户填写
-    setExtFormContent(JSON.stringify({
+    setExtFormOriginal(null)
+    setExtForm({
       name: '',
       version: '1.0.0',
       description: '',
       runtime: 'bash',
-      triggers: { on_demand: true },
-      script: { path: 'run.sh' },
-    }, null, 2))
+      entry: 'run.sh',
+      timeout_seconds: 600,
+      run_as: '',
+      concurrency: 'replace',
+      triggers_on_demand: true,
+    })
     setShowExtFormDialog(true)
   }
-  // 打开编辑扩展对话框 — 加载现有 meta 配置
+  // 打开编辑扩展对话框 — 从 API 返回的配置回填表单
   const handleEditExtension = async (extName: string) => {
     setEditingExtName(extName)
     try {
@@ -408,26 +458,53 @@ export function ServiceDetail() {
         `/api/services/${encodeURIComponent(serviceName)}/extensions/${encodeURIComponent(extName)}`,
         undefined, true,
       )
-      setExtFormContent(JSON.stringify(detail.config ?? {}, null, 2))
+      const c = detail.config ?? {}
+      setExtFormOriginal(c)
+      const triggers = c.triggers as { on_demand?: boolean } | undefined
+      setExtForm({
+        name: String(c.name ?? extName),
+        version: String(c.version ?? '1.0.0'),
+        description: String(c.description ?? ''),
+        runtime: String(c.runtime ?? 'bash'),
+        entry: String(c.entry ?? 'run.sh'),
+        timeout_seconds: Number(c.timeout_seconds) || 600,
+        run_as: String(c.run_as ?? ''),
+        concurrency: String(c.concurrency ?? 'replace'),
+        triggers_on_demand: triggers?.on_demand !== false,
+      })
     } catch (err) {
       toast.error(getErrorMessage(err, '加载扩展配置失败'))
-      setExtFormContent('{}')
+      setExtForm(null)
+      return
     }
     setShowExtFormDialog(true)
   }
-  // 保存扩展（创建或更新）
+  // 保存扩展（创建或更新）— 从表单对象构建 API body
   const handleSaveExtension = () => {
-    let parsed: Record<string, unknown>
-    try {
-      parsed = JSON.parse(extFormContent)
-    } catch {
-      toast.error('JSON 格式错误，请检查语法')
-      return
+    if (!extForm) return
+    if (!extForm.name.trim()) { toast.error('扩展名称不能为空'); return }
+    const meta: Record<string, unknown> = {
+      name: extForm.name,
+      version: extForm.version,
+      description: extForm.description,
+      runtime: extForm.runtime,
+      entry: extForm.entry,
+      timeout_seconds: extForm.timeout_seconds,
+      concurrency: extForm.concurrency,
     }
-    if (editingExtName) {
-      updateExtMutation.mutate({ extName: editingExtName, meta: parsed })
+    if (extForm.run_as) meta.run_as = extForm.run_as
+    if (editingExtName && extFormOriginal) {
+      // 编辑模式：以原有配置为基础，仅更新表单编辑的字段
+      // 保留原有的 triggers/actions/ui/enabled 等配置不被覆盖
+      meta.triggers = extFormOriginal.triggers ?? { on_demand: extForm.triggers_on_demand }
+      if (extFormOriginal.actions) meta.actions = extFormOriginal.actions
+      if (extFormOriginal.ui) meta.ui = extFormOriginal.ui
+      if (extFormOriginal.enabled !== undefined) meta.enabled = extFormOriginal.enabled
+      updateExtMutation.mutate({ extName: editingExtName, meta })
     } else {
-      createExtMutation.mutate(parsed)
+      // 创建模式：只设置 on_demand 触发器
+      meta.triggers = { on_demand: extForm.triggers_on_demand }
+      createExtMutation.mutate(meta)
     }
   }
 
@@ -1351,19 +1428,126 @@ export function ServiceDetail() {
                 </button>
               </div>
             </div>
-            {/* 编辑器区域 */}
-            <div className="flex-1 overflow-hidden p-4">
-              <p className="text-xs text-[var(--color-text-tertiary)] mb-2">
-                编辑扩展 meta 配置（JSON 格式）。必填字段：<code className="font-mono text-[var(--color-brand-primary)]">name</code>、<code className="font-mono text-[var(--color-brand-primary)]">runtime</code>、<code className="font-mono text-[var(--color-brand-primary)]">triggers</code>。
-              </p>
-              <div className="border border-[var(--color-border-secondary)] rounded-md overflow-hidden">
-                <MonacoEditor
-                  value={extFormContent}
-                  onChange={setExtFormContent}
-                  onSave={handleSaveExtension}
-                  filename="meta.json"
-                  height="50vh"
-                />
+            {/* 可视化表单区域 */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {/* 基本信息 */}
+              <div className="space-y-3">
+                <div className="text-xs font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wide">基本信息</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-[var(--color-text-tertiary)]">扩展名称 <span className="text-[var(--color-brand-primary)]">*</span></label>
+                    <Input
+                      value={extForm?.name ?? ''}
+                      onChange={(e) => setExtForm(f => f ? { ...f, name: e.target.value } : f)}
+                      className="mt-1 h-8 text-sm font-mono"
+                      placeholder="my-extension"
+                      disabled={!!editingExtName}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-[var(--color-text-tertiary)]">版本</label>
+                    <Input
+                      value={extForm?.version ?? ''}
+                      onChange={(e) => setExtForm(f => f ? { ...f, version: e.target.value } : f)}
+                      className="mt-1 h-8 text-sm font-mono"
+                      placeholder="1.0.0"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-[var(--color-text-tertiary)]">描述</label>
+                  <Input
+                    value={extForm?.description ?? ''}
+                    onChange={(e) => setExtForm(f => f ? { ...f, description: e.target.value } : f)}
+                    className="mt-1 h-8 text-sm"
+                    placeholder="扩展描述（可选）"
+                  />
+                </div>
+              </div>
+
+              {/* 执行配置 */}
+              <div className="space-y-3">
+                <div className="text-xs font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wide">执行配置</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-[var(--color-text-tertiary)]">入口脚本</label>
+                    <Input
+                      value={extForm?.entry ?? ''}
+                      onChange={(e) => setExtForm(f => f ? { ...f, entry: e.target.value } : f)}
+                      className="mt-1 h-8 text-sm font-mono"
+                      placeholder="run.sh"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-[var(--color-text-tertiary)]">运行时</label>
+                    <Input
+                      value={extForm?.runtime ?? ''}
+                      onChange={(e) => setExtForm(f => f ? { ...f, runtime: e.target.value } : f)}
+                      className="mt-1 h-8 text-sm font-mono"
+                      placeholder="bash / sh / python3 / node 或绝对路径"
+                      list="ext-form-runtime-options"
+                    />
+                    <datalist id="ext-form-runtime-options">
+                      {runtimeOptions.filter((o) => o.value).map((o) => (
+                        <option key={o.value} value={o.value} />
+                      ))}
+                    </datalist>
+                  </div>
+                  <div>
+                    <label className="text-xs text-[var(--color-text-tertiary)]">超时(秒)</label>
+                    <Input
+                      type="number"
+                      value={extForm?.timeout_seconds ?? 600}
+                      onChange={(e) => setExtForm(f => f ? { ...f, timeout_seconds: Number(e.target.value) || 600 } : f)}
+                      className="mt-1 h-8 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-[var(--color-text-tertiary)]">运行身份</label>
+                    <Input
+                      value={extForm?.run_as ?? ''}
+                      onChange={(e) => setExtForm(f => f ? { ...f, run_as: e.target.value } : f)}
+                      className="mt-1 h-8 text-sm font-mono"
+                      placeholder="root（留空继承服务用户）"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-[var(--color-text-tertiary)]">并发策略</label>
+                    <Select
+                      className="mt-1 w-full"
+                      value={extForm?.concurrency ?? 'replace'}
+                      onChange={(e) => setExtForm(f => f ? { ...f, concurrency: e.target.value } : f)}
+                      options={[
+                        { value: 'replace', label: 'replace — 替换(新任务终止旧任务)' },
+                        { value: 'serialize', label: 'serialize — 串行排队' },
+                        { value: 'parallel', label: 'parallel — 并行执行' },
+                        { value: 'debounce:Ns', label: 'debounce:Ns — 防抖' },
+                      ]}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* 触发器 */}
+              <div className="space-y-3">
+                <div className="text-xs font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wide">触发器</div>
+                <div>
+                  <label className="text-xs text-[var(--color-text-tertiary)]">手动触发 (on_demand)</label>
+                  <div className="mt-1">
+                    <button
+                      type="button"
+                      onClick={() => setExtForm(f => f ? { ...f, triggers_on_demand: !f.triggers_on_demand } : f)}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm border transition-colors ${
+                        extForm?.triggers_on_demand
+                          ? 'border-[var(--color-brand-primary)] bg-[var(--color-brand-primary)]/10 text-[var(--color-brand-primary)]'
+                          : 'border-[var(--color-border-secondary)] text-[var(--color-text-tertiary)]'
+                      }`}
+                    >
+                      {extForm?.triggers_on_demand ? <ToggleRight className="h-4 w-4" /> : <ToggleLeft className="h-4 w-4" />}
+                      {extForm?.triggers_on_demand ? '已启用' : '已禁用'}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
