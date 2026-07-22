@@ -57,10 +57,17 @@ func runRun(cmd *cobra.Command, args []string) error {
 	dir := getWorkDir()
 	cfgPath := getConfigPath()
 
-	// 若工作目录不存在，自动调用 init 流程
+	// 若工作目录或配置文件不存在，自动调用 init 流程
 	// REQ-F-039: 若工作目录不存在，自动调用init流程
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		infof("工作目录 %s 不存在，自动初始化...", dir)
+	// Docker 场景：/etc/supd 目录可能已由镜像创建（含 runtimes/），但 config.yaml 缺失
+	_, dirErr := os.Stat(dir)
+	_, cfgErr := os.Stat(cfgPath)
+	if os.IsNotExist(dirErr) || os.IsNotExist(cfgErr) {
+		if os.IsNotExist(dirErr) {
+			infof("工作目录 %s 不存在，自动初始化...", dir)
+		} else {
+			infof("配置文件 %s 不存在，自动初始化...", cfgPath)
+		}
 		if err := runInit(cmd, args); err != nil {
 			return fmt.Errorf("自动初始化失败: %w", err)
 		}
