@@ -588,4 +588,33 @@ service nonexistent-user-svc: configured user "nobody-xyz" does not exist or loo
 
 ---
 
-*最近一次更新：2026-07-22（tjs 运行时接入默认配置 + Docker 工具集更新 + auto-create-users 全局扩展：3 文件修改，go build/vet/test 全部通过，supd init 生成验证通过）*
+## 2026-07-22 版本升级 v0.0.3 + 版本升级指南
+
+### 本次完成
+
+**1. 版本升级 v0.0.3**
+- README.md 版本号 v0.0.2 → v0.0.3（docker pull 示例 + 项目状态表，共 2 处）
+- 版本号通过 git tag `v0.0.3` + CI ldflags 注入，源码默认值仍为 `dev`
+- 本地验证：`go build -ldflags "-X main.version=0.0.3"` → `supd version` 输出 `supd 0.0.3` ✅
+
+**2. 版本升级指南文档**
+- 新建 [docs/devlog/version-upgrade-guide.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/version-upgrade-guide.md)
+- 记录版本管理架构（ldflags 注入链路、源码默认值、CI/Dockerfile/Makefile 三条注入路径）
+- 列出唯一需手动修改的文件（README.md 2 处）+ 永远不改的文件清单
+- 提供 6 步标准升级流程（更新 README → 验证 → 提交 → 打 tag → 确认 CI → 更新日志）
+- 含预发布版本、版本号规范、常见问题 FAQ
+- 后续发版只需按指南执行，无需重新分析代码
+
+### 验证
+- `go build ./...` ✅
+- `go vet ./...` ✅
+- 版本注入验证：`supd version` → `supd 0.0.3` ✅
+
+### 修改文件清单
+- `README.md` — 版本号 v0.0.2 → v0.0.3（2 处）
+- `docs/devlog/version-upgrade-guide.md` — 新建版本升级指南
+- `docs/devlog/session-notes.md` — 追加本次升级记录
+
+---
+
+*最近一次更新：2026-07-22（版本升级 v0.0.3 + 版本升级指南文档：README 2 处版本号更新，新建升级指南，go build/vet 通过，版本注入验证通过）*
