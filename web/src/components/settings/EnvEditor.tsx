@@ -8,12 +8,15 @@ import { toast } from '@/components/ui/Toast'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { t } from '@/lib/i18n'
-import { Save, Plus, Trash2 } from 'lucide-react'
+import { Save, Plus, Trash2, ToggleLeft, ToggleRight } from 'lucide-react'
 import { Input } from '@/components/ui/Input'
+import { entriesToEnvFileJson, isSensitiveKey } from '@/lib/env-yaml'
 
 interface EnvEntry {
   key: string
   value: string
+  enabled: boolean
+  hint: string
 }
 
 // 后端 /api/settings/env 返回 {env: {KEY: {value, enabled?, hint?}}}
@@ -32,9 +35,12 @@ export function EnvEditor() {
   })
 
   if (data && !initialized) {
+    // 保留 enabled/hint（enabled 缺省 true，与后端 *bool nil=true 语义一致）
     const envEntries = Object.entries(data.env ?? {}).map(([key, v]) => ({
       key,
       value: v.value ?? '',
+      enabled: v.enabled !== false,
+      hint: v.hint ?? '',
     }))
     setEntries(envEntries)
     setInitialized(true)
@@ -42,11 +48,8 @@ export function EnvEditor() {
 
   const saveMutation = useMutation({
     mutationFn: (env: EnvEntry[]) => {
-      const envMap: Record<string, { value: string }> = {}
-      for (const e of env) {
-        if (e.key) envMap[e.key] = { value: e.value }
-      }
-      return apiPut('/api/settings/env', { env: envMap }, true)
+      // 发送 config.EnvFile JSON 格式（{env:{KEY:{value,enabled?,hint?}}}）
+      return apiPut('/api/settings/env', entriesToEnvFileJson(env), true)
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['global-env'] })
@@ -59,16 +62,22 @@ export function EnvEditor() {
   })
 
   function addEntry() {
-    setEntries([...entries, { key: '', value: '' }])
+    setEntries([...entries, { key: '', value: '', enabled: true, hint: '' }])
   }
 
   function removeEntry(index: number) {
     setEntries(entries.filter((_, i) => i !== index))
   }
 
-  function updateEntry(index: number, field: 'key' | 'value', val: string) {
+  function updateEntry(index: number, field: 'key' | 'value' | 'hint', val: string) {
     const updated = [...entries]
     updated[index] = { ...updated[index]!, [field]: val }
+    setEntries(updated)
+  }
+
+  function toggleEnabled(index: number) {
+    const updated = [...entries]
+    updated[index] = { ...updated[index]!, enabled: !updated[index]!.enabled }
     setEntries(updated)
   }
 
@@ -94,25 +103,46 @@ export function EnvEditor() {
         <CardDescription>{t.settings.globalEnvDesc}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        {entries.map((entry, index) => (
-          <div key={index} className="flex items-center gap-2">
-            <Input
-              value={entry.key}
-              onChange={(e) => updateEntry(index, 'key', e.target.value)}
-              placeholder={t.settings.envKey}
-              className="flex-1"
-            />
-            <Input
-              value={entry.value}
-              onChange={(e) => updateEntry(index, 'value', e.target.value)}
-              placeholder={t.settings.envValue}
-              className="flex-1"
-            />
-            <Button variant="danger" size="sm" onClick={() => removeEntry(index)}>
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-        ))}
+        {entries.map((entry, index) => {
+          const sensitive = isSensitiveKey(entry.key)
+          return (
+            <div key={index} className="flex items-center gap-2">
+              <Input
+                value={entry.key}
+                onChange={(e) => updateEntry(index, 'key', e.target.value)}
+                placeholder={t.settings.envKey}
+                className="flex-1"
+              />
+              <Input
+                type={sensitive ? 'password' : 'text'}
+                value={entry.value}
+                onChange={(e) => updateEntry(index, 'value', e.target.value)}
+                placeholder={t.settings.envValue}
+                className="flex-1"
+              />
+              <Input
+                value={entry.hint}
+                onChange={(e) => updateEntry(index, 'hint', e.target.value)}
+                placeholder="说明（可选）"
+                className="flex-1"
+              />
+              <button
+                onClick={() => toggleEnabled(index)}
+                className={`flex items-center gap-1 px-2 py-1.5 rounded text-xs border transition-colors ${
+                  entry.enabled
+                    ? 'border-[var(--color-brand-primary)] bg-[var(--color-brand-primary)]/10 text-[var(--color-brand-primary)]'
+                    : 'border-[var(--color-border-secondary)] text-[var(--color-text-tertiary)]'
+                }`}
+                title={entry.enabled ? '已启用' : '已禁用'}
+              >
+                {entry.enabled ? <ToggleRight className="h-3.5 w-3.5" /> : <ToggleLeft className="h-3.5 w-3.5" />}
+              </button>
+              <Button variant="danger" size="sm" onClick={() => removeEntry(index)}>
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          )
+        })}
         <div className="flex gap-2">
           <Button variant="default" size="sm" onClick={addEntry}>
             <Plus className="h-4 w-4" />

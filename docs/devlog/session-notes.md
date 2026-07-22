@@ -917,4 +917,102 @@ service nonexistent-user-svc: configured user "nobody-xyz" does not exist or loo
 
 ---
 
-*最近一次更新：2026-07-22 v0.0.5 发布（修复 Docker 首次启动 config.yaml 缺失 + v0.0.4 全部变更）*
+## 2026-07-22 前端环境变量展示及编辑方式修复
+
+### 触发原因
+用户反馈"前端环境变量展示及编辑方式有误"。根因：env.yaml 必须使用 `env:` 包装层格式（`env: { KEY: { value, enabled?, hint? } }`），但前端多处使用简单 `KEY: VALUE` 解析/序列化，且不支持 enabled/hint 字段。这是贯穿前后端的系统性 BUG（后端 `handleSaveServiceEnv` 在上一轮已修复为 `config.EnvFile`）。
+
+### 本次完成（前端 4 文件 + 共享工具 1 文件）
+
+**0. 共享工具（上一轮已创建，本轮复用）**
+- [`web/src/lib/env-yaml.ts`](file:///home/qq/Documents/trae_projects/supd/web/src/lib/env-yaml.ts) — 提取自 ExtensionDetail 的已验证纯函数：`parseEnvYaml`/`serializeEnvYaml`/`yamlStr`/`isSensitiveKey`/`entriesToEnvFileJson`/`envFileJsonToEntries`
+
+**1. ExtensionDetail.tsx — 删除重复本地定义**
+- 删除 L924-1006 的 4 个本地定义（`interface EnvEntry`/`isSensitiveKey`/`parseEnvYaml`/`serializeEnvYaml`），改用 `@/lib/env-yaml` import（顶部已添加）
+- EnvTab 函数体保持不变（已正确使用 `serializeEnvYaml` + `apiPut('/api/files')` 写文件）
+
+**2. ServiceDetail.tsx — 修 parseEnvYaml + 类型扩展**
+- 删除 L164-182 本地 `parseEnvYaml`（简单 `KEY: VALUE` 解析，不处理 `env:` 包装层），改用 `import { parseEnvYaml } from '@/lib/env-yaml'`
+- `globalEnv` 类型扩展为 `Record<string, { value: string; enabled?: boolean; hint?: string }>`
+- 三层 env 计算逻辑无需改动：`parseEnvYaml` 返回 `EnvEntry[]`（含 enabled/hint），通过 `...e` 展开自动传入 `serviceEnvEntries`
+
+**3. service/EnvEditor.tsx — 修格式 + 加 enabled/hint**
+- `EnvEntry` 扩展 `enabled?`/`hint?`（可选，仅 service section）
+- `saveMutation` 从 `Record<string,string>` 改为 `entriesToEnvFileJson(libEntries)`，发送 `{env:{KEY:{value,enabled?,hint?}}}` JSON
+- queryKey 从 `['service-env', serviceName]` 改为 `['service-env-file', serviceName]`（与 ServiceDetail 读取 env.yaml 的 queryKey 一致，保存后刷新）
+- 表格增加「说明」「启用」列（仅 editable=true）：hint 输入框 + enabled toggle 按钮（ToggleRight/ToggleLeft）
+- 敏感字段（PASSWORD/PWD/SECRET/TOKEN/KEY）用 `type="password"` + 「敏感字段」标签
+
+**4. settings/EnvEditor.tsx — 加 enabled/hint**
+- `EnvEntry` 扩展 `enabled: boolean`/`hint: string`（必填）
+- 读取时保留 enabled/hint（`v.enabled !== false` 缺省 true，与后端 `*bool nil=true` 一致）
+- 保存用 `entriesToEnvFileJson(env)` 替代手动构造 `Record<string, {value}>`
+- UI 每行增加 hint 输入 + enabled toggle 按钮 + 敏感字段 password 类型
+
+### 验证
+- `go build ./...` ✅
+- `go vet ./...` ✅
+- `pnpm build` ✅（TypeScript 编译通过，vite build 成功，1986 模块转换）
+- `grep` 确认 ExtensionDetail.tsx 无重复定义 ✅
+- 所有 env 编辑器统一引用 `@/lib/env-yaml` ✅
+
+### 环境修复（非代码问题）
+- `pnpm build` 首次失败：`ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`（package.json 的 `pnpm.overrides` 字段被新版 pnpm 忽略，lockfile 不匹配）
+- 运行 `pnpm install --no-frozen-lockfile` 修复（更新 pnpm-lock.yaml），非本次代码修改引入
+
+### 修改文件清单（5 个）
+- `web/src/lib/env-yaml.ts`（上一轮创建）— 共享工具
+- `web/src/pages/ExtensionDetail.tsx` — 删除 4 个重复本地定义
+- `web/src/pages/ServiceDetail.tsx` — import lib parseEnvYaml + 删除本地 + globalEnv 类型扩展
+- `web/src/components/service/EnvEditor.tsx` — 修格式 + queryKey + enabled/hint UI
+- `web/src/components/settings/EnvEditor.tsx` — 加 enabled/hint 支持
+- `internal/api/service_ops.go`（上一轮修改）— handleSaveServiceEnv 改用 config.EnvFile
+
+### 遗留事项
+- 本次所有修改未提交 git（等待用户确认）
+- EnvSection 的 `useState(entries)` 同步问题（既有问题，props 变化时 editEntries 不自动更新）未修复，避免扩大改动范围
+- pnpm-lock.yaml 被 `--no-frozen-lockfile` 更新，提交时需包含此变更
+
+### 下次会话注意
+- env.yaml 格式必须包含 `env:` 包装层（`env: { KEY: { value, enabled?, hint? } }`），直接写 `KEY: value` 会被 `config.LoadEnv` 静默忽略
+- 前端所有 env 编辑器（ExtensionDetail / ServiceDetail / service EnvEditor / settings EnvEditor）统一使用 `@/lib/env-yaml` 共享工具
+- `service/EnvEditor` 保存后 invalidate `['service-env-file', serviceName]`（与 ServiceDetail 读取 env.yaml 的 queryKey 一致）
+- service EnvEditor 的本地 `EnvEntry` 与 lib `EnvEntry` 类型不同（本地有 `source`/`overridden`，lib 有 `enabled`/`hint`），在 `saveMutation` 中通过 `envs.map(...)` 转换
+
+---
+
+## 2026-07-22 env.yaml 代码审计 + 运行状态测试 + v0.0.6 发布（本轮完成）
+
+### 本次完成
+
+**1. 代码审计（3 项 BUG 修复）**：
+- 🔴 `config/env.go` YAML tag 缺少 `omitempty`：`Enabled *bool` nil 指针输出 `enabled: null`、`Hint string` 空值输出 `hint: ""`，污染 env.yaml 文件。修复：tag 加 `omitempty`
+- 🔴 `web/src/lib/env-yaml.ts` `parseEnvYaml` 硬编码 `indent === 2`：后端 `yaml.Marshal` 生成 4 空格缩进，前端无法解析。修复：用 `keyIndent` 变量动态跟踪变量名行缩进（第一个缩进行确定），兼容 2/4 空格
+- 🔴 `parseEnvYaml` 注释处理未考虑引号内的 `#`：`'value with # chars'` 被错误截断。修复：新增 `stripYamlComment` 函数，跟踪引号状态，只截断引号外且前导为空格的 `#`
+- `service_ops.go` import 分组规范化
+
+**2. 运行状态测试（5 组 A-E，全部通过）**：
+- A 组（服务 env 全链路）：PUT 保存 → GET 读取验证格式 → 启动服务验证注入（ENV_TEST_VAR 注入、ENV_DISABLED_VAR 不注入、ENV_PASSWORD 注入、ENV_SPECIAL 特殊字符注入）✅
+- B 组（全局 env 全链路）：PUT 保存 → GET 验证 → 读文件验证格式 → 重启服务验证 GLOBAL_TEST_VAR 注入 ✅
+- C 组（扩展 env 全链路）：创建 env-test-ext 扩展 → PUT 保存扩展 env → 读文件验证 4 空格缩进格式 → 触发扩展运行验证注入（EXT_TEST_VAR/EXT_DISABLED_VAR/EXT_PASSWORD/EXT_SPECIAL/GLOBAL_TEST_VAR 全部正确）✅
+- D 组（前端解析兼容性）：21 个单元测试覆盖 4 空格缩进/2 空格缩进/空 env/只有 value/带注释/JSON API 往返 ✅
+- E 组（边界情况）：空值/含冒号 URL/含双引号/含特殊字符 hint/禁用+空值 — 后端生成 + 前端 parseEnvYaml 端到端解析全部正确 ✅
+
+**3. v0.0.6 发布**：
+- README.md 版本号 v0.0.5 → v0.0.6
+- go build/vet/test + pnpm build 全部通过
+- git commit + tag v0.0.6 + push GitHub
+
+### 修复文件清单
+- `internal/config/env.go` — EnvVar YAML tag 加 omitempty
+- `internal/api/service_ops.go` — handleSaveServiceEnv 改用 config.EnvFile + yaml.Marshal；import 分组修复
+- `web/src/lib/env-yaml.ts` — parseEnvYaml 缩进兼容性修复 + stripYamlComment 引号感知注释处理
+- `README.md` — 版本号更新
+
+### 测试用例保留
+- `test_workdir/services/env-test/` — 服务 env 测试服务（service.yaml + run.sh）
+- `test_workdir/extensions/env-test-ext/` — 扩展 env 测试扩展（meta.yaml + run.sh）
+
+---
+
+*最近一次更新：2026-07-22 env.yaml 代码审计 + 运行状态测试 + v0.0.6 发布*

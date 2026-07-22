@@ -17,6 +17,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { LogViewer } from '@/components/service/LogViewer'
 import { ProcessTree } from '@/components/service/ProcessTree'
 import { EnvEditor } from '@/components/service/EnvEditor'
+import { parseEnvYaml } from '@/lib/env-yaml'
 import { MonacoEditor } from '@/components/editor/MonacoEditor'
 import { ServiceForm, serializeServiceConfig, parseServiceYaml, type ServiceConfig } from '@/components/service/ServiceForm'
 import { IconRenderer } from '@/components/common/IconRenderer'
@@ -160,27 +161,6 @@ interface ExtRunHistory {
   trigger_type?: string
 }
 
-// 简易 YAML key:value 解析（env.yaml 格式为 KEY: VALUE）
-function parseEnvYaml(content: string): Array<{ key: string; value: string; source: 'service' | 'inherited' }> {
-  if (!content) return []
-  const lines = content.split('\n')
-  const entries: Array<{ key: string; value: string; source: 'service' | 'inherited' }> = []
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#')) continue
-    const idx = trimmed.indexOf(':')
-    if (idx <= 0) continue
-    const key = trimmed.slice(0, idx).trim()
-    let value = trimmed.slice(idx + 1).trim()
-    // 去除引号
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1)
-    }
-    if (key) entries.push({ key, value, source: 'service' })
-  }
-  return entries
-}
-
 const stateVariantMap: Record<ServiceState, 'default' | 'info' | 'success' | 'warning' | 'danger' | 'secondary'> = {
   pending: 'secondary',
   starting: 'info',
@@ -296,7 +276,7 @@ export function ServiceDetail() {
     queryKey: ['global-env'],
     queryFn: async () => {
       try {
-        return await apiGet<{ env: Record<string, { value: string }> }>('/api/settings/env', undefined, true)
+        return await apiGet<{ env: Record<string, { value: string; enabled?: boolean; hint?: string }> }>('/api/settings/env', undefined, true)
       } catch {
         return { env: {} }
       }

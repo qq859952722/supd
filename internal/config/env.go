@@ -10,8 +10,8 @@ import (
 // REQ-D-008: env.yaml 格式
 type EnvVar struct {
 	Value   string `yaml:"value" json:"value"`
-	Enabled *bool  `yaml:"enabled" json:"enabled,omitempty"` // pointer: nil = true (default)
-	Hint    string `yaml:"hint" json:"hint,omitempty"`
+	Enabled *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"` // pointer: nil = true (default, omitted in YAML)
+	Hint    string `yaml:"hint,omitempty" json:"hint,omitempty"`
 }
 
 // EnvFile env.yaml 文件结构

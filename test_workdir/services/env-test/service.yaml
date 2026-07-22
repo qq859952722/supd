@@ -1,0 +1,6 @@
+name: env-test
+version: "1.0"
+description: 环境变量测试服务（验证 env.yaml 加载和 enabled 控制）
+command: ["bash", "run.sh"]
+restart:
+  policy: never

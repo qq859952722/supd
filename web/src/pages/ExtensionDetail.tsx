@@ -17,6 +17,13 @@ import { useTaskToast } from '@/components/ui/TaskToast'
 import { MonacoEditor } from '@/components/editor/MonacoEditor'
 import { t } from '@/lib/i18n'
 import { getErrorMessage } from '@/lib/error-utils'
+import {
+  type EnvEntry,
+  parseEnvYaml,
+  serializeEnvYaml,
+  yamlStr,
+  isSensitiveKey,
+} from '@/lib/env-yaml'
 import { useState, useMemo, useEffect } from 'react'
 import {
   Play,
@@ -281,15 +288,6 @@ function parseYamlValue(v: string): unknown {
   // 去引号
   if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
     return v.slice(1, -1)
-  }
-  return v
-}
-
-function yamlStr(v: string): string {
-  // 需要引号的情况：空字符串、含特殊字符
-  if (!v) return '""'
-  if (/[:#{}\[\],&*!|>'"%@`\n]/.test(v) || v.startsWith(' ') || v.endsWith(' ')) {
-    return `"${v.replace(/"/g, '\\"')}"`
   }
   return v
 }
@@ -921,91 +919,6 @@ function ConfigTab({ name, configPath }: { name: string; configPath?: string }) 
 }
 
 // --- 扩展环境变量可视化编辑 ---
-
-// REQ-D-008: env.yaml 单条变量结构
-interface EnvEntry {
-  key: string
-  value: string
-  enabled: boolean
-  hint: string
-}
-
-// REQ-F-015: 敏感字段启发式识别（PASSWORD/PWD/SECRET/TOKEN/KEY）
-function isSensitiveKey(key: string): boolean {
-  const upper = key.toUpperCase()
-  return ['PASSWORD', 'PWD', 'SECRET', 'TOKEN', 'KEY'].some((kw) => upper.includes(kw))
-}
-
-// 解析 env.yaml 文本为条目列表
-function parseEnvYaml(yaml: string): EnvEntry[] {
-  const entries: EnvEntry[] = []
-  const lines = yaml.split('\n')
-  let i = 0
-  let inEnv = false
-  let currentKey = ''
-  let current: EnvEntry | null = null
-
-  while (i < lines.length) {
-    const raw = lines[i]
-    if (!raw) { i++; continue }
-    const hashIdx = raw.indexOf('#')
-    const line = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw
-    const trimmed = line.trim()
-    if (!trimmed) { i++; continue }
-
-    // 顶层 env: 块开始
-    if (!line.startsWith(' ') && !line.startsWith('\t')) {
-      if (trimmed === 'env:') {
-        inEnv = true
-      } else {
-        inEnv = false
-      }
-      i++
-      continue
-    }
-
-    if (!inEnv) { i++; continue }
-
-    // env 块内的缩进行
-    const indent = line.length - line.trimStart().length
-    // 2 空格缩进 = 变量名行（KEY:）
-    if (indent === 2 && trimmed.endsWith(':')) {
-      // 保存上一条
-      if (current) entries.push(current)
-      currentKey = trimmed.slice(0, -1).trim()
-      current = { key: currentKey, value: '', enabled: true, hint: '' }
-    } else if (current && indent >= 4 && trimmed.includes(':')) {
-      const colonIdx = trimmed.indexOf(':')
-      const subKey = trimmed.slice(0, colonIdx).trim()
-      const subVal = trimmed.slice(colonIdx + 1).trim()
-      // 去引号
-      let v = subVal
-      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
-        v = v.slice(1, -1)
-      }
-      if (subKey === 'value') current.value = v
-      else if (subKey === 'enabled') current.enabled = v === 'true'
-      else if (subKey === 'hint') current.hint = v
-    }
-    i++
-  }
-  if (current) entries.push(current)
-  return entries
-}
-
-// 序列化条目列表为 env.yaml 文本
-function serializeEnvYaml(entries: EnvEntry[]): string {
-  if (entries.length === 0) return 'env: {}\n'
-  const lines: string[] = ['env:']
-  for (const e of entries) {
-    if (!e.key) continue
-    lines.push(`  ${e.key}:`)
-    lines.push(`    value: ${yamlStr(e.value)}`)
-    if (!e.enabled) lines.push(`    enabled: false`)
-    if (e.hint) lines.push(`    hint: ${yamlStr(e.hint)}`)
-  }
-  return lines.join('\n') + '\n'
-}
 
 function EnvTab({ name, envPath }: { name: string; envPath?: string }) {
   const queryClient = useQueryClient()

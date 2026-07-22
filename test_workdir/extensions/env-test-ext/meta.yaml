@@ -1,0 +1,18 @@
+name: env-test-ext
+version: "1.0.0"
+description: "扩展环境变量注入测试（验证 env.yaml 加载和 enabled 控制）"
+enabled: true
+runtime: bash
+entry: run.sh
+timeout_seconds: 30
+concurrency: replace
+ui:
+  show_logs: true
+  button_style: default
+  icon: flask
+actions:
+  - id: check
+    label: "检查环境变量"
+    button_style: primary
+triggers:
+  on_demand: true

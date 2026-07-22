@@ -6,17 +6,20 @@ import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/Table'
-import { ChevronDown, ChevronRight, Plus, Trash2, Save } from 'lucide-react'
+import { ChevronDown, ChevronRight, Plus, Trash2, Save, ToggleLeft, ToggleRight } from 'lucide-react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiPut } from '@/lib/api-client'
 import { toast } from '@/components/ui/Toast'
 import { getErrorMessage } from '@/lib/error-utils'
+import { entriesToEnvFileJson, isSensitiveKey } from '@/lib/env-yaml'
 
 interface EnvEntry {
   key: string
   value: string
   source: 'service' | 'inherited'
   overridden?: boolean
+  enabled?: boolean  // 仅 service section（可编辑）
+  hint?: string      // 仅 service section（可编辑）
 }
 
 interface EnvEditorProps {
@@ -46,12 +49,22 @@ function EnvSection({
   const queryClient = useQueryClient()
 
   // E-02 修复：silent=true 避免与 onError 重复 toast，提取后端错误消息
+  // 发送 config.EnvFile JSON 格式（{env:{KEY:{value,enabled?,hint?}}}），与后端 handleSaveServiceEnv 一致
   const saveMutation = useMutation({
-    mutationFn: (env: Record<string, string>) =>
-      apiPut(`/api/services/${encodeURIComponent(serviceName)}/env`, env, true),
+    mutationFn: (envs: EnvEntry[]) => {
+      // 本地 EnvEntry（enabled?/hint? 可选）→ lib EnvEntry（enabled/hint 必填）
+      const libEntries = envs.map((e) => ({
+        key: e.key,
+        value: e.value,
+        enabled: e.enabled !== false,
+        hint: e.hint ?? '',
+      }))
+      return apiPut(`/api/services/${encodeURIComponent(serviceName)}/env`, entriesToEnvFileJson(libEntries), true)
+    },
     onSuccess: () => {
       toast.success('环境变量已保存')
-      queryClient.invalidateQueries({ queryKey: ['service-env', serviceName] })
+      // 与 ServiceDetail 读取 env.yaml 的 queryKey 一致，保存后刷新文件内容
+      queryClient.invalidateQueries({ queryKey: ['service-env-file', serviceName] })
     },
     onError: (err: unknown) => {
       toast.error(getErrorMessage(err, '保存环境变量失败'))
@@ -60,7 +73,7 @@ function EnvSection({
 
   const handleAdd = () => {
     if (!newKey.trim()) return
-    setEditEntries([...editEntries, { key: newKey.trim(), value: newValue, source: 'service' }])
+    setEditEntries([...editEntries, { key: newKey.trim(), value: newValue, source: 'service', enabled: true, hint: '' }])
     setNewKey('')
     setNewValue('')
   }
@@ -73,12 +86,16 @@ function EnvSection({
     setEditEntries(editEntries.map((e) => (e.key === key ? { ...e, value } : e)))
   }
 
+  const handleChangeHint = (key: string, hint: string) => {
+    setEditEntries(editEntries.map((e) => (e.key === key ? { ...e, hint } : e)))
+  }
+
+  const handleToggleEnabled = (key: string) => {
+    setEditEntries(editEntries.map((e) => (e.key === key ? { ...e, enabled: !e.enabled } : e)))
+  }
+
   const handleSave = () => {
-    const envObj: Record<string, string> = {}
-    for (const entry of editEntries) {
-      envObj[entry.key] = entry.value
-    }
-    saveMutation.mutate(envObj)
+    saveMutation.mutate(editEntries)
   }
 
   return (
@@ -103,44 +120,81 @@ function EnvSection({
               <TableRow>
                 <TableHead>Key</TableHead>
                 <TableHead>Value</TableHead>
+                {editable && <TableHead>说明</TableHead>}
+                {editable && <TableHead className="w-20">启用</TableHead>}
                 <TableHead>来源</TableHead>
                 {editable && <TableHead>操作</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
-              {(editable ? editEntries : entries).map((entry) => (
-                <TableRow key={entry.key} className={entry.overridden ? 'bg-[var(--color-surface-warning)]' : ''}>
-                  <TableCell className="font-mono text-sm">
-                    {entry.key}
-                    {entry.overridden && (
-                      <Badge variant="warning" className="ml-2 text-[10px]">覆盖</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {editable ? (
-                      <Input
-                        value={entry.value}
-                        onChange={(e) => handleChange(entry.key, e.target.value)}
-                        className="font-mono text-sm h-7"
-                      />
-                    ) : (
-                      <span className="font-mono text-sm text-[var(--color-text-secondary)]">{entry.value}</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={entry.source === 'service' ? 'info' : 'secondary'}>
-                      {entry.source === 'service' ? '本服务' : '继承'}
-                    </Badge>
-                  </TableCell>
-                  {editable && (
-                    <TableCell>
-                      <Button variant="danger" size="sm" onClick={() => handleRemove(entry.key)}>
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
+              {(editable ? editEntries : entries).map((entry) => {
+                const sensitive = isSensitiveKey(entry.key)
+                return (
+                  <TableRow key={entry.key} className={entry.overridden ? 'bg-[var(--color-surface-warning)]' : ''}>
+                    <TableCell className="font-mono text-sm">
+                      {entry.key}
+                      {entry.overridden && (
+                        <Badge variant="warning" className="ml-2 text-[10px]">覆盖</Badge>
+                      )}
                     </TableCell>
-                  )}
-                </TableRow>
-              ))}
+                    <TableCell>
+                      {editable ? (
+                        <div>
+                          <Input
+                            type={sensitive ? 'password' : 'text'}
+                            value={entry.value}
+                            onChange={(e) => handleChange(entry.key, e.target.value)}
+                            className="font-mono text-sm h-7"
+                            placeholder={sensitive ? '••••••' : 'value'}
+                          />
+                          {sensitive && (
+                            <span className="text-[10px] text-[var(--color-text-tertiary)]">敏感字段</span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="font-mono text-sm text-[var(--color-text-secondary)]">{entry.value}</span>
+                      )}
+                    </TableCell>
+                    {editable && (
+                      <TableCell>
+                        <Input
+                          value={entry.hint ?? ''}
+                          onChange={(e) => handleChangeHint(entry.key, e.target.value)}
+                          placeholder="说明（可选）"
+                          className="text-sm h-7"
+                        />
+                      </TableCell>
+                    )}
+                    {editable && (
+                      <TableCell>
+                        <button
+                          onClick={() => handleToggleEnabled(entry.key)}
+                          className={`flex items-center gap-1 px-2 py-1 rounded text-xs border transition-colors ${
+                            entry.enabled !== false
+                              ? 'border-[var(--color-brand-primary)] bg-[var(--color-brand-primary)]/10 text-[var(--color-brand-primary)]'
+                              : 'border-[var(--color-border-secondary)] text-[var(--color-text-tertiary)]'
+                          }`}
+                          title={entry.enabled !== false ? '已启用' : '已禁用'}
+                        >
+                          {entry.enabled !== false ? <ToggleRight className="h-3.5 w-3.5" /> : <ToggleLeft className="h-3.5 w-3.5" />}
+                        </button>
+                      </TableCell>
+                    )}
+                    <TableCell>
+                      <Badge variant={entry.source === 'service' ? 'info' : 'secondary'}>
+                        {entry.source === 'service' ? '本服务' : '继承'}
+                      </Badge>
+                    </TableCell>
+                    {editable && (
+                      <TableCell>
+                        <Button variant="danger" size="sm" onClick={() => handleRemove(entry.key)}>
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </TableCell>
+                    )}
+                  </TableRow>
+                )
+              })}
             </TableBody>
           </Table>
 

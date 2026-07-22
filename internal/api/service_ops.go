@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.yaml.in/yaml/v4"
 
+	"github.com/supdorg/supd/internal/config"
 	"github.com/supdorg/supd/internal/core"
 	"github.com/supdorg/supd/internal/errors"
 )
@@ -479,13 +480,17 @@ func (s *Server) handleSaveServiceEnv(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 前端发送 Record<string,string> 格式
-	var envMap map[string]string
+	// 前端发送 config.EnvFile JSON 格式（{env:{KEY:{value,enabled?,hint?}}}）
+	// 与 handleSaveExtensionEnv / handleUpdateEnv 保持一致
+	var envFile config.EnvFile
 	// N-01-001: 限制请求体大小，防止超大请求 DoS
 	r.Body = http.MaxBytesReader(w, r.Body, MaxConfigSize)
-	if err := json.NewDecoder(r.Body).Decode(&envMap); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&envFile); err != nil {
 		respondError(w, errors.ErrInvalidRequest, fmt.Sprintf("invalid request body: %v", err))
 		return
+	}
+	if envFile.Env == nil {
+		envFile.Env = make(map[string]config.EnvVar)
 	}
 
 	// 确定环境变量文件路径
@@ -496,8 +501,8 @@ func (s *Server) handleSaveServiceEnv(w http.ResponseWriter, r *http.Request) {
 		envPath = filepath.Join("/etc/supd/services", name, "env.yaml")
 	}
 
-	// 序列化为 YAML 并写入
-	data, err := yaml.Marshal(envMap)
+	// 序列化为 YAML 并写入（含 env: 包装层，格式与 config.LoadEnv 兼容）
+	data, err := yaml.Marshal(&envFile)
 	if err != nil {
 		respondError(w, errors.ErrInternal, fmt.Sprintf("failed to marshal env: %v", err))
 		return

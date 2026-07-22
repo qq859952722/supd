@@ -1,3 +1,7 @@
-# 全局环境变量 - 所有服务和扩展共享
-PATH: /usr/local/bin:/usr/bin:/bin
-LANG: C.UTF-8
+env:
+    GLOBAL_DISABLED:
+        value: should-not-appear
+        enabled: false
+    GLOBAL_TEST_VAR:
+        value: global-value
+        hint: 全局测试变量
