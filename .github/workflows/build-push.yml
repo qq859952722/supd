@@ -48,7 +48,7 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # ── 确定版本标签 ──
       - name: 确定版本
@@ -66,7 +66,7 @@ jobs:
       # ── 查找 tjs 缓存（以 tjs 版本 + 平台为 key）──
       - name: 查找 tjs 构建缓存
         id: tjs-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /tmp/tjs-binary
           key: tjs-${{ matrix.arch }}-${{ inputs.tjs_version }}

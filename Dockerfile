@@ -4,13 +4,13 @@
 # supd 自带 PID 1 能力（PR_SET_CHILD_SUBREAPER + SIGCHLD 回收），无需 tini/dumb-init
 
 # ---------- Stage 1: 前端构建 ----------
-FROM node:20-alpine AS web-builder
+FROM node:24-alpine AS web-builder
 WORKDIR /web
-COPY web/package.json web/pnpm-lock.yaml ./
-# 用 npx 临时调用 pnpm@10（避免 corepack/npm 全局安装的兼容性问题）
-RUN npx -y pnpm@10 install --frozen-lockfile
+COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
+# 用 npx 临时调用 pnpm@11（避免 corepack/npm 全局安装的兼容性问题）
+RUN npx -y pnpm@11 install --frozen-lockfile
 COPY web/ ./
-RUN npx -y pnpm@10 build
+RUN npx -y pnpm@11 build
 
 # ---------- Stage 2: 后端构建 ----------
 FROM golang:1.25-alpine AS go-builder
