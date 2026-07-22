@@ -71,13 +71,16 @@
 - **实际实现**：core.StartProcess 函数签名不支持 syscall.SysProcAttr 的 Credential 参数，executor.go 中 run_as 解析出的 Credential 暂未传入进程启动
 - **偏差原因**：core.StartProcess 是通用进程启动函数，当前仅接受 user/group 字符串而非 Credential 结构体。完整接入需要重构 StartProcess 签名以支持 SysProcAttr，属于跨模块改动
 - **风险评估**：中。run_as 配置可解析但运行时不生效，非 root 用户下扩展以 supd 启动用户身份运行
-- **状态**：🟢 已部分修复（2026-07-09 审计整改）
+- **状态**：✅ 已完全修复（2026-07-22）
 - **修复内容**：
   - core.StartProcess 签名重构为接受 `*syscall.Credential` 参数，支持身份切换（含补充组）
   - executor.go 接入 ResolveRunAs + BuildCredential，显式 run_as 字段现已生效
   - TriggerContext 新增 ServiceUser 字段，用于服务级扩展默认 run_as
-  - **剩余差距**：服务级扩展的默认 run_as（= 服务 user 字段值）需在各触发点构造 TriggerContext 时传入 ServiceUser，当前仅显式 run_as 生效；服务自身的 user 字段身份切换暂未接入（StartProcess 传 nil）
-- **当前风险评估**：低。显式 run_as 已生效；服务级默认值和服务 user 切换为边缘场景
+  - 新增 `internal/core/credential.go`：ResolveServiceCredential + StartServiceProcess，服务自身 user 字段身份切换已接入
+  - bootstrap.go 2 处 StartProcess → StartServiceProcess，服务启动时按 user/group 切换身份
+  - dispatcher.go 填充 matchedExtension.serviceUser，服务级扩展默认 run_as 继承服务 user
+  - service_ops.go 识别 *ServiceError → HTTP 422，用户不存在时返回详细错误提示
+- **当前风险评估**：无。run_as 全链路已生效：显式 root / 显式用户名 / 空值继承（全局→supd 用户，服务级→服务用户）
 
 ---
 

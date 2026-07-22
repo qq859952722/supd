@@ -20,7 +20,8 @@ type ReadinessChecker interface {
 // NewReadinessChecker 工厂函数，根据type创建对应的checker
 // REQ-F-009: fd_notify/tcp_check/http_check/script
 // dir 为服务目录，仅 script 类型使用（使 check 中的相对路径可解析），其他类型忽略
-func NewReadinessChecker(cfg *config.ReadinessConfig, dir string) (ReadinessChecker, error) {
+// env 为服务进程环境变量，仅 script 类型使用（规格 §2.2.3: type=script 时继承服务的环境变量），其他类型忽略
+func NewReadinessChecker(cfg *config.ReadinessConfig, dir string, env []string) (ReadinessChecker, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("readiness config is nil")
 	}
@@ -33,7 +34,7 @@ func NewReadinessChecker(cfg *config.ReadinessConfig, dir string) (ReadinessChec
 	case "http_check":
 		return newHTTPChecker(cfg)
 	case "script":
-		return newScriptChecker(cfg, dir)
+		return newScriptChecker(cfg, dir, env)
 	default:
 		return nil, fmt.Errorf("readiness: unsupported type %q", cfg.Type)
 	}

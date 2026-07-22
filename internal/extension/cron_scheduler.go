@@ -164,10 +164,16 @@ func (s *CronScheduler) Start() {
 
 // Stop 停止 cron 调度器
 // REQ-D-004: 停止 cron 调度
-func (s *CronScheduler) Stop() {
-	ctx := s.cron.Stop()
-	<-ctx.Done()
-	slog.Info("cron scheduler stopped")
+// 规格 §2.8.1: 关机流程单一预算贯穿 — cron stop 受 graceCtx 约束，不无界等待
+// ctx 用于限制等待运行中 job 退出的最长时间；超时则记录警告并返回，避免阻塞后续关机步骤
+func (s *CronScheduler) Stop(ctx context.Context) {
+	stopCtx := s.cron.Stop()
+	select {
+	case <-stopCtx.Done():
+		slog.Info("cron scheduler stopped")
+	case <-ctx.Done():
+		slog.Warn("cron scheduler stop timed out, some jobs may still be running")
+	}
 }
 
 // HasJob 检查指定扩展 action 是否有 cron 任务

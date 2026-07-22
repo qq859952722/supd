@@ -141,12 +141,14 @@ func (t *ServiceLifecycleTrigger) OnPreStop(ctx context.Context, serviceName str
 // OnFailure 触发 service_lifecycle:on_failure 扩展
 // REQ-D-004, 2.2.11: 服务失败后触发，扩展失败不阻止服务
 // REQ-D-004, 2.2.5: on_failure 时注入 SUPD_SERVICE_EXIT_CODE/SUPD_SERVICE_SIGNAL/SUPD_SERVICE_RESTART_COUNT
+// REQ-D-004, 2.2.5: on_failure 时 SUPD_SERVICE_PID 为进程退出前的 PID
 // 手动停止不算 failure，不触发 on_failure（REQ-D-004, 2.1.4）
-func (t *ServiceLifecycleTrigger) OnFailure(ctx context.Context, serviceName string, exitCode, signal, restartCount int) []*RunResult {
+func (t *ServiceLifecycleTrigger) OnFailure(ctx context.Context, serviceName string, exitCode, signal, restartCount, servicePID int) []*RunResult {
 	req := DispatchRequest{
 		EventType:       "service_lifecycle",
 		Phase:           "on_failure",
 		ServiceName:     serviceName,
+		ServicePID:      servicePID,
 		ServiceExitCode: exitCode,
 		ServiceSignal:   signal,
 		RestartCount:    restartCount,

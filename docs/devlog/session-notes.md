@@ -617,4 +617,304 @@ service nonexistent-user-svc: configured user "nobody-xyz" does not exist or loo
 
 ---
 
-*最近一次更新：2026-07-22（版本升级 v0.0.3 + 版本升级指南文档：README 2 处版本号更新，新建升级指南，go build/vet 通过，版本注入验证通过）*
+## 2026-07-22 Skill 审计修复 + 在线开发方案 C + Dropbear SSH 集成
+
+### 本次完成
+
+**1. Skill 准确性核实与修复（5 个问题）**
+
+审计 `.trae/skills/supd-service-extension-dev/SKILL.md` 与项目代码的偏差，修复 5 个问题：
+
+| # | 问题 | 修复 |
+|---|------|------|
+| 1 | `run_as` 值 `service`/`none` 不存在 | 改为 `root` / `<用户名>` / 空（继承） |
+| 2 | cron 表达式 6 段（`0 */5 * * * *`） | 改为 5 段（`0 */5 * * *`），robfig/cron/v3 标准 |
+| 3 | `args` 字段不存在 | 移除，command 本身为字符串数组 |
+| 4 | `runtime` 标为服务必填字段 | 改为可选（设置时前置到 command，省略则 command 即完整命令） |
+| 5 | DEV-005 标记"部分修复" | 更新为"已完全修复"（run_as 全链路已生效） |
+
+- `docs/devlog/deviations.md` 的 DEV-005 状态从 🟢 → ✅
+
+**2. 在线开发方案 C 补全（SSH + API 混合）**
+
+在 SKILL.md 新增"在线开发（SSH + API 混合方案）"章节（约 200 行）：
+- 架构图：SSH/SFTP 文件编辑 + HTTP API 服务/扩展控制
+- 4 类 API 端点表（文件操作 10 个、服务管理 13 个、扩展管理 10 个、配置系统 5 个）
+- 8 步在线开发工作流示例（curl 命令）
+- 智能 IDE Remote-SSH 集成（Trae/Cursor/VS Code）
+- 纯 API 模式说明 + 6 条注意事项
+
+**3. Docker 集成 Dropbear SSH（含 SFTP）**
+
+用户明确要求：**容器只负责安装软件，dropbear 启动交给 supd 作为默认服务管理，不需要 entrypoint 脚本**。
+
+实现方案：
+- **Dockerfile**：apk add `dropbear openssh-sftp-server`（~550KB），创建 `/etc/dropbear` 目录（host key 由 dropbear `-R` 参数在首次启动时动态生成，避免镜像硬编码密钥）。恢复直接启动 supd（`ENTRYPOINT ["/usr/local/bin/supd"]`），无 entrypoint 脚本。EXPOSE 7979 2222。
+- **init_examples.go** 新增 2 个模板：
+  - `dropbear-ssh` 服务：`autostart: true`、`run_as: root`、command `[dropbear, -R, -s, -F, -p, "2222"]`、readiness `tcp_check port 2222`
+  - `setup-ssh-keys` 扩展：`enabled: true`、`run_as: root`、`supd_lifecycle.post_ready` 触发，读取 `SSH_PUBLIC_KEY` 环境变量写入 `/etc/supd/.ssh/authorized_keys` 和 `/root/.ssh/authorized_keys`
+- **init.go**：注册新服务（4→5）和新扩展（4→5），更新注释
+- **docker-compose.yml**：新增 `SSH_PUBLIC_KEY` 环境变量 + SSH 使用说明
+- **SKILL.md**：更新 SSH 章节说明 dropbear 是 supd 管理的服务
+
+设计要点：
+- dropbear 作为 supd 服务（非 entrypoint 脚本），由 supd 统一监督、重启、日志管理
+- host key 运行时生成（`-R`），每容器独立密钥，避免镜像硬编码安全风险
+- `setup-ssh-keys` 扩展在 `post_ready` 触发（所有 autostart 服务就绪后），`SSH_PUBLIC_KEY` 为空时自动跳过
+- 需要 root 运行（docker-compose `user: "0:0"`）：dropbear 需 root 写 host key + 用户切换，setup-ssh-keys 需 root 写 `/root/.ssh`
+
+### 修改文件清单（6 个文件）
+- `.trae/skills/supd-service-extension-dev/SKILL.md` — 5 处准确性修复 + 在线开发章节 + SSH 章节更新
+- `docs/devlog/deviations.md` — DEV-005 状态更新为已完全修复
+- `Dockerfile` — 添加 dropbear + openssh-sftp-server，创建 /etc/dropbear，EXPOSE 2222
+- `docker-compose.yml` — 添加 SSH_PUBLIC_KEY 环境变量 + SSH 使用说明
+- `internal/cli/init_examples.go` — 新增 dropbearSshServiceYAML + setupSshKeysMetaYAML + setupSshKeysRunSH
+- `internal/cli/init.go` — 注册 dropbear-ssh 服务 + setup-ssh-keys 扩展，更新注释
+
+### 验证
+- `go build ./...` ✅
+- `go vet ./internal/cli/...` ✅
+- `go test ./... -count=1` ✅（全 11 包通过）
+- `supd init` 实际生成验证：5 个服务（含 dropbear-ssh）+ 5 个扩展（含 setup-ssh-keys）正确生成
+- `supd validate` 校验 11 个服务/扩展配置文件均通过
+- run.sh 权限 0755 ✅
+
+### 遗留事项
+- 本次所有修改未提交 git（等待用户确认）
+- 需要升级版本号并推送 tag 触发 CI 重新构建 Docker 镜像（dropbear 集成需要新镜像才生效）
+- `supd init` 生成的 `dropbear-ssh` 服务在非 Docker 环境下会因 dropbear 未安装而启动失败（可接受——与 web-demo 需要 python3 同理）
+
+### 下次会话注意
+- dropbear 是 supd 管理的服务，不是容器 entrypoint 脚本——这是用户明确要求的设计
+- `setup-ssh-keys` 扩展默认启用（enabled: true），SSH_PUBLIC_KEY 为空时自动跳过，无副作用
+- dropbear host key 由 `-R` 参数在首次启动时动态生成，每容器独立——不要在 Dockerfile 中预生成
+- Docker 镜像需要重新构建才能包含 dropbear 二进制
+
+---
+
+## 2026-07-22 Dropbear SSH 第 3 版方案 + 服务 env.yaml 加载 BUG 修复
+
+### 触发原因
+用户反馈第 2 版方案两个问题：
+1. `dorpbear 作为一个服务不应该在 compose 文件中配置 SSH_PUBLIC_KEY，应该由启动脚本自动完成相关任务`
+2. `该服务默认不自动启动，可以通过服务的环境变量配置免认证连接`
+
+实施过程中用户进一步指出关键 BUG：
+> 服务需要使用服务配置文件中的环境变量，如果不读取就是 bug 了，你重新核实并修复问题然后继续
+
+### BUG 修复：服务进程加载 services/<svc>/env.yaml（规格 §2.2.4）
+
+**根因**：`internal/core/bootstrap.go` 两处服务进程启动（`startService` L386 + 重启逻辑 L782）均使用 `os.Environ()` 构造子进程环境变量，未加载服务级 `env.yaml`，违反规格 §2.2.4「环境变量层级合并」要求。
+
+**规格依据**：
+- §2.2.4 明确要求 4 层 env 合并，第 3 层为「服务 env（services/<svc>/env.yaml）」
+- §2.3.3 L891：「适用于全局 env、服务 env、扩展 env」
+- `internal/watch/reload.go:251` 注释：「REQ-F-027: env.yaml（服务）→ 需重启服务」
+- `internal/api/settings_provider.go:76` 注释：「REQ-D-006: env_files 不影响已运行服务；新启动的服务用新 env」
+
+**修复方案**：
+- 新建 `internal/core/service_env.go`，提供 `buildServiceProcessEnv(baseDir, serviceName, envFiles)` 函数
+- 合并 3 层 env：os.Environ()（底层）→ 全局 env 文件（按 cfg.EnvFiles 顺序）→ 服务 env（services/<svc>/env.yaml）
+- enabled:false 的变量不注入；同名变量后者覆盖前者；保留 os.Environ() 原顺序，仅覆盖或追加
+- 文件不存在时静默跳过（os.ErrNotExist）；解析失败记录 slog.Warn
+- bootstrap.go L386/L782 两处 `env := os.Environ()` 替换为新函数调用
+
+**新增测试**（`internal/core/service_env_test.go`，7 个用例）：
+- 无 env.yaml 时返回 os.Environ()
+- 服务 env 注入
+- 全局 + 服务合并（服务覆盖全局）
+- enabled:false 不注入
+- env.yaml 覆盖 os.Environ() 同名变量
+- 文件不存在静默跳过
+- 多个全局 env 文件按顺序加载
+
+### Dropbear SSH 第 3 版方案
+
+**变更对比**（vs 第 2 版）：
+
+| 项 | 第 2 版 | 第 3 版（当前） |
+|---|---|---|
+| dropbear-ssh autostart | `true` | `false`（默认不启动） |
+| dropbear-ssh command | `[dropbear, -R, -s, -F, -p, "2222"]` | `[bash, run.sh]`（脚本自动选模式） |
+| dropbear-ssh env.yaml | 无 | `SSH_PUBLIC_KEY: ""` + `DROPBEAR_PORT: "2222"` |
+| setup-ssh-keys 扩展 | 存在（post_ready 触发配置 authorized_keys） | **删除**（公钥配置由 run.sh 处理） |
+| docker-compose SSH_PUBLIC_KEY | 有 | **删除**（认证配置在服务 env.yaml） |
+| 免认证模式 | 不支持（SSH_PUBLIC_KEY 为空时跳过配置） | 支持（dropbear -B + passwd -d） |
+
+**第 3 版设计要点**：
+- dropbear-ssh 是 supd 管理的**普通服务**，autostart:false（用户按需通过 Web UI/API 启动）
+- run.sh 通过环境变量 `SSH_PUBLIC_KEY`（由 supd 从 env.yaml 注入，规格 §2.2.4）自动选择认证模式：
+  - 非空 → 公钥认证（写 authorized_keys + `dropbear -R -s -F -p 2222`）
+  - 空 → 空白密码免认证（`passwd -d supd/root` + `dropbear -R -B -F -p 2222`）
+- 删除 setup-ssh-keys 扩展（公钥配置职责移至 dropbear-ssh 服务的 run.sh）
+- docker-compose.yml 移除 SSH_PUBLIC_KEY 环境变量，简化 SSH 说明
+- env.yaml 修改后需重启 dropbear-ssh 服务生效（REQ-F-027）
+
+### 修改文件清单（7 个文件）
+
+**BUG 修复**：
+- `internal/core/service_env.go`（新增）— `buildServiceProcessEnv` 函数，合并 3 层 env
+- `internal/core/service_env_test.go`（新增）— 7 个单元测试
+- `internal/core/bootstrap.go` — L386/L782 替换 os.Environ() 为 buildServiceProcessEnv
+
+**第 3 版方案**：
+- `docker-compose.yml` — 移除 SSH_PUBLIC_KEY 环境变量，简化 SSH 说明
+- `internal/cli/init_examples.go` — dropbear-ssh 改为 autostart:false + run.sh + env.yaml；删除 setup-ssh-keys 模板；新增 dropbearSshRunSH + dropbearSshEnvYAML
+- `internal/cli/init.go` — dropbear-ssh 注册新增 run.sh + env.yaml；移除 setup-ssh-keys 扩展注册；注释 5→4 扩展
+- `internal/cli/init_test.go` — 新增 TestRunInit_DropbearSshServiceFiles 验证生成结果
+- `.trae/skills/supd-service-extension-dev/SKILL.md` — SSH 章节更新（env.yaml 配置 + autostart:false + 启动命令）
+
+### 验证
+- `go build ./...` ✅
+- `go vet ./...` ✅
+- `go test ./... -count=1` ✅（全 11 包通过，含新增 8 个测试用例）
+- `supd init` 实际生成验证：
+  - `services/dropbear-ssh/` 含 service.yaml + run.sh（0755）+ env.yaml ✅
+  - service.yaml 包含 `autostart: false` ✅
+  - env.yaml 包含 `SSH_PUBLIC_KEY` 变量 ✅
+  - run.sh 同时包含公钥认证（`dropbear -R -s -F`）和免认证（`dropbear -R -B -F`）两种模式 ✅
+  - run.sh bash 语法检查通过 ✅
+  - `extensions/` 仅 4 个（无 setup-ssh-keys）✅
+
+### 遗留事项
+- 本次所有修改未提交 git（等待用户确认）
+- 需要升级版本号（如 v0.0.4）并推送 tag 触发 CI 重新构建 Docker 镜像（dropbear 集成 + env.yaml 加载修复需要新镜像才生效）
+- BUG 修复影响所有服务进程启动路径，建议在 Docker 环境实际验证一次服务启动加载 env.yaml 的行为
+
+### 下次会话注意
+- **服务进程现在会加载 services/<svc>/env.yaml**（此前是 BUG，已修复）——编写服务时可直接在 env.yaml 配置环境变量，run.sh 通过环境变量读取
+- dropbear-ssh 默认 `autostart: false`，需要用户显式启动（通过 Web UI 或 `POST /api/services/dropbear-ssh/start`）
+- dropbear-ssh 认证模式由 env.yaml 中的 SSH_PUBLIC_KEY 控制：留空=免认证，填入=公钥认证
+- setup-ssh-keys 扩展已删除，不再生成——如遇到旧工作目录中残留的 setup-ssh-keys，可手动删除
+- 服务 env.yaml 修改后需重启服务生效（REQ-F-027），与 service.yaml 字段变更一致
+
+---
+
+## 2026-07-22 系统审计修复 3 项规格偏差
+
+### 触发原因
+用户在服务 env.yaml 加载 BUG 修复后要求："为什么会出现如此明显的 bug，请审计一下还有没有类似这种重大偏差问题"。
+
+经系统审计发现 3 项与规格存在偏差的问题，均已修复。
+
+### 偏差 #1（🔴 重大）：script readiness 未继承服务环境变量
+
+**规格依据**：§2.2.3 L838 "type=script 时，继承服务的环境变量"
+
+**根因**：`internal/core/readiness_script.go` 的 `scriptChecker.Check()` 创建 `exec.CommandContext` 后未设置 `cmd.Env`，导致 check 脚本仅继承 `os.Environ()`，无法访问服务 env.yaml 中配置的环境变量（如数据库连接串、API 密钥等）。
+
+**修复**：
+- `readiness.go`：`NewReadinessChecker` 签名增加 `env []string` 参数（仅 script 类型使用，其他类型忽略）
+- `readiness_script.go`：scriptChecker 增加 `env` 字段，`Check()` 中 `cmd.Env = s.env`
+- `bootstrap.go`：`checkReadiness` 签名增加 `env` 参数，2 处调用点（初始启动 + 重启）传入 env
+- `service_operator.go`：3 处 `NewReadinessChecker` 调用传入 env
+- **同性质 BUG 一并修复**：`service_operator.go` 2 处 `os.Environ()`（API 启动/重启服务）改为 `core.BuildServiceProcessEnv`，与 bootstrap.startService 保持一致（此前 API 启动的服务也未加载 env.yaml）
+- 将 `buildServiceProcessEnv` 重命名为公开 `BuildServiceProcessEnv`，供 api 包复用
+
+**新增测试**：`TestScriptChecker_InheritsServiceEnv` — 验证 nil env 时变量不可访问，传入 env 时变量可访问
+
+### 偏差 #2（🟠 重要）：on_failure 阶段 SUPD_SERVICE_PID 未注入
+
+**规格依据**：§2.2.5 L559 "on_failure：进程退出前的 PID"
+
+**根因**：`internal/extension/trigger_lifecycle.go` 的 `OnFailure` 方法未设置 `DispatchRequest.ServicePID`（零值 0），导致 on_failure 扩展执行时 `SUPD_SERVICE_PID` 环境变量输出空字符串，扩展无法获取失败进程的 PID。
+
+**修复**：
+- `trigger_lifecycle.go`：`OnFailure` 签名增加 `servicePID int` 参数，设置 `ServicePID: servicePID`
+- `bootstrap.go`：`OnServiceFailure` 回调类型增加 `servicePID int` 参数，调用点传入 `proc.PID()`
+- `run.go`：回调接线传递 servicePID
+- `service_operator.go`：`OnFailure` 调用传入 `proc.PID()`
+
+**测试增强**：`TestServiceLifecycleTriggerOnFailureEnvVars` 校验脚本增加 `test "$SUPD_SERVICE_PID" = "12345"` 断言，3 处 `OnFailure` 测试调用补充 PID 参数
+
+### 偏差 #3（🟡 轻微）：cronScheduler.Stop() 无超时
+
+**规格依据**：§1.4 "单一预算贯穿 cron stop / 扩展等待 / GracefulShutdown / HTTP Stop"
+
+**根因**：`internal/extension/cron_scheduler.go` 的 `Stop()` 方法用 `<-ctx.Done()` 无界等待 robfig/cron 运行中 job 完成，不受 `shutdown_grace_seconds` 预算约束，可能阻塞后续关机步骤。
+
+**修复**：
+- `cron_scheduler.go`：`Stop()` 改为 `Stop(ctx context.Context)`，用 `select` 在 `stopCtx.Done()`（job 完成）和 `ctx.Done()`（超时）之间竞争，超时记录 slog.Warn
+- `run.go`：`cronScheduler.Stop(graceCtx)` 传入关机预算 context
+- `trigger_test.go`：测试调用传 `context.Background()`
+
+### 修改文件清单（9 个文件）
+
+| 文件 | 变更内容 |
+|------|----------|
+| `internal/core/readiness.go` | NewReadinessChecker 增加 env 参数 |
+| `internal/core/readiness_script.go` | scriptChecker 增加 env 字段 + cmd.Env 设置 |
+| `internal/core/bootstrap.go` | checkReadiness 增加 env 参数 + 2 处调用；OnServiceFailure 增加 servicePID + 调用传 proc.PID()；L786 旧函数名修复 |
+| `internal/core/service_env.go` | buildServiceProcessEnv → BuildServiceProcessEnv（公开） |
+| `internal/api/service_operator.go` | 2 处 os.Environ() → BuildServiceProcessEnv；3 处 NewReadinessChecker 传 env；OnFailure 传 proc.PID() |
+| `internal/extension/trigger_lifecycle.go` | OnFailure 增加 servicePID 参数 + 设置 ServicePID |
+| `internal/extension/cron_scheduler.go` | Stop() → Stop(ctx context.Context) 带超时 |
+| `internal/cli/run.go` | OnServiceFailure 接线传 servicePID；cronScheduler.Stop(graceCtx) |
+| `internal/core/readiness_test.go` | 适配新签名 + 新增 TestScriptChecker_InheritsServiceEnv |
+| `internal/core/service_env_test.go` | 适配公开函数名 |
+| `internal/extension/trigger_lifecycle_test.go` | 3 处 OnFailure 调用补 PID + env 校验增强 |
+| `internal/extension/trigger_test.go` | scheduler.Stop 传 context.Background() |
+
+### 验证
+- `go build ./...` ✅
+- `go vet ./...` ✅
+- `go test ./... -count=1` ✅（全 11 包通过，含新增/增强测试）
+- 偏差 #1 专项测试：`TestScriptChecker_InheritsServiceEnv` ✅（nil env 失败 / 传入 env 成功）
+- 偏差 #2 专项测试：`TestServiceLifecycleTriggerOnFailureEnvVars` ✅（校验 SUPD_SERVICE_PID=12345）
+- 偏差 #3 专项测试：`TestCronScheduler_StartAndStop` ✅（context.Background() 无超时）
+
+### 遗留事项
+- 本次所有修改未提交 git（等待用户确认）
+- 偏差 #1 修复影响所有 script readiness 检查路径，建议在 Docker 环境实际验证一次 script-ready-demo 的 readiness check 脚本能访问服务 env.yaml 变量
+- 与上一轮（env.yaml 加载 BUG + Dropbear SSH 第 3 版）的修改一并待提交
+
+### 下次会话注意
+- `NewReadinessChecker` 签名已变更为 3 参数 `(cfg, dir, env)`，新增 readiness 调用处需传 env
+- `OnFailure` / `OnServiceFailure` 签名增加 `servicePID int` 参数，新增调用处需传 `proc.PID()`
+- `CronScheduler.Stop` 签名变更为 `Stop(ctx context.Context)`，新增调用处需传 context
+- API 启动的服务（service_operator.go）现在也加载 env.yaml（此前是 BUG，与 bootstrap 启动的服务行为已对齐）
+
+---
+
+## 十五、2026-07-22 v0.0.4 发布（本轮完成）
+
+### 本次完成
+
+**1. 3 项规格偏差修复（代码审计 + 运行状态测试全部通过）**：
+- ✅ 偏差 #1：script readiness 继承服务 env（规格 §2.2.3）— `NewReadinessChecker` 增加 `env` 参数，`scriptChecker.Check()` 设置 `cmd.Env`
+- ✅ 偏差 #2：on_failure 注入 SUPD_SERVICE_PID（规格 §2.2.5）— `OnFailure` 签名增加 `servicePID int`，传播链完整至 `BuildSupdEnv`
+- ✅ 偏差 #3：cronScheduler.Stop 带超时（规格 §2.8.1）— `Stop(ctx context.Context)` select 竞争 `stopCtx.Done()` 与 `ctx.Done()`
+- ✅ 附带修复：API 启动的服务未加载 env.yaml（`service_operator.go` 两处 `os.Environ()` → `BuildServiceProcessEnv`）
+
+**2. 代码审计（两个 sub-agent 独立审计）**：
+- 7 大检查点全部通过：env 传递链 / 作用域 / PID 有效性 / ServicePID 渲染 / graceCtx 可用性 / 并发安全 / 遗漏调用点
+- 0 critical / 0 major / 6 minor（已修复 4 个：service_env.go 166 行空行 / executor_test.go 补 PID 断言 / 规格引用 §1.4→§2.8.1 / dispatcher.go 注释补充 on_failure）
+
+**3. 运行状态测试（5 组全部通过）**：
+- Test A：env-ready-test 服务 readiness 通过（check_env.sh 继承 READY_TOKEN）
+- Test B：on-fail-recorder 扩展记录 `SUPD_SERVICE_PID=1233547`（非空数字）
+- Test C：SIGTERM → 日志 `cron scheduler stopped`，关机 3 秒完成
+- Test D：服务进程日志 `SERVICE_VAR=loaded-from-env-yaml`（env.yaml 加载验证）
+- Test E：API 重启后 env.yaml 仍生效
+
+**4. 版本升级 v0.0.3 → v0.0.4**：
+- README.md 版本号更新（2 处）
+- version-upgrade-guide.md 变更记录追加
+- git tag v0.0.4 推送触发 CI 构建
+
+### 涉及文件（20 个）
+- 核心修复：`readiness.go` / `readiness_script.go` / `bootstrap.go` / `service_env.go`（新）/ `service_operator.go`
+- 扩展修复：`trigger_lifecycle.go` / `cron_scheduler.go` / `dispatcher.go`
+- CLI 接线：`run.go`
+- 测试：`readiness_test.go` / `service_env_test.go`（新）/ `trigger_lifecycle_test.go` / `trigger_test.go` / `executor_test.go`
+- 文档：`session-notes.md` / `version-upgrade-guide.md` / `README.md` / `deviations.md`
+- 上一轮遗留：`Dockerfile` / `docker-compose.yml` / `init.go` / `init_examples.go` / `init_test.go` / `SKILL.md`
+
+### 下次会话注意
+- v0.0.4 CI 构建需确认（tjs 双架构编译 + Docker 镜像 + Release）
+- `service_env.go` 是新文件（从 bootstrap.go 中抽取的 env 构建逻辑，公开供 api 包复用）
+- env.yaml 格式必须包含 `env:` 包装层（`env: { KEY: { value: "..." } }`），直接写 `KEY: value` 会被静默忽略
+
+---
+
+*最近一次更新：2026-07-22 v0.0.4 发布（3 项规格偏差修复 + 代码审计 + 5 组运行状态测试全部通过 + Dropbear SSH 集成 + env.yaml BUG 修复；20 个文件变更，go build/vet/test 全通过）*

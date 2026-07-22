@@ -4,10 +4,11 @@ package cli
 //
 // 设计目标：用最少的示例覆盖 supd 尽可能多的核心特性。
 //
-// 4 个服务覆盖：
+// 5 个服务覆盖：
 //   - 4 种 readiness（http_check / tcp_check / fd_notify / script）
 //   - 3 种 restart policy（always 默认 / on-failure / no）
 //   - depends_on 拓扑排序、signals 自定义信号、stop、logging、autostart、tags
+//   - Docker SSH 集成（dropbear-ssh：autostart:false + run.sh + env.yaml + run_as root）
 //
 // 5 个扩展（4 全局 + 1 服务级）覆盖：
 //   - 4 种触发器（on_demand / on_schedule / supd_lifecycle / service_lifecycle）
@@ -19,6 +20,7 @@ package cli
 //   - demo-lifecycle 并发策略由 parallel 改为 debounce:5s（覆盖第 4 种并发策略）
 //   - supd-startup-hook 新增 env.yaml 演示 password 字段
 //   - scheduled-task 为全新创建（on_schedule + serialize）
+//   - dropbear-ssh 为全新创建（Docker 在线开发集成，自带 run.sh + env.yaml）
 
 // =============================================================================
 // 示例服务
@@ -311,6 +313,165 @@ if [ -f /tmp/script-ready-demo.ready ]; then
 else
     exit 1
 fi
+`
+
+// --- dropbear-ssh：tcp_check readiness + run_as root + autostart:false + env.yaml 驱动 ---
+// 功能：Dropbear SSH/SFTP 服务（端口 2222），供智能 IDE Remote-SSH 在线开发
+// Docker 镜像内置 dropbear + openssh-sftp-server；本地需手动安装 dropbear
+// 默认不自动启动：用户按需通过 Web UI/API 启动
+// 认证模式由 env.yaml 中的 SSH_PUBLIC_KEY 控制：
+//   - 非空 → 公钥认证（dropbear -s 禁用密码登录）
+//   - 空   → 空白密码免认证（dropbear -B 允许空白密码，仅内网可信场景）
+// host key 由 -R 参数在首次启动时动态生成（每容器独立，避免镜像硬编码）
+const dropbearSshServiceYAML = `name: dropbear-ssh
+version: "1.0.0"
+description: "Dropbear SSH/SFTP 服务（端口 2222，供智能 IDE Remote-SSH 在线开发，默认不自动启动）"
+icon: terminal
+# autostart: false — 默认不自动启动，按需通过 Web UI/API 启动
+# 原因：SSH 服务暴露登录入口，由用户显式启用更安全
+autostart: false
+# command: 通过 run.sh 启动，根据 env.yaml 中的 SSH_PUBLIC_KEY 自动选择认证模式
+command:
+  - bash
+  - run.sh
+# run_as: root — dropbear 需要 root 权限：
+#   1. 写入 /etc/dropbear 生成 host key
+#   2. 公钥认证时的用户切换（登录为 supd/root 等不同用户）
+#   3. 空白密码模式下设置 supd/root 用户密码
+# 非 root 环境下需以 root 启动 supd，否则此服务启动失败
+run_as: root
+readiness:
+  type: tcp_check
+  port: 2222
+  interval_seconds: 1
+  timeout_seconds: 5
+stop:
+  grace_seconds: 3
+  timeout_seconds: 10
+logging:
+  enabled: true
+  max_size_mb: 2
+  max_files: 2
+tags:
+  - ssh
+  - sftp
+  - remote-dev
+`
+
+// dropbearSshRunSH — dropbear-ssh 服务启动脚本
+// 规格 §2.2.4: 服务进程会合并 services/<svc>/env.yaml，因此 SSH_PUBLIC_KEY 直接通过环境变量读取
+// 认证模式自动选择：
+//   - SSH_PUBLIC_KEY 非空 → 公钥认证（写 authorized_keys + dropbear -s 禁用密码）
+//   - SSH_PUBLIC_KEY 为空 → 空白密码免认证（dropbear -B 允许空白密码，需先 passwd -d 清空密码）
+const dropbearSshRunSH = `#!/bin/bash
+# dropbear-ssh 启动脚本：根据 SSH_PUBLIC_KEY 环境变量自动配置认证模式
+#
+# 环境变量（来自 services/dropbear-ssh/env.yaml，由 supd 注入）：
+#   SSH_PUBLIC_KEY — 公钥内容（ssh-ed25519/ssh-rsa 开头），多个公钥用换行分隔
+#                    留空（默认）→ 空白密码免认证模式（仅内网可信场景）
+#
+# 启动模式：
+#   1. 公钥认证模式（SSH_PUBLIC_KEY 非空）：
+#      - 写入 /etc/supd/.ssh/authorized_keys 和 /root/.ssh/authorized_keys
+#      - dropbear -s 禁用密码登录，仅公钥认证
+#   2. 空白密码免认证模式（SSH_PUBLIC_KEY 为空）：
+#      - passwd -d supd / passwd -d root 清空密码
+#      - dropbear -B 允许空白密码登录
+#
+# host key 由 -R 参数在首次启动时动态生成（每容器独立密钥，避免镜像硬编码）
+
+set -e
+
+# 从环境变量读取（由 supd 从 env.yaml 注入，规格 §2.2.4）
+SSH_PUBLIC_KEY="${SSH_PUBLIC_KEY:-}"
+PORT="${DROPBEAR_PORT:-2222}"
+
+# 检查 root 权限（dropbear 需要 root 写 host key + 用户切换）
+if [ "$(id -u)" -ne 0 ]; then
+    echo "[ERROR] dropbear-ssh 需要 root 权限启动，请以 root 运行 supd 或设置 run_as: root" >&2
+    exit 1
+fi
+
+# 检查 dropbear 是否安装
+if ! command -v dropbear >/dev/null 2>&1; then
+    echo "[ERROR] dropbear 未安装，Docker 镜像已内置；本地需手动安装（apk add dropbear openssh-sftp-server）" >&2
+    exit 1
+fi
+
+# 确保 host key 目录存在
+mkdir -p /etc/dropbear
+
+if [ -n "$SSH_PUBLIC_KEY" ]; then
+    # ===== 公钥认证模式 =====
+    echo "[INFO] 认证模式：公钥认证（SSH_PUBLIC_KEY 已配置）"
+
+    # 配置 supd 和 root 用户的 authorized_keys
+    for home_dir in /etc/supd /root; do
+        mkdir -p "$home_dir/.ssh"
+        printf '%s\n' "$SSH_PUBLIC_KEY" > "$home_dir/.ssh/authorized_keys"
+        chmod 700 "$home_dir/.ssh"
+        chmod 600 "$home_dir/.ssh/authorized_keys"
+        # 设置正确的 owner（home_dir 的属主即为 authorized_keys 的属主）
+        owner=$(stat -c '%U:%G' "$home_dir" 2>/dev/null || echo "root:root")
+        chown -R "$owner" "$home_dir/.ssh" 2>/dev/null || true
+    done
+    echo "[INFO] authorized_keys 已写入 /etc/supd/.ssh/ 和 /root/.ssh/"
+
+    # dropbear 参数：
+    #   -R  缺少 host key 时自动生成
+    #   -s  禁用密码登录（仅公钥认证）
+    #   -F  前台模式（supd 需要前台进程才能监管）
+    #   -p  监听端口
+    echo "[INFO] 启动 dropbear（公钥认证，端口 $PORT）..."
+    exec dropbear -R -s -F -p "$PORT"
+else
+    # ===== 空白密码免认证模式 =====
+    echo "[INFO] 认证模式：空白密码免认证（SSH_PUBLIC_KEY 未配置）"
+    echo "[WARN] 此模式允许无密码登录，仅适用于内网完全可信场景"
+    echo "[WARN] 如需公钥认证，请在 services/dropbear-ssh/env.yaml 中配置 SSH_PUBLIC_KEY"
+
+    # 清空 supd 和 root 用户密码（允许空白密码登录）
+    for user in supd root; do
+        if id "$user" >/dev/null 2>&1; then
+            # passwd -d 删除用户密码（允许无密码登录）
+            if passwd -d "$user" >/dev/null 2>&1; then
+                echo "[INFO] 已清空 $user 用户密码"
+            else
+                echo "[WARN] 清空 $user 密码失败（用户可能不存在或无权限）"
+            fi
+        fi
+    done
+
+    # dropbear 参数：
+    #   -R  缺少 host key 时自动生成
+    #   -B  允许空白密码登录
+    #   -F  前台模式
+    #   -p  监听端口
+    echo "[INFO] 启动 dropbear（空白密码免认证，端口 $PORT）..."
+    exec dropbear -R -B -F -p "$PORT"
+fi
+`
+
+// dropbearSshEnvYAML — dropbear-ssh 服务私有环境变量
+// 规格 §2.3.3 / §2.2.4: services/<svc>/env.yaml 由 supd 注入服务进程
+// SSH_PUBLIC_KEY 默认空 = 空白密码免认证模式（仅内网可信场景）
+// 配置公钥认证时填入公钥内容（ssh-ed25519/ssh-rsa 开头，多个公钥用换行分隔）
+const dropbearSshEnvYAML = `# dropbear-ssh 服务私有环境变量
+# 规格 §2.2.4: 此文件由 supd 注入到 dropbear-ssh 服务进程环境
+# 修改后需重启 dropbear-ssh 服务生效（REQ-F-027）
+
+env:
+  # SSH_PUBLIC_KEY — SSH 公钥内容
+  # 留空（默认）→ 空白密码免认证模式（dropbear -B，仅内网可信场景）
+  # 填入公钥  → 公钥认证模式（dropbear -s 禁用密码登录）
+  # 多个公钥用换行分隔；支持 ssh-ed25519/ssh-rsa/ecdsa-sha2-nistp256 等格式
+  SSH_PUBLIC_KEY:
+    value: ""
+    hint: "SSH 公钥内容，留空=空白密码免认证，填入=公钥认证"
+  # DROPBEAR_PORT — dropbear 监听端口（默认 2222，避开宿主机 22）
+  DROPBEAR_PORT:
+    value: "2222"
+    hint: "dropbear 监听端口"
 `
 
 // =============================================================================

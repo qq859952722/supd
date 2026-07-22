@@ -165,8 +165,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 		OnServicePostReady: func(ctx context.Context, serviceName string, servicePID int) {
 			serviceLifecycleTrigger.OnPostReady(ctx, serviceName, servicePID)
 		},
-		OnServiceFailure: func(ctx context.Context, serviceName string, exitCode, signal, restartCount int) {
-			serviceLifecycleTrigger.OnFailure(ctx, serviceName, exitCode, signal, restartCount)
+		OnServiceFailure: func(ctx context.Context, serviceName string, exitCode, signal, restartCount, servicePID int) {
+			serviceLifecycleTrigger.OnFailure(ctx, serviceName, exitCode, signal, restartCount, servicePID)
 		},
 		OnSupdPreStart: func(ctx context.Context) {
 			supdLifecycleTrigger.OnPreStart(ctx)
@@ -310,8 +310,8 @@ shutdown:
 		time.Duration(shutdownGraceSeconds)*time.Second)
 	defer graceCancel()
 
-	// REQ-D-004: 停止 cron 调度器
-	cronScheduler.Stop()
+	// REQ-D-004: 停止 cron 调度器（受 graceCtx 约束，规格 §2.8.1 单一预算贯穿）
+	cronScheduler.Stop(graceCtx)
 
 	// B-04-002 修复：关机流程等待运行中的扩展任务结束（带超时），避免孤儿进程
 	// 规格 §2.2.9: supd 退出后所有运行任务清空；这里尽量等待扩展自行退出，超时则强制终止

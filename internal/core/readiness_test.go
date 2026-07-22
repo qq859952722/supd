@@ -239,7 +239,7 @@ func TestScriptChecker_Ready(t *testing.T) {
 		TimeoutSeconds:  5,
 	}
 
-	checker, err := newScriptChecker(cfg, "")
+	checker, err := newScriptChecker(cfg, "", nil)
 	if err != nil {
 		t.Fatalf("newScriptChecker: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestScriptChecker_NotReady(t *testing.T) {
 		TimeoutSeconds:  2,
 	}
 
-	checker, err := newScriptChecker(cfg, "")
+	checker, err := newScriptChecker(cfg, "", nil)
 	if err != nil {
 		t.Fatalf("newScriptChecker: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestScriptChecker_Timeout(t *testing.T) {
 		TimeoutSeconds:  1,
 	}
 
-	checker, err := newScriptChecker(cfg, "")
+	checker, err := newScriptChecker(cfg, "", nil)
 	if err != nil {
 		t.Fatalf("newScriptChecker: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestScriptChecker_DirRelativePath(t *testing.T) {
 	}
 
 	// 不传 dir：sh 找不到 ready.sh → 非零退出 → 超时失败
-	noDirChecker, err := newScriptChecker(cfg, "")
+	noDirChecker, err := newScriptChecker(cfg, "", nil)
 	if err != nil {
 		t.Fatalf("newScriptChecker: %v", err)
 	}
@@ -327,7 +327,7 @@ func TestScriptChecker_DirRelativePath(t *testing.T) {
 	}
 
 	// 传 dir：sh 在 dir 下找到 ready.sh → exit 0 → 立即就绪
-	dirChecker, err := newScriptChecker(cfg, dir)
+	dirChecker, err := newScriptChecker(cfg, dir, nil)
 	if err != nil {
 		t.Fatalf("newScriptChecker: %v", err)
 	}
@@ -336,6 +336,42 @@ func TestScriptChecker_DirRelativePath(t *testing.T) {
 	defer cancel2()
 	if err := dirChecker.Check(ctx2); err != nil {
 		t.Errorf("Check with dir should succeed (relative script resolved), got: %v", err)
+	}
+}
+
+// TestScriptChecker_InheritsServiceEnv 验证规格 §2.2.3: type=script 时 check 脚本继承服务的环境变量。
+// 不传 env（nil）时脚本继承 os.Environ()，其中不含 SUPD_READY_VAR → 检查失败；
+// 传 env（含服务 env 合并结果）时 SUPD_READY_VAR 可被脚本访问 → 检查通过。
+func TestScriptChecker_InheritsServiceEnv(t *testing.T) {
+	cfg := &config.ReadinessConfig{
+		Type:            "script",
+		Check:           []string{"sh", "-c", "test \"$SUPD_READY_VAR\" = \"yes\""},
+		IntervalSeconds: 1,
+		TimeoutSeconds:  2,
+	}
+
+	// 不传 env：脚本继承 os.Environ()，无 SUPD_READY_VAR → exit 1 → 超时失败
+	noEnvChecker, err := newScriptChecker(cfg, "", nil)
+	if err != nil {
+		t.Fatalf("newScriptChecker: %v", err)
+	}
+	defer noEnvChecker.Close()
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel1()
+	if err := noEnvChecker.Check(ctx1); err == nil {
+		t.Error("Check without env should fail (SUPD_READY_VAR not set)")
+	}
+
+	// 传 env（模拟 BuildServiceProcessEnv 的合并结果：os.Environ() + 服务 env）
+	withEnvChecker, err := newScriptChecker(cfg, "", append(os.Environ(), "SUPD_READY_VAR=yes"))
+	if err != nil {
+		t.Fatalf("newScriptChecker: %v", err)
+	}
+	defer withEnvChecker.Close()
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel2()
+	if err := withEnvChecker.Check(ctx2); err != nil {
+		t.Errorf("Check with env should succeed (SUPD_READY_VAR inherited), got: %v", err)
 	}
 }
 
@@ -381,7 +417,7 @@ func TestNewReadinessChecker_Factory(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			checker, err := NewReadinessChecker(tt.cfg, "")
+			checker, err := NewReadinessChecker(tt.cfg, "", nil)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewReadinessChecker() error = %v, wantErr %v", err, tt.wantErr)
 				return

@@ -454,3 +454,81 @@ func TestGenerateAuthToken_Uniqueness(t *testing.T) {
 		t.Errorf("生成 %d 个 token，去重后 %d 个", count, len(tokens))
 	}
 }
+
+// TestRunInit_DropbearSshServiceFiles 验证 dropbear-ssh 服务生成 run.sh + env.yaml
+// 且不再生成 setup-ssh-keys 扩展（公钥配置已移至服务 env.yaml + run.sh）
+func TestRunInit_DropbearSshServiceFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	origWorkDir := workDir
+	origForce := initForce
+	origDryRun := initDryRun
+	defer func() {
+		workDir = origWorkDir
+		initForce = origForce
+		initDryRun = origDryRun
+	}()
+	workDir = tmpDir
+	initForce = true // 强制覆盖，确保生成最新模板
+	initDryRun = false
+
+	if err := runInit(nil, []string{}); err != nil {
+		t.Fatalf("runInit 失败: %v", err)
+	}
+
+	// dropbear-ssh 服务应生成 3 个文件：service.yaml + run.sh + env.yaml
+	expectedFiles := []string{
+		"services/dropbear-ssh/service.yaml",
+		"services/dropbear-ssh/run.sh",
+		"services/dropbear-ssh/env.yaml",
+	}
+	for _, f := range expectedFiles {
+		path := filepath.Join(tmpDir, f)
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Errorf("dropbear-ssh 文件未创建: %s: %v", f, err)
+			continue
+		}
+		// run.sh 应有执行权限
+		if f == "run.sh" && info.Mode().Perm()&0100 == 0 {
+			t.Errorf("dropbear-ssh/run.sh 应有执行权限，got %v", info.Mode().Perm())
+		}
+	}
+
+	// service.yaml 应包含 autostart: false（默认不自动启动）
+	svcYaml, err := os.ReadFile(filepath.Join(tmpDir, "services/dropbear-ssh/service.yaml"))
+	if err != nil {
+		t.Fatalf("读取 service.yaml 失败: %v", err)
+	}
+	if !strings.Contains(string(svcYaml), "autostart: false") {
+		t.Errorf("dropbear-ssh service.yaml 应包含 'autostart: false'")
+	}
+
+	// env.yaml 应包含 SSH_PUBLIC_KEY 变量
+	envYaml, err := os.ReadFile(filepath.Join(tmpDir, "services/dropbear-ssh/env.yaml"))
+	if err != nil {
+		t.Fatalf("读取 env.yaml 失败: %v", err)
+	}
+	if !strings.Contains(string(envYaml), "SSH_PUBLIC_KEY") {
+		t.Errorf("dropbear-ssh env.yaml 应包含 'SSH_PUBLIC_KEY' 变量")
+	}
+
+	// run.sh 应同时支持公钥认证和空白密码免认证两种模式
+	runSH, err := os.ReadFile(filepath.Join(tmpDir, "services/dropbear-ssh/run.sh"))
+	if err != nil {
+		t.Fatalf("读取 run.sh 失败: %v", err)
+	}
+	runContent := string(runSH)
+	if !strings.Contains(runContent, "dropbear -R -s -F") {
+		t.Errorf("run.sh 应包含公钥认证模式（dropbear -s）")
+	}
+	if !strings.Contains(runContent, "dropbear -R -B -F") {
+		t.Errorf("run.sh 应包含空白密码免认证模式（dropbear -B）")
+	}
+
+	// setup-ssh-keys 扩展不应再生成（已删除）
+	setupExtPath := filepath.Join(tmpDir, "extensions", "setup-ssh-keys")
+	if _, err := os.Stat(setupExtPath); err == nil {
+		t.Errorf("setup-ssh-keys 扩展不应再生成（公钥配置已移至 dropbear-ssh 服务的 env.yaml + run.sh）")
+	}
+}

@@ -32,7 +32,7 @@ LABEL org.opencontainers.image.title="supd" \
       org.opencontainers.image.source="https://github.com/qq859952722/supd" \
       org.opencontainers.image.licenses="MIT"
 
-# 安装运行时依赖与常用工具（总增量约 12.6 MB，控制在 20 MB 预算内）
+# 安装运行时依赖与常用工具（总增量约 13.2 MB，控制在 20 MB 预算内）
 # - ca-certificates/tzdata: TLS 根证书 + 时区数据（基础）
 # - bash/curl: Shell + HTTP 客户端（基础，扩展脚本常用）
 # - openssl: TLS 工具（生成证书、测试 HTTPS、加解密）
@@ -54,6 +54,10 @@ LABEL org.opencontainers.image.title="supd" \
 # - util-linux: 更多系统工具
 # - jq: JSON 处理（API 响应解析、配置生成）
 # - nano: 轻量编辑器（容器内快速编辑配置）
+# - dropbear: 轻量 SSH 服务器（~500KB），支持公钥认证 + SFTP 子系统，端口 2222
+#   host key 由 dropbear 服务通过 -R 参数在首次启动时动态生成（避免镜像硬编码密钥导致所有容器共享相同密钥）
+#   dropbear 作为 supd 管理的服务启动（见 services/dropbear-ssh/service.yaml），不由容器 entrypoint 启动
+# - openssh-sftp-server: SFTP 服务端二进制（dropbear 的 SFTP 子系统依赖此包）
 RUN apk add --no-cache \
         ca-certificates tzdata bash curl \
         openssl wget \
@@ -62,7 +66,9 @@ RUN apk add --no-cache \
         iproute2 iputils bind-tools socat netcat-openbsd \
         psmisc procps-ng util-linux \
         jq nano \
-    && addgroup -S supd && adduser -S -G supd -h /etc/supd supd
+        dropbear openssh-sftp-server \
+    && addgroup -S supd && adduser -S -G supd -h /etc/supd supd \
+    && mkdir -p /etc/dropbear
 
 COPY --from=go-builder /supd /usr/local/bin/supd
 
@@ -82,7 +88,7 @@ WORKDIR /etc/supd
 # （supd 通过 config.runtimes 映射以绝对路径启动 runtime，此处仅为脚本内部调用提供便利）
 ENV PATH="/etc/supd/runtimes:${PATH}"
 USER supd
-EXPOSE 7979
+EXPOSE 7979 2222
 VOLUME ["/etc/supd", "/var/log/supd"]
 ENTRYPOINT ["/usr/local/bin/supd"]
 CMD ["--workdir", "/etc/supd", "run"]

@@ -298,7 +298,7 @@ func TestCronScheduler_StartAndStop(t *testing.T) {
 	scheduler := NewCronScheduler(dispatcher)
 
 	scheduler.Start()
-	scheduler.Stop()
+	scheduler.Stop(context.Background())
 	// 如果没有 panic，则测试通过
 }
 

@@ -79,7 +79,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// 创建示例服务（4 个，覆盖 4 种 readiness + 3 种 restart policy + depends_on + signals）
+	// 创建示例服务（5 个，覆盖 4 种 readiness + 3 种 restart policy + depends_on + signals + Docker SSH 集成）
 	if err := createExampleServices(dir); err != nil {
 		return err
 	}
@@ -325,10 +325,11 @@ func writeExampleFile(path, content string, mode os.FileMode) error {
 	return nil
 }
 
-// createExampleServices 创建 4 个示例服务
+// createExampleServices 创建 5 个示例服务
 // 覆盖 4 种 readiness（http_check/tcp_check/fd_notify/script）
-// + 3 种 restart policy（always/on-failure/no）+ depends_on + signals
+// + 3 种 restart policy（always/on-failure/no）+ depends_on + signals + Docker SSH 集成
 // 其中 web-demo 携带 1 个服务级扩展 demo-lifecycle（service_lifecycle + debounce:5s）
+// dropbear-ssh 为 Docker 集成服务（SSH/SFTP 在线开发，自带 run.sh + env.yaml，默认不自动启动）
 func createExampleServices(dir string) error {
 	services := []exampleEntry{
 		{
@@ -362,6 +363,14 @@ func createExampleServices(dir string) error {
 				"check_ready.sh": scriptReadyDemoCheckSH,
 			},
 		},
+		{
+			name: "dropbear-ssh",
+			files: map[string]string{
+				"service.yaml": dropbearSshServiceYAML,
+				"run.sh":       dropbearSshRunSH,
+				"env.yaml":     dropbearSshEnvYAML,
+			},
+		},
 	}
 	for _, svc := range services {
 		svcDir := filepath.Join(dir, "services", svc.name)
@@ -384,6 +393,7 @@ func createExampleServices(dir string) error {
 // + 3 种并发策略（replace/serialize/parallel）
 // 实用扩展 auto-create-users 默认禁用，按需启用（run_as: root，ALLID 环境变量驱动）
 // 第 4 种触发器（service_lifecycle）与并发策略（debounce:Ns）由 web-demo 的服务级扩展 demo-lifecycle 演示
+// 注：SSH 公钥配置已移至 dropbear-ssh 服务的 env.yaml + run.sh，不再需要独立扩展
 func createExampleExtensions(dir string) error {
 	exts := []exampleEntry{
 		{

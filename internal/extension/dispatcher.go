@@ -25,8 +25,9 @@ type DispatchRequest struct {
 	Phase string
 	// ServiceName 触发的服务名（service_lifecycle时，用于过滤只匹配该服务的扩展）
 	ServiceName string
-	// ServicePID 服务 PID（service_lifecycle 的 post_ready/pre_stop 时）
-	// REQ-D-004, 2.2.5: pre_start 时为 0，post_ready/pre_stop 时为实际 PID
+	// ServicePID 服务 PID（service_lifecycle 的 post_ready/pre_stop/on_failure 时）
+	// REQ-D-004, 2.2.5: pre_start 时为 0（进程尚未启动），post_ready/pre_stop 时为实际 PID，
+	// on_failure 时为进程退出前的 PID（proc.PID() 在进程退出后仍返回创建时存储的 PID）
 	ServicePID int
 	// ServiceExitCode on_failure 时的退出码
 	// REQ-D-004, 2.2.5: SUPD_SERVICE_EXIT_CODE

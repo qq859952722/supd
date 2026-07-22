@@ -273,6 +273,10 @@ func TestSupdEnvOnFailure(t *testing.T) {
 	if envMap["SUPD_SERVICE_RESTART_COUNT"] != "3" {
 		t.Errorf("expected SUPD_SERVICE_RESTART_COUNT=3, got %s", envMap["SUPD_SERVICE_RESTART_COUNT"])
 	}
+	// 验证 SUPD_SERVICE_PID（偏差 #2 修复：on_failure 时注入进程退出前的 PID）
+	if envMap["SUPD_SERVICE_PID"] != "12345" {
+		t.Errorf("expected SUPD_SERVICE_PID=12345, got %s", envMap["SUPD_SERVICE_PID"])
+	}
 }
 
 // TestBuildCommand 测试命令构造

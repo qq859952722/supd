@@ -11,13 +11,22 @@
 #   ./logs → /var/log/supd  日志目录
 #
 # Web UI：http://localhost:7979
+#
+# SSH 在线开发（端口 2222，dropbear-ssh 服务，默认不自动启动）：
+#   dropbear-ssh 是 supd 管理的普通服务，配置位于 ./etc/services/dropbear-ssh/
+#   认证方式由 ./etc/services/dropbear-ssh/env.yaml 中的 SSH_PUBLIC_KEY 控制：
+#     - SSH_PUBLIC_KEY 填公钥内容（ssh-ed25519/ssh-rsa 开头）→ 公钥认证
+#     - SSH_PUBLIC_KEY 留空（默认）→ 空白密码免认证（仅内网可信场景）
+#   启动方式：Web UI 或 API `POST /api/services/dropbear-ssh/start`
+#   连接示例：ssh -p 2222 supd@<NAS-IP>
+#   智能 IDE Remote-SSH 打开 /etc/supd/ 即可在线编辑服务/扩展
 
 services:
   supd:
     image: ghcr.io/qq859952722/supd:latest
     container_name: supd
     network_mode: host          # 直接使用宿主机网络（家庭 NAS 场景，无需端口映射）
-    user: "0:0"                 # 以 root 运行，避免挂载目录权限问题
+    user: "0:0"                 # 以 root 运行（dropbear 需 root 写 host key + 用户切换；非 root 时 dropbear-ssh 服务启动失败）
     restart: unless-stopped
     volumes:
       - ./etc:/etc/supd

@@ -210,7 +210,7 @@ func TestServiceLifecycleTriggerOnFailure(t *testing.T) {
 	}
 
 	trigger := NewServiceLifecycleTrigger(dispatcher, discovery)
-	results := trigger.OnFailure(context.Background(), "my-service", 1, 9, 3)
+	results := trigger.OnFailure(context.Background(), "my-service", 1, 9, 3, 12345)
 
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
@@ -339,7 +339,8 @@ func TestServiceLifecycleTriggerOnFailureEnvVars(t *testing.T) {
          test "$SUPD_SERVICE" = "my-service" && \
          test "$SUPD_SERVICE_EXIT_CODE" = "1" && \
          test "$SUPD_SERVICE_SIGNAL" = "9" && \
-         test "$SUPD_SERVICE_RESTART_COUNT" = "3"`)
+         test "$SUPD_SERVICE_RESTART_COUNT" = "3" && \
+         test "$SUPD_SERVICE_PID" = "12345"`)
 
 	executor := NewExecutor(logDir, tmpDir)
 	dispatcher := NewDispatcher(executor, tmpDir, logDir, 1800)
@@ -359,7 +360,7 @@ func TestServiceLifecycleTriggerOnFailureEnvVars(t *testing.T) {
 	}
 
 	trigger := NewServiceLifecycleTrigger(dispatcher, discovery)
-	results := trigger.OnFailure(context.Background(), "my-service", 1, 9, 3)
+	results := trigger.OnFailure(context.Background(), "my-service", 1, 9, 3, 12345)
 
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
@@ -602,7 +603,7 @@ func TestServiceLifecycleTriggerAllPhases(t *testing.T) {
 	}
 
 	// on_failure 只匹配 on-failure-ext
-	results = trigger.OnFailure(context.Background(), "svc", 1, 9, 2)
+	results = trigger.OnFailure(context.Background(), "svc", 1, 9, 2, 999)
 	if len(results) != 1 || results[0].ExtensionName != "on-failure-ext" {
 		t.Errorf("on_failure: expected 1 result from on-failure-ext, got %v", results)
 	}

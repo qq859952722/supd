@@ -35,7 +35,8 @@ type BootstrapConfig struct {
 	OnServicePostReady func(ctx context.Context, serviceName string, servicePID int)
 	// service_lifecycle:on_failure — 服务失败后触发（手动停止不算 failure）
 	// A-05-001 修复：增加 restartCount 参数，传递 RestartEngine.Retries() 实际重启次数
-	OnServiceFailure func(ctx context.Context, serviceName string, exitCode, signal, restartCount int)
+	// 规格 §2.2.5: on_failure 时 SUPD_SERVICE_PID 为进程退出前的 PID
+	OnServiceFailure func(ctx context.Context, serviceName string, exitCode, signal, restartCount, servicePID int)
 	// supd_lifecycle:pre_start — supd 启动前触发（Step 9，在 startAutostartServices 之前）
 	OnSupdPreStart func(ctx context.Context)
 }
@@ -383,7 +384,9 @@ func (b *Bootstrap) startService(ctx context.Context, name string, svcEntry *wat
 	}
 
 	// 构建环境变量
-	env := os.Environ()
+	// 规格 §2.2.4: 服务进程合并 3 层 env（supd 自身 env → 全局 env 文件 → 服务 env）
+	// BUG 修复: 此前仅用 os.Environ()，未加载 services/<svc>/env.yaml，违反规格 §2.2.4
+	env := BuildServiceProcessEnv(b.cfg.BaseDir, name, b.result.Config.EnvFiles)
 
 	// 构建工作目录
 	workdir := svcConfig.Workdir
@@ -479,7 +482,7 @@ func (b *Bootstrap) startService(ctx context.Context, name string, svcEntry *wat
 
 	// readiness 检查
 	if svcConfig.Readiness != nil {
-		err := b.checkReadiness(ctx, name, svcConfig.Readiness, sm, proc, preChecker, workdir)
+		err := b.checkReadiness(ctx, name, svcConfig.Readiness, sm, proc, preChecker, workdir, env)
 		return proc, svcLogger, engine, svcCancel, err
 	}
 
@@ -492,6 +495,7 @@ func (b *Bootstrap) startService(ctx context.Context, name string, svcEntry *wat
 // REQ-F-033: readiness 通过则 Transition(StateReady)
 // A-03-002 修复：preChecker 用于 fd_notify 类型，需在 StartProcess 前创建以传递写端 fd
 // workdir 为服务目录，传递给 script 类型 checker 以解析相对路径
+// env 为服务进程环境变量，传递给 script 类型 checker 以继承服务 env（规格 §2.2.3）
 func (b *Bootstrap) checkReadiness(
 	ctx context.Context,
 	name string,
@@ -500,6 +504,7 @@ func (b *Bootstrap) checkReadiness(
 	proc *Process,
 	preChecker ReadinessChecker,
 	workdir string,
+	env []string,
 ) error {
 	var checker ReadinessChecker
 	if preChecker != nil {
@@ -507,7 +512,7 @@ func (b *Bootstrap) checkReadiness(
 		checker = preChecker
 	} else {
 		var err error
-		checker, err = NewReadinessChecker(readinessCfg, workdir)
+		checker, err = NewReadinessChecker(readinessCfg, workdir, env)
 		if err != nil {
 			sm.Transition(EventReadinessTimeout)
 			return fmt.Errorf("readiness checker for %s: %w", name, err)
@@ -704,7 +709,8 @@ func (b *Bootstrap) superviseService(ctx context.Context, name string, svcEntry 
 		}
 		if exitCode != 0 || signaled {
 			// A-05-001 修复：传递 engine.Retries()，使 SUPD_SERVICE_RESTART_COUNT 反映实际重启次数
-			b.cfg.OnServiceFailure(context.Background(), name, exitCode, sigInt, engine.Retries())
+			// 规格 §2.2.5: 传递 proc.PID()（进程退出前的 PID），使 SUPD_SERVICE_PID 可用
+			b.cfg.OnServiceFailure(context.Background(), name, exitCode, sigInt, engine.Retries(), proc.PID())
 		}
 	}
 
@@ -779,7 +785,9 @@ func (b *Bootstrap) superviseService(ctx context.Context, name string, svcEntry 
 		}
 	}
 
-	env := os.Environ()
+	// 构建环境变量
+	// 规格 §2.2.4: 服务进程合并 3 层 env（与 startService 一致，重启时也需重新加载 env.yaml）
+	env := BuildServiceProcessEnv(b.cfg.BaseDir, name, b.result.Config.EnvFiles)
 	workdir := svcEntry.Config.Workdir
 	if workdir == "" {
 		workdir = filepath.Dir(svcEntry.ConfigPath)
@@ -869,7 +877,7 @@ func (b *Bootstrap) superviseService(ctx context.Context, name string, svcEntry 
 
 	// 重启后执行 readiness 检查
 	if svcEntry.Config.Readiness != nil {
-		if err := b.checkReadiness(ctx, name, svcEntry.Config.Readiness, sm, newProc, preChecker, workdir); err != nil {
+		if err := b.checkReadiness(ctx, name, svcEntry.Config.Readiness, sm, newProc, preChecker, workdir, env); err != nil {
 			// 检查是否是进程退出导致的错误
 			select {
 			case <-newProc.Done():

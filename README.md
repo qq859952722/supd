@@ -243,7 +243,7 @@ triggers:
 docker pull ghcr.io/qq859952722/supd:latest
 
 # 或指定具体版本
-docker pull ghcr.io/qq859952722/supd:v0.0.3
+docker pull ghcr.io/qq859952722/supd:v0.0.4
 ```
 
 > 也可从源码自行构建：`docker build -t supd:latest .`（多阶段：`node:20-alpine` → `golang:1.25-alpine` → `alpine:3.20`，最终以非 root 用户 `supd` 运行）。
@@ -302,7 +302,7 @@ docker run -d --stop-grace-period 30s ...
 
 | 项目 | 说明 |
 |------|------|
-| 当前版本 | `v0.0.3` |
+| 当前版本 | `v0.0.4` |
 | 平台支持 | Linux amd64 / Linux arm64 |
 | 后端语言 | Go 1.25+ |
 | 前端技术栈 | React 19 + TypeScript + Vite + Tailwind CSS 4 |
