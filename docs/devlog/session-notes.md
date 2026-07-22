@@ -414,4 +414,178 @@
 
 ---
 
-*最近一次更新：2026-07-21（v0.0.2 发布：push main + tag，release workflow 进行中）*
+## 2026-07-21 服务/扩展 user 字段接入进程启动（重大 bug 修复）
+
+### 背景
+用户报告重大 bug：服务 `service.yaml` 中的 `user` 字段未接入进程启动，导致服务全部以 supd 启动用户运行，无法实现按指定用户权限启动的能力。规格 §2.2.13（line 676-701）已明确要求：
+- 服务 `user` 字段为空 → 继承 supd 启动用户
+- 服务级扩展未指定 `run_as` → 继承服务的 `user` 字段值
+- 全局扩展未指定 `run_as` → 继承 supd 启动用户
+- 用户不存在时 → 报错拒绝启动，详细记录错误原因与解决方法
+
+### 根因分析
+1. **服务进程启动未消费 user 字段**：`internal/core/process.go:36` 的 `StartProcess` 签名虽已支持 `credential *syscall.Credential`，但 4 处调用点（`bootstrap.go:421/805`、`service_operator.go:144/448`）全部传 `nil`，未读取 `svcConfig.User`
+2. **服务级扩展 ServiceUser 未传播**：`extension/dispatcher.go` 构建 `TriggerContext` 时未填充 `ServiceUser` 字段，导致 `executor.go:89` 的 `ResolveRunAs(meta.RunAs, tc.ServiceUser, isServiceLevel)` 接收到的 `ServiceUser` 始终为空
+3. **无统一身份解析层**：core 包不能 import extension（extension 已 import core，会循环依赖），需新建共享叶子包
+
+### 实现方案
+- 新建 `internal/identity` 共享叶子包（`LookupUserGroups` / `BuildCredential` / `GetCurrentUser`），解决循环依赖
+- 新建 `internal/core/credential.go`：`ResolveServiceCredential` + `StartServiceProcess` 两个函数，封装服务的身份解析逻辑
+- 修改 4 处 `StartProcess` 调用点为 `StartServiceProcess`，传入 `svcConfig.User` 和 `svcEntry.ConfigPath`
+- 修改 `extension/dispatcher.go`：`matchedExtension` 增加 `serviceUser` 字段，`findMatchingExtensions` 在匹配服务级扩展时填充 `svcEntry.Config.User`，全局扩展传空字符串
+- 修改 `extension/executor.go`：buildExecContext 失败时填充 `ResultMsg` 和 `ResultLevel`，让前端能看到错误原因
+- 修改 `extension/run_as.go`：用户查找失败时返回包含解决方法提示的详细错误消息
+- 修改 `api/service_ops.go`：通过 `errors.As` 识别 `*ServiceError` 并经 `respondProviderError` 映射为 HTTP 422
+
+### 语义差异处理（服务 vs 扩展的非 root 场景）
+- **服务**（严格）：非 root supd 切换其他用户 → 拒绝启动返回 `*ServiceError(ErrRuntimeUserNotFound)`
+- **扩展**（宽松）：非 root supd 切换其他用户 → 记录警告 + 以当前用户运行（与原 `ResolveRunAs` 一致）
+- **优化**：非 root 环境下，显式指定当前用户时返回 `nil credential`，避免 `setuid` 系统调用触发 EPERM
+
+### 全局扩展 service_lifecycle 触发的语义保护（代码审计发现并修复）
+- **重大 bug**：最初实现中，全局扩展被 `service_lifecycle` 触发时错误地从 Discovery 查询服务 user 填充到 `TriggerContext.ServiceUser`，违反规格 §2.2.13 line 677（全局扩展默认 run_as = supd 启动用户）
+- **修复**：撤销该填充逻辑，`TriggerContext.ServiceUser` 直接使用 `ext.serviceUser`（全局扩展始终为空字符串）
+- 2 个 sub-agent 交叉验证确认修复正确
+
+### 修改文件清单
+**新建文件（4 个）**：
+- `internal/identity/identity.go` — 共享叶子包（LookupUserGroups / BuildCredential / GetCurrentUser）
+- `internal/identity/identity_test.go` — 单元测试
+- `internal/core/credential.go` — ResolveServiceCredential + StartServiceProcess
+- `internal/core/credential_test.go` — 9 个测试用例
+
+**修改文件（7 个）**：
+- `internal/core/bootstrap.go` — 2 处 StartProcess → StartServiceProcess（+ 详细日志）
+- `internal/api/service_operator.go` — 2 处 StartProcess → StartServiceProcess
+- `internal/api/service_ops.go` — errors.As 识别 *ServiceError → respondProviderError → HTTP 422
+- `internal/extension/dispatcher.go` — matchedExtension + serviceUser 字段 + findMatchingExtensions 填充逻辑
+- `internal/extension/dispatcher_test.go` — 新增 3 个测试覆盖 serviceUser 传播
+- `internal/extension/executor.go` — buildExecContext 失败时填充 ResultMsg/ResultLevel
+- `internal/extension/run_as.go` — 用户不存在错误消息增加解决方法提示
+
+### 验证
+
+**代码检查（go build + vet + test 全部通过）**：
+```
+ok  github.com/supdorg/supd/internal/api        3.628s
+ok  github.com/supdorg/supd/internal/archive    0.011s
+ok  github.com/supdorg/supd/internal/cli        0.042s
+ok  github.com/supdorg/supd/internal/config     0.022s
+ok  github.com/supdorg/supd/internal/core       49.685s
+ok  github.com/supdorg/supd/internal/errors     0.004s
+ok  github.com/supdorg/supd/internal/extension  34.377s
+ok  github.com/supdorg/supd/internal/identity   0.005s
+ok  github.com/supdorg/supd/internal/logging    0.049s
+ok  github.com/supdorg/supd/internal/system     0.310s
+ok  github.com/supdorg/supd/internal/watch      7.430s
+```
+
+**代码审计（2 个 sub-agent 交叉验证 11 个检查点全部通过）**：
+- Agent 1 验证 `credential.go`：6 个检查点全部通过
+- Agent 2 验证 `dispatcher.go` + `executor.go`：5 个检查点全部通过
+- 未发现 critical/major 问题
+- 2 个 minor 观察：`isServiceLevel` 命名误导（功能正确）、错误消息"容器内"措辞偏窄
+
+**运行状态测试（7 个场景全部通过）**：
+| 场景 | 操作 | 结果 |
+|------|------|------|
+| 1 | 服务指定不存在用户 `nobody-xyz` | HTTP 422 + 详细错误消息（含用户名、原因、解决方法、配置位置）✅ |
+| 2 | 服务 user 为空 | HTTP 202 Accepted + 进程成功启动 ✅ |
+| 3 | good-user-svc 进程运行正常 | PID、状态 up、内存正常 ✅ |
+| 4 | 非 root supd 切换到 root | HTTP 422 + 详细错误消息 ✅ |
+| 5 | 扩展 run_as 不存在用户 | 任务 failed ✅ |
+| 6 | 查询扩展运行结果 | result_msg 包含完整错误原因和解决方法 ✅ |
+| 7 | 服务级扩展 run_as 为空 + 服务 user=qq | 扩展以 qq 身份执行（uid=1000，含所有补充组）✅ |
+
+### 错误消息示例（用户可见）
+```
+service good-user-svc: supd 未以 root 运行（current uid=1000），无法切换到配置的用户 "root" (uid=0)；
+请以 root 启动 supd，或将 service.yaml 的 user 字段改为当前用户或留空以继承 supd 用户（配置位置：/path/to/service.yaml）
+```
+
+```
+service nonexistent-user-svc: configured user "nobody-xyz" does not exist or lookup failed: user: unknown user nobody-xyz；
+请在容器内创建该用户（如 `adduser nobody-xyz` 或 `useradd nobody-xyz`），
+或修改 service.yaml 的 user 字段为空以继承 supd 启动用户（配置位置：/path/to/service.yaml）
+```
+
+### 遗留事项
+- 本次修改未提交 git（等待用户确认）
+- 前端未针对 HTTP 422 状态码做特殊展示优化（当前 422 错误消息可正常透传到前端，但样式可能与其他错误码一致）
+
+### 下次会话注意
+- 服务与扩展的非 root 语义差异是重要设计决策，修改时需注意保持差异（服务严格拒绝、扩展宽松警告）
+- `TriggerContext.ServiceUser` 字段的填充规则：仅服务级扩展在 `findMatchingExtensions` 中填充，全局扩展始终为空（即使被 `service_lifecycle` 触发）
+- 非 root 环境 `setuid` EPERM 优化：`ResolveServiceCredential` 和 `ResolveRunAs` 都在目标 UID 等于当前 UID 时返回 nil credential
+- `internal/identity` 是共享叶子包，core 和 extension 都可 import，避免循环依赖
+
+---
+
+## 2026-07-22 tjs 运行时接入默认配置 + Docker 工具集 + auto-create-users 扩展
+
+### 本次完成
+
+**1. tjs 编译库分析 + 默认配置文件接入 tjs 运行时**
+- 分析 Docker 中打包的 tjs（txiki.js v26.6.0）编译选项：4 个默认 ON（MIMALLOC/FFI/WASM/SQLITE）、6 个默认 OFF
+- tjs 内置依赖库：QuickJS、libuv、libwebsockets、mbedTLS、miniz、ada、mimalloc、SQLite、WAMR、libffi
+- tjs 内置模块：C 层约 20 个（tjs:fs/http/ws/sqlite3/ffi/wasm 等）+ JS stdlib 约 12 个
+- 修改 [internal/cli/init.go](file:///home/qq/Documents/trae_projects/supd/internal/cli/init.go) 的 config.yaml 模板：runtimes 字段从 `{}` 改为包含 `tjs: /usr/local/bin/tjs`，附详细注释说明 Docker 路径与非 Docker 环境处理
+- Go raw string 反引号转义：模板内反引号用 `+"`...`"+` 拼接（与文件中已有模式一致）
+
+**2. Docker 镜像常用软件集成（Dockerfile 工具集更新）**
+- 评估并集成 26 个 Alpine 包到 [Dockerfile](file:///home/qq/Documents/trae_projects/supd/Dockerfile) Stage 3 的 `apk add`，总增量约 12.6MB（20MB 预算内）
+- 按用途分组：
+  - 基础（4 包）：ca-certificates/tzdata/bash/curl = 3.77 MB
+  - 解压缩（5 包）：unzip/bzip2/xz/zstd/7zip = 2.75 MB
+  - 网络/安全（2 包）：openssl/wget = 1.19 MB
+  - 文件管理（5 包）：coreutils/findutils/lsof/file/tree = 1.65 MB
+  - 网络管理（5 包）：iproute2/iputils/bind-tools/socat/netcat-openbsd = 1.58 MB
+  - 进程管理（3 包）：psmisc/procps-ng/util-linux = 0.75 MB
+  - 文本/编辑（2 包）：jq/nano = 0.93 MB
+- 移除用户反馈用不上的 SSH 包（openssh-client-default/openssh-sftp-server/sshpass）
+- Alpine 3.20 包体积通过 APKINDEX.tar.gz 解析获取精确值（非估算）
+
+**3. auto-create-users 全局扩展（默认禁用）**
+- 在 [internal/cli/init_examples.go](file:///home/qq/Documents/trae_projects/supd/internal/cli/init_examples.go) 新增 `autoCreateUsersMetaYAML` 和 `autoCreateUsersRunSH` 两个常量
+- meta.yaml 关键字段：`enabled: false`（默认禁用）、`run_as: root`、`concurrency: replace`、`supd_lifecycle.post_ready` 触发器
+- run.sh 实现要点：
+  - 读取 `ALLID` 环境变量（逗号分隔，自动 trim 空格，空值跳过）
+  - root 权限检查（非 root 报错退出并提示解决方法）
+  - `create_user()` 函数兼容 `useradd`（Arch/Debian/RHEL）和 `adduser`（Alpine busybox）
+  - 用户名合法性校验（`^[a-z_][a-z0-9_-]*$`）
+  - 已存在用户跳过（`id` 命令检测）
+  - 创建系统用户：无密码、无 home、shell=/sbin/nologin
+  - 输出 `::progress::` 和 `::result::` 协议
+- 在 [internal/cli/init.go](file:///home/qq/Documents/trae_projects/supd/internal/cli/init.go) 的 `createExampleExtensions` 中注册新扩展
+- 更新相关注释：扩展数 3→4 个全局（3 示例 + 1 实用）
+
+### 验证
+
+- `go build ./...` ✅
+- `go vet ./...` ✅
+- `go test ./... -count=1` ✅（全包通过）
+- `supd init` 实际生成验证：4 个扩展目录正确创建，auto-create-users 的 meta.yaml（enabled: false）+ run.sh（0755 权限）正确生成
+- 脚本行为测试（非 root 环境）：
+  - ALLID 未设置 → `::result:: success "ALLID 未设置，跳过用户创建"` ✅
+  - ALLID 设置 + 非 root → `::result:: error "需要 root 权限..."` ✅
+  - root 权限检查在用户名验证之前（正确顺序）✅
+
+### 修改文件清单
+- `internal/cli/init.go` — config.yaml 模板添加 tjs runtime；createExampleExtensions 注册 auto-create-users；注释更新 3→4 全局扩展
+- `internal/cli/init_examples.go` — 新增 autoCreateUsersMetaYAML + autoCreateUsersRunSH 常量；文件头注释更新
+- `Dockerfile` — Stage 3 apk add 更新为 26 个包（移除 SSH，添加文件/网络/进程管理工具）
+
+### 遗留事项
+- 本次修改未提交 git（等待用户确认）
+- auto-create-users 扩展在 root 环境下的实际用户创建已在上一轮会话验证通过（Arch Linux useradd），Docker（Alpine adduser）环境未实际运行测试（LXC 限制无法启动嵌套容器）
+- 上一轮的 release workflow（commit b519115b）已成功完成（status: completed, conclusion: success）
+
+### 下次会话注意
+- auto-create-users 扩展默认禁用，用户需手动改 `enabled: true` 并以 root 启动 supd 才会生效
+- ALLID 环境变量是宿主机/Docker 传入的（非 SUPD_* 变量），脚本通过 `os.Environ()` 继承
+- Docker 默认 config.yaml 含 tjs runtime 条目，本地非 Docker 环境若未安装 tjs 可删除该项
+- Dockerfile 工具集约 12.6MB，20MB 预算余量约 7.4MB，后续添加工具需注意预算
+
+---
+
+*最近一次更新：2026-07-22（tjs 运行时接入默认配置 + Docker 工具集更新 + auto-create-users 全局扩展：3 文件修改，go build/vet/test 全部通过，supd init 生成验证通过）*

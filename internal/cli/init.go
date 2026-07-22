@@ -84,7 +84,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// 创建示例扩展（3 个全局，覆盖 3 种全局触发器；服务级扩展随 web-demo 创建）
+	// 创建示例扩展（4 个全局：3 个示例 + 1 个实用扩展；服务级扩展随 web-demo 创建）
 	if err := createExampleExtensions(dir); err != nil {
 		return err
 	}
@@ -215,8 +215,13 @@ extension_dirs:
 # key:   runtime 名称（meta.yaml 中 runtime 字段引用）
 # value: 可执行文件绝对路径
 # 内置：bash（默认）/ python / python3 / node / sh
-# 也可通过 `+"`supd runtimes install`"+` 安装自定义 runtime（如 tjs）
-runtimes: {}
+# 也可通过 `+"`supd runtimes install`"+` 安装自定义 runtime
+#
+# tjs（txiki.js）：官方 Docker 镜像内置的轻量 JavaScript 运行时（~3MB 静态二进制）
+# 容器内路径 /usr/local/bin/tjs 为包装脚本，支持 `+"`tjs script.js`"+` 与 `+"`tjs run script.js`"+` 两种调用
+# 本地非 Docker 环境若未安装 tjs，可删除此项或通过 `+"`supd runtimes install tjs`"+` 安装
+runtimes:
+  tjs: /usr/local/bin/tjs
 
 # defaults — 全局默认值（服务可在 service.yaml 中覆盖）
 defaults:
@@ -329,10 +334,10 @@ func createExampleServices(dir string) error {
 		{
 			name: "web-demo",
 			files: map[string]string{
-				"service.yaml":                          webDemoServiceYAML,
-				"run.py":                                webDemoRunPY,
-				"extensions/demo-lifecycle/meta.yaml":   demoLifecycleMetaYAML,
-				"extensions/demo-lifecycle/run.sh":      demoLifecycleRunSH,
+				"service.yaml":                        webDemoServiceYAML,
+				"run.py":                              webDemoRunPY,
+				"extensions/demo-lifecycle/meta.yaml": demoLifecycleMetaYAML,
+				"extensions/demo-lifecycle/run.sh":    demoLifecycleRunSH,
 			},
 		},
 		{
@@ -374,9 +379,10 @@ func createExampleServices(dir string) error {
 	return nil
 }
 
-// createExampleExtensions 创建 3 个全局示例扩展
-// 覆盖 3 种全局触发器（on_demand/on_schedule/supd_lifecycle）
+// createExampleExtensions 创建 4 个全局扩展（3 个示例 + 1 个实用扩展）
+// 示例扩展覆盖 3 种全局触发器（on_demand/on_schedule/supd_lifecycle）
 // + 3 种并发策略（replace/serialize/parallel）
+// 实用扩展 auto-create-users 默认禁用，按需启用（run_as: root，ALLID 环境变量驱动）
 // 第 4 种触发器（service_lifecycle）与并发策略（debounce:Ns）由 web-demo 的服务级扩展 demo-lifecycle 演示
 func createExampleExtensions(dir string) error {
 	exts := []exampleEntry{
@@ -400,6 +406,13 @@ func createExampleExtensions(dir string) error {
 				"meta.yaml": supdStartupHookMetaYAML,
 				"run.sh":    supdStartupHookRunSH,
 				"env.yaml":  supdStartupHookEnvYAML,
+			},
+		},
+		{
+			name: "auto-create-users",
+			files: map[string]string{
+				"meta.yaml": autoCreateUsersMetaYAML,
+				"run.sh":    autoCreateUsersRunSH,
 			},
 		},
 	}

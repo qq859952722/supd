@@ -9,10 +9,11 @@ package cli
 //   - 3 种 restart policy（always 默认 / on-failure / no）
 //   - depends_on 拓扑排序、signals 自定义信号、stop、logging、autostart、tags
 //
-// 4 个扩展（3 全局 + 1 服务级）覆盖：
+// 5 个扩展（4 全局 + 1 服务级）覆盖：
 //   - 4 种触发器（on_demand / on_schedule / supd_lifecycle / service_lifecycle）
 //   - 4 种并发策略（replace / serialize / parallel / debounce:Ns）
 //   - stdout 协议、多 action、button_style、ui.icon、args、env.yaml password 字段
+//   - run_as root、enabled false、环境变量驱动的实用扩展
 //
 // 与 test_workdir/ 的关系：示例内容复用 test_workdir 已验证实现，并做以下调整：
 //   - demo-lifecycle 并发策略由 parallel 改为 debounce:5s（覆盖第 4 种并发策略）
@@ -619,4 +620,148 @@ case "$ACTION" in
         exit 1
         ;;
 esac
+`
+
+// =============================================================================
+// 实用扩展（全局，默认禁用，按需启用）
+// =============================================================================
+
+// --- auto-create-users：supd_lifecycle post_ready + run_as root + 环境变量驱动 ---
+// 功能：supd 启动就绪后，根据 ALLID 环境变量（逗号分隔）自动创建系统用户
+// 默认禁用（enabled: false），需手动改为 true 启用
+// 需要 root 权限（run_as: root），非 root 环境下需以 root 启动 supd
+const autoCreateUsersMetaYAML = `name: auto-create-users
+version: "1.0.0"
+description: "supd 启动时根据 ALLID 环境变量自动创建系统用户（默认禁用，需 root）"
+# 默认禁用：将 enabled 改为 true 后生效
+# 启用前提：supd 需以 root 运行（创建用户需要 root 权限）
+enabled: false
+runtime: bash
+entry: run.sh
+timeout_seconds: 30
+# run_as: root — 以 root 身份执行（创建用户需要 CAP_SETUID/CAP_SETGID）
+run_as: root
+concurrency: replace
+triggers:
+  # supd_lifecycle: supd 启动就绪后自动触发
+  # post_ready: supd 完成初始化、服务全部启动后触发
+  supd_lifecycle:
+    - event: post_ready
+      action: create
+actions:
+  - id: create
+    label: "创建用户"
+    button_style: default
+`
+
+const autoCreateUsersRunSH = `#!/bin/bash
+# auto-create-users: 根据 ALLID 环境变量自动创建系统用户
+#
+# 触发时机：supd_lifecycle post_ready（supd 启动就绪后）
+# 环境变量：
+#   ALLID — 逗号分隔的用户名列表，如 "user1,user2,user3"
+#           支持空格分隔（自动 trim），空值跳过
+#
+# 创建的用户特征：
+#   - 无密码（无法交互登录）
+#   - 无 home 目录
+#   - shell 为 /sbin/nologin（禁止登录）
+#   - 系统用户（UID 从系统范围分配）
+#
+# 注意：需要 root 权限。非 root 运行时会报错并提示解决方法。
+
+# 读取 ALLID 环境变量（宿主机/Docker 传入，非 SUPD_* 变量）
+ALLID="${ALLID:-}"
+
+if [ -z "$ALLID" ]; then
+    echo "::result:: success \"ALLID 未设置，跳过用户创建\""
+    exit 0
+fi
+
+# 按逗号分割用户名
+IFS=',' read -ra USERS <<< "$ALLID"
+
+TOTAL=${#USERS[@]}
+if [ "$TOTAL" -eq 0 ]; then
+    echo "::result:: success \"ALLID 为空，跳过用户创建\""
+    exit 0
+fi
+
+# 检查 root 权限
+if [ "$(id -u)" -ne 0 ]; then
+    echo "::result:: error \"需要 root 权限创建用户，请以 root 启动 supd 或设置 run_as: root\""
+    exit 1
+fi
+
+# create_user: 兼容 Alpine(adduser) / Arch/Debian/RHEL(useradd) 创建系统用户
+# 参数: $1 = 用户名
+# 返回: 0 成功, 非 0 失败
+create_user() {
+    local user="$1"
+    CREATE_USER_ERR=""
+    if command -v useradd >/dev/null 2>&1; then
+        # useradd（Arch/RHEL/Debian）: --system 系统用户 / --no-create-home 无 home / --shell 登录 shell
+        # 捕获 stderr 到 CREATE_USER_ERR，失败时附加到错误消息供用户排查
+        CREATE_USER_ERR=$(useradd --system --no-create-home --shell /sbin/nologin "$user" 2>&1)
+        return $?
+    elif command -v adduser >/dev/null 2>&1; then
+        # Alpine busybox adduser: -D 无密码 / -H 无 home / -S 系统用户 / -s 登录 shell
+        CREATE_USER_ERR=$(adduser -D -H -S -s /sbin/nologin "$user" 2>&1)
+        return $?
+    else
+        CREATE_USER_ERR="useradd/adduser 命令均不可用"
+        return 1
+    fi
+}
+
+echo "::progress:: 10 \"准备处理 $TOTAL 个用户...\""
+
+CREATED=0
+SKIPPED=0
+FAILED=0
+ERRORS=""
+
+for i in "${!USERS[@]}"; do
+    # 去除前后空白（使用 username 避免覆盖 bash $USER 环境变量）
+    username=$(echo "${USERS[$i]}" | tr -d '[:space:]')
+
+    # 跳过空用户名
+    [ -z "$username" ] && continue
+
+    # 验证用户名合法性（字母/下划线开头，字母数字连字符下划线）
+    if ! echo "$username" | grep -qE '^[a-z_][a-z0-9_-]*$'; then
+        ERRORS="${ERRORS}用户名 '${username}' 不合法(需匹配 ^[a-z_][a-z0-9_-]*$); "
+        FAILED=$((FAILED + 1))
+        continue
+    fi
+
+    # 检查用户是否已存在
+    if id "$username" >/dev/null 2>&1; then
+        echo "  [SKIP] 用户 $username 已存在"
+        SKIPPED=$((SKIPPED + 1))
+    else
+        # 创建系统用户（兼容 useradd / adduser）
+        if create_user "$username"; then
+            echo "  [OK]   用户 $username 创建成功"
+            CREATED=$((CREATED + 1))
+        else
+            ERRORS="${ERRORS}创建用户 ${username} 失败: ${CREATE_USER_ERR}; "
+            FAILED=$((FAILED + 1))
+        fi
+    fi
+
+    # 进度：10% ~ 90%
+    PROGRESS=$((10 + (i + 1) * 80 / TOTAL))
+    echo "::progress:: ${PROGRESS} \"已处理 $((i + 1))/${TOTAL}\""
+done
+
+echo "::progress:: 100 \"处理完成\""
+
+# 汇总结果
+SUMMARY="创建: ${CREATED} | 跳过: ${SKIPPED} | 失败: ${FAILED}"
+if [ "$FAILED" -gt 0 ]; then
+    echo "::result:: warning \"${SUMMARY} | 错误: ${ERRORS}\""
+else
+    echo "::result:: success \"${SUMMARY}\""
+fi
 `

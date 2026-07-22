@@ -1,0 +1,25 @@
+# supd — 家庭 NAS 进程监督器
+# 镜像来源：GitHub Container Registry (GHCR) 最新版本
+#
+# 快速开始：
+#   docker compose up -d              # 首次启动自动初始化（生成 config.yaml 与示例服务/扩展）
+#   docker compose logs -f supd       # 查看日志
+#   docker compose pull && docker compose up -d   # 升级到最新镜像
+#
+# 数据持久化：
+#   ./etc  → /etc/supd      配置与服务定义
+#   ./logs → /var/log/supd  日志目录
+#
+# Web UI：http://localhost:7979
+
+services:
+  supd:
+    image: ghcr.io/qq859952722/supd:latest
+    container_name: supd
+    network_mode: host          # 直接使用宿主机网络（家庭 NAS 场景，无需端口映射）
+    user: "0:0"                 # 以 root 运行，避免挂载目录权限问题
+    restart: unless-stopped
+    volumes:
+      - ./etc:/etc/supd
+      - ./logs:/var/log/supd
+    stop_grace_period: 30s      # 与 config.yaml shutdown_grace_seconds 对齐，确保优雅退出

@@ -58,6 +58,10 @@ test_workdir/ex/
 tmp/*
 !tmp/audit_plan.md
 
+# Docker Compose 部署产物（docker-compose.yml 挂载的本地目录，运行时生成）
+/etc/
+/logs/
+
 # Docker 本地测试产物（CI 中由工作流下载，不纳入版本控制）
 tjs
 tjs-bin
