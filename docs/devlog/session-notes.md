@@ -917,4 +917,4 @@ service nonexistent-user-svc: configured user "nobody-xyz" does not exist or loo
 
 ---
 
-*最近一次更新：2026-07-22 v0.0.4 发布（3 项规格偏差修复 + 代码审计 + 5 组运行状态测试全部通过 + Dropbear SSH 集成 + env.yaml BUG 修复；20 个文件变更，go build/vet/test 全通过）*
+*最近一次更新：2026-07-22 v0.0.5 发布（修复 Docker 首次启动 config.yaml 缺失 + v0.0.4 全部变更）*

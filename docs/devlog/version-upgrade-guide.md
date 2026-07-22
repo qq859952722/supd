@@ -169,6 +169,7 @@ git push origin vX.Y.Z
 
 | 日期 | 版本 | 变更 |
 |------|------|------|
+| 2026-07-22 | v0.0.5 | 修复 Docker 首次启动时 config.yaml 缺失导致退出（run 命令自动检测并调用 init） |
 | 2026-07-22 | v0.0.4 | 3 项规格偏差修复（script readiness env 继承 / on_failure SUPD_SERVICE_PID 注入 / cronScheduler.Stop 超时）+ Dropbear SSH 集成 + 服务进程 env.yaml 加载修复 |
 | 2026-07-22 | v0.0.3 | tjs 运行时接入默认配置 + Docker 工具集 + auto-create-users 扩展 + user 字段接入进程启动修复 |
 | 2026-07-21 | v0.0.2 | 端口迁移 7979、init 示例、script readiness 修复 |
