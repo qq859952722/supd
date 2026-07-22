@@ -78,6 +78,9 @@ RUN printf '#!/bin/sh\ncase "$1" in\n  run|eval|test|serve|bundle|compile|app|-v
     && chown -R supd:supd /etc/supd /var/log/supd
 
 WORKDIR /etc/supd
+# 将 runtimes 目录加入 PATH，使扩展/服务脚本可直接通过名字调用其中安装的运行时工具
+# （supd 通过 config.runtimes 映射以绝对路径启动 runtime，此处仅为脚本内部调用提供便利）
+ENV PATH="/etc/supd/runtimes:${PATH}"
 USER supd
 EXPOSE 7979
 VOLUME ["/etc/supd", "/var/log/supd"]
