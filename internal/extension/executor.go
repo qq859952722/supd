@@ -278,8 +278,19 @@ func (e *Executor) Execute(ctx context.Context, meta *config.ExtensionMeta, tc T
 	ec, err := e.buildExecContext(runID, meta, tc, mergedEnv)
 	if err != nil {
 		result.State = TaskFailed
+		result.ExitCode = -1
+		// N-04-USER-CRED 修复：run_as 解析失败（如用户不存在）时填充 ResultMsg，
+		// 让前端能直接看到错误原因和解决方法（用户要求"详细的记录并提示错误原因和解决方法"）
+		result.ResultMsg = err.Error()
+		result.ResultLevel = "error"
 		result.FinishedAt = time.Now()
 		e.storeResult(result)
+		slog.Error("extension build context failed",
+			"extension", meta.Name,
+			"run_as", meta.RunAs,
+			"service_user", tc.ServiceUser,
+			"service", tc.ServiceName,
+			"error", err)
 		return result, err
 	}
 
@@ -294,6 +305,9 @@ func (e *Executor) Execute(ctx context.Context, meta *config.ExtensionMeta, tc T
 	if err != nil {
 		result.State = TaskFailed
 		result.ExitCode = -1
+		// 同上：填充 ResultMsg 让前端可见
+		result.ResultMsg = fmt.Sprintf("start process failed: %v", err)
+		result.ResultLevel = "error"
 		result.FinishedAt = time.Now()
 		e.storeResult(result)
 		return result, fmt.Errorf("extension %s: start process failed: %w", meta.Name, err)

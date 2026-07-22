@@ -3,10 +3,28 @@ package extension
 import (
 	"fmt"
 	"os"
-	"os/user"
-	"strconv"
 	"syscall"
+
+	"github.com/supdorg/supd/internal/identity"
 )
+
+// LookupUserGroups 通过用户名查找 uid/gid 及所有补充组（委托到 identity 包）。
+// 保留导出以兼容现有测试；新代码应直接调用 identity.LookupUserGroups。
+func LookupUserGroups(username string) (uid uint32, gid uint32, groups []uint32, err error) {
+	return identity.LookupUserGroups(username)
+}
+
+// BuildCredential 构造 syscall.Credential（委托到 identity 包）。
+// 保留导出以兼容现有测试；新代码应直接调用 identity.BuildCredential。
+func BuildCredential(uid, gid uint32, groups []uint32) *syscall.Credential {
+	return identity.BuildCredential(uid, gid, groups)
+}
+
+// GetCurrentUser 获取当前用户的 uid/gid/补充组（委托到 identity 包）。
+// 保留导出以兼容现有测试；新代码应直接调用 identity.GetCurrentUser。
+func GetCurrentUser() (uid uint32, gid uint32, groups []uint32, err error) {
+	return identity.GetCurrentUser()
+}
 
 // ResolveRunAs 解析扩展的 run_as 身份，返回 uid/gid/补充组
 // REQ-F-023, REQ-P-005, 2.2.13: run_as 字段语义
@@ -45,7 +63,10 @@ func ResolveRunAs(runAs string, serviceUser string, isServiceLevel bool) (uid ui
 	// 查找目标用户信息
 	targetUID, targetGID, targetGroups, lookupErr := LookupUserGroups(targetUser)
 	if lookupErr != nil {
-		return 0, 0, nil, "", fmt.Errorf("lookup user %s: %w", targetUser, lookupErr)
+		// N-04-USER-CRED 修复：用户不存在时返回详细错误消息（包含解决方法）
+		// 用户要求"详细的记录并提示错误原因和解决方法"
+		return 0, 0, nil, "", fmt.Errorf("lookup user %s: %w; 请在容器内创建该用户（如 `adduser %s` 或 `useradd %s`），或修改 meta.yaml 的 run_as 字段为空以继承 supd 启动用户",
+			targetUser, lookupErr, targetUser, targetUser)
 	}
 
 	// 非 root 时检查能否切换到目标用户
@@ -62,100 +83,4 @@ func ResolveRunAs(runAs string, serviceUser string, isServiceLevel bool) (uid ui
 	}
 
 	return targetUID, targetGID, targetGroups, "", nil
-}
-
-// BuildCredential 构造 syscall.Credential，设置 Uid/Gid/Groups
-// REQ-F-023, 2.2.13: 用 cmd.SysProcAttr.Credential 设置执行身份
-// 必须设置补充组：通过 syscall.Setgroups 设置目标用户的所有补充组
-// Groups 必须包含 gid 本身
-func BuildCredential(uid, gid uint32, groups []uint32) *syscall.Credential {
-	// 确保 groups 中包含 gid 本身
-	hasGID := false
-	for _, g := range groups {
-		if g == gid {
-			hasGID = true
-			break
-		}
-	}
-	if !hasGID {
-		groups = append(groups, gid)
-	}
-
-	return &syscall.Credential{
-		Uid:    uid,
-		Gid:    gid,
-		Groups: groups,
-	}
-}
-
-// GetCurrentUser 获取当前用户的 uid/gid/补充组
-// REQ-F-023: 全局扩展默认 run_as = supd 启动用户
-func GetCurrentUser() (uid uint32, gid uint32, groups []uint32, err error) {
-	uid = uint32(os.Getuid())
-	gid = uint32(os.Getgid())
-
-	// 获取当前用户名以查找补充组
-	u, lookupErr := user.LookupId(strconv.Itoa(int(uid)))
-	if lookupErr != nil {
-		// 查找失败时仅返回 uid/gid，补充组为空
-		return uid, gid, nil, nil
-	}
-
-	groupIDs, groupErr := u.GroupIds()
-	if groupErr != nil {
-		// 获取组失败时仅返回 uid/gid
-		return uid, gid, nil, nil
-	}
-
-	groups = make([]uint32, 0, len(groupIDs))
-	for _, gidStr := range groupIDs {
-		g, parseErr := strconv.ParseUint(gidStr, 10, 32)
-		if parseErr != nil {
-			continue
-		}
-		groups = append(groups, uint32(g))
-	}
-
-	return uid, gid, groups, nil
-}
-
-// LookupUserGroups 通过用户名查找 uid/gid 及所有补充组
-// REQ-F-023, 2.2.13: 通过 user.Lookup(name) 获取 uid/gid
-// 必须设置补充组：遍历 user.GroupIds 获取所有 gid
-func LookupUserGroups(username string) (uid uint32, gid uint32, groups []uint32, err error) {
-	u, lookupErr := user.Lookup(username)
-	if lookupErr != nil {
-		return 0, 0, nil, fmt.Errorf("user lookup %s: %w", username, lookupErr)
-	}
-
-	parsedUID, parseErr := strconv.ParseUint(u.Uid, 10, 32)
-	if parseErr != nil {
-		return 0, 0, nil, fmt.Errorf("parse uid %s: %w", u.Uid, parseErr)
-	}
-
-	parsedGID, parseErr := strconv.ParseUint(u.Gid, 10, 32)
-	if parseErr != nil {
-		return 0, 0, nil, fmt.Errorf("parse gid %s: %w", u.Gid, parseErr)
-	}
-
-	uid = uint32(parsedUID)
-	gid = uint32(parsedGID)
-
-	// 获取补充组
-	groupIDs, groupErr := u.GroupIds()
-	if groupErr != nil {
-		// 补充组获取失败时仅返回 uid/gid
-		return uid, gid, nil, nil
-	}
-
-	groups = make([]uint32, 0, len(groupIDs))
-	for _, gidStr := range groupIDs {
-		g, parseErr := strconv.ParseUint(gidStr, 10, 32)
-		if parseErr != nil {
-			continue
-		}
-		groups = append(groups, uint32(g))
-	}
-
-	return uid, gid, groups, nil
 }

@@ -416,12 +416,21 @@ func (b *Bootstrap) startService(ctx context.Context, name string, svcEntry *wat
 
 	// 启动子进程
 	// REQ-F-006: fork+exec+进程组
-	proc, err := StartProcess(name, command, env, workdir, nil, extraFiles...)
+	// REQ-F-023, §2.2.13: 通过 StartServiceProcess 解析 user 字段，
+	// user 不存在或非 root 切换其他用户时返回 *ServiceError 拒绝启动
+	proc, err := StartServiceProcess(name, command, env, workdir, svcConfig.User, svcEntry.ConfigPath, extraFiles...)
 	if err != nil {
 		// 进程启动失败，转移至 failed
 		if preChecker != nil {
 			preChecker.Close()
 		}
+		// N-04-USER-CRED 修复：用户身份解析失败时写入服务日志便于诊断
+		b.writeServiceLog(name, "error", fmt.Sprintf("start failed: %s", err))
+		slog.Error("failed to start service",
+			"service", name,
+			"user", svcConfig.User,
+			"config_path", svcEntry.ConfigPath,
+			"error", err)
 		sm.Transition(EventMaxRetries)
 		return nil, nil, nil, nil, fmt.Errorf("start process: %w", err)
 	}
@@ -791,12 +800,18 @@ func (b *Bootstrap) superviseService(ctx context.Context, name string, svcEntry 
 	}
 
 	// 启动新进程
-	newProc, err := StartProcess(name, command, env, workdir, nil, extraFiles...)
+	// REQ-F-023, §2.2.13: 通过 StartServiceProcess 解析 user 字段，
+	// user 不存在或非 root 切换其他用户时返回 *ServiceError 拒绝启动
+	newProc, err := StartServiceProcess(name, command, env, workdir, svcEntry.Config.User, svcEntry.ConfigPath, extraFiles...)
 	if err != nil {
 		if preChecker != nil {
 			preChecker.Close()
 		}
-		slog.Error("failed to restart service", "service", name, "error", err)
+		slog.Error("failed to restart service",
+			"service", name,
+			"user", svcEntry.Config.User,
+			"config_path", svcEntry.ConfigPath,
+			"error", err)
 		// 启动失败原因写入服务日志
 		b.writeServiceLog(name, "error", fmt.Sprintf("restart failed: %s", err))
 		sm.Transition(EventMaxRetries)

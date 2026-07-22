@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -51,6 +52,13 @@ func (s *Server) handleStartService(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.serviceOperator.StartService(name); err != nil {
+		// N-04-USER-CRED 修复：优先识别 *ServiceError（如 RUNTIME_USER_NOT_FOUND），
+		// 按 Code 映射 HTTP 状态码（422 Unprocessable Entity），避免被降级为 500
+		var se *errors.ServiceError
+		if stderrors.As(err, &se) {
+			respondProviderError(w, err)
+			return
+		}
 		// 区分"服务已运行"（409 Conflict）、"命令不存在"（400）和其他启动失败（500）
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "already running") {
@@ -134,6 +142,13 @@ func (s *Server) handleRestartService(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.serviceOperator.RestartService(name); err != nil {
+		// N-04-USER-CRED 修复：优先识别 *ServiceError（如 RUNTIME_USER_NOT_FOUND），
+		// 按 Code 映射 HTTP 状态码（422 Unprocessable Entity），避免被降级为 500
+		var se *errors.ServiceError
+		if stderrors.As(err, &se) {
+			respondProviderError(w, err)
+			return
+		}
 		respondError(w, errors.ErrInternal, fmt.Sprintf("failed to restart service %s: %v", name, err))
 		return
 	}

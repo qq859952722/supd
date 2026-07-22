@@ -125,6 +125,10 @@ type matchedExtension struct {
 	actionID    string
 	actionArgs  []string
 	serviceName string // 空=全局扩展
+	// serviceUser 服务级扩展匹配时携带的服务 user 字段值，
+	// 用于扩展执行时 ResolveRunAs 的服务级 run_as 继承（REQ-F-023, §2.2.13）
+	// 全局扩展此字段为空 → ResolveRunAs 回退到 supd 启动用户
+	serviceUser string
 }
 
 // Dispatch 触发调度
@@ -166,24 +170,30 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req DispatchRequest) []*RunRe
 // findMatchingExtensions 找到所有匹配当前事件的扩展
 // REQ-F-022: 遍历 DiscoveryResult 中的所有扩展的 triggers，匹配 EventType+Phase
 // REQ-D-004: service_lifecycle 时仅匹配指定服务的服务级扩展
+// REQ-F-023, §2.2.13: 服务级扩展匹配时携带 svcEntry.Config.User，供执行时 ResolveRunAs 继承
 func findMatchingExtensions(req DispatchRequest) []matchedExtension {
 	var matched []matchedExtension
 
-	// 遍历全局扩展
+	// 遍历全局扩展（serviceUser 为空 → ResolveRunAs 回退到 supd 启动用户）
 	for _, extEntry := range req.Discovery.GlobalExts {
-		if m := matchExtension(extEntry, req, ""); m != nil {
+		if m := matchExtension(extEntry, req, "", ""); m != nil {
 			matched = append(matched, *m)
 		}
 	}
 
-	// 遍历服务级扩展
+	// 遍历服务级扩展（serviceUser = svcEntry.Config.User）
 	for _, svcEntry := range req.Discovery.Services {
 		// REQ-D-004: service_lifecycle 时仅匹配触发该事件的服务
 		if req.EventType == "service_lifecycle" && req.ServiceName != "" && svcEntry.Name != req.ServiceName {
 			continue
 		}
+		// 防御性：Config 可能在异常 DiscoveryResult 中为 nil（如测试桩或部分加载）
+		var serviceUser string
+		if svcEntry.Config != nil {
+			serviceUser = svcEntry.Config.User
+		}
 		for _, extEntry := range svcEntry.Extensions {
-			if m := matchExtension(extEntry, req, svcEntry.Name); m != nil {
+			if m := matchExtension(extEntry, req, svcEntry.Name, serviceUser); m != nil {
 				matched = append(matched, *m)
 			}
 		}
@@ -194,7 +204,8 @@ func findMatchingExtensions(req DispatchRequest) []matchedExtension {
 
 // matchExtension 检查单个扩展是否匹配当前触发事件
 // REQ-F-022: 根据 EventType+Phase 匹配扩展的 triggers 定义
-func matchExtension(extEntry *watch.ExtensionEntry, req DispatchRequest, serviceName string) *matchedExtension {
+// REQ-F-023: serviceName/serviceUser 描述扩展所属服务的上下文，供执行时身份继承
+func matchExtension(extEntry *watch.ExtensionEntry, req DispatchRequest, serviceName, serviceUser string) *matchedExtension {
 	meta := extEntry.Meta
 	if meta.Enabled == nil || !*meta.Enabled {
 		return nil
@@ -209,6 +220,7 @@ func matchExtension(extEntry *watch.ExtensionEntry, req DispatchRequest, service
 				actionID:    actionID,
 				actionArgs:  actionArgs,
 				serviceName: serviceName,
+				serviceUser: serviceUser,
 			}
 		}
 	case "on_schedule":
@@ -226,6 +238,7 @@ func matchExtension(extEntry *watch.ExtensionEntry, req DispatchRequest, service
 					actionID:    actionID,
 					actionArgs:  actionArgs,
 					serviceName: serviceName,
+					serviceUser: serviceUser,
 				}
 			}
 		}
@@ -244,6 +257,7 @@ func matchExtension(extEntry *watch.ExtensionEntry, req DispatchRequest, service
 					actionID:    actionID,
 					actionArgs:  actionArgs,
 					serviceName: serviceName,
+					serviceUser: serviceUser,
 				}
 			}
 		}
@@ -262,6 +276,7 @@ func matchExtension(extEntry *watch.ExtensionEntry, req DispatchRequest, service
 					actionID:    actionID,
 					actionArgs:  actionArgs,
 					serviceName: serviceName,
+					serviceUser: serviceUser,
 				}
 			}
 		}
@@ -385,12 +400,17 @@ func (d *Dispatcher) executeForService(ctx context.Context, serviceName string, 
 		if svcName == "" && req.EventType == "service_lifecycle" && req.ServiceName != "" {
 			svcName = req.ServiceName
 		}
+		// REQ-F-023, §2.2.13 line 677: 全局扩展默认 run_as = supd 启动用户（不继承任何服务身份）
+		// 即使被 service_lifecycle 触发，全局扩展的 ServiceUser 也必须为空，
+		// 让 ResolveRunAs 走全局分支继承 supd 用户。
+		// 服务级扩展的 serviceUser 在 findMatchingExtensions 中已填充为 svcEntry.Config.User。
 		tc := TriggerContext{
 			EventType:       req.EventType,
 			TriggerSource:   req.EventType,
 			TriggerUser:     req.TriggerUser,
 			Phase:           req.Phase,
 			ServiceName:     svcName,
+			ServiceUser:     ext.serviceUser,
 			ServicePID:      req.ServicePID,
 			ServiceExitCode: req.ServiceExitCode,
 			ServiceSignal:   req.ServiceSignal,
