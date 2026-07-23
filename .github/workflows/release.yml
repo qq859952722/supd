@@ -66,7 +66,8 @@ jobs:
         uses: actions/cache@v5
         with:
           path: /tmp/tjs-binary
-          key: tjs-${{ matrix.arch }}-${{ env.TJS_VERSION }}
+          # 缓存 key 包含 alpine 标识，避免命中旧的 glibc 编译缓存
+          key: tjs-alpine-${{ matrix.arch }}-${{ env.TJS_VERSION }}
 
       - name: 在 Alpine 容器中编译 txiki.js（确保 musl 兼容）
         if: steps.cache.outputs.cache-hit != 'true'
