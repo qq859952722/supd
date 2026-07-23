@@ -106,12 +106,18 @@ jobs:
               echo "=== 编译完成 ==="
             '
 
-      - name: 验证 tjs（在 Alpine 容器中验证 musl 二进制）
+      - name: 验证 tjs 二进制
         run: |
           file /tmp/tjs-binary/tjs
-          # ubuntu(glibc) 无法运行 musl 二进制，需在 alpine 容器中验证
-          docker run --rm -v /tmp/tjs-binary/tjs:/usr/local/bin/tjs alpine:3.20 \
-            sh -c 'tjs --version && echo "✅ tjs musl 二进制验证通过"'
+          # 编译步骤已在 Alpine 容器内验证过 tjs --version，此处仅检查文件类型
+          # 确认是 musl 链接（interpreter /lib/ld-musl-*），而非 glibc（/lib64/ld-linux-*）
+          if file /tmp/tjs-binary/tjs | grep -q "ld-musl"; then
+            echo "✅ tjs 是 musl 链接，兼容 alpine 运行时"
+          else
+            echo "❌ tjs 不是 musl 链接，无法在 alpine 运行"
+            file /tmp/tjs-binary/tjs
+            exit 1
+          fi
 
       - name: 上传 tjs artifact
         uses: actions/upload-artifact@v6
