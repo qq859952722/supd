@@ -46,7 +46,8 @@ function probePort(port: number): Promise<boolean> {
     return probingPromises.get(port)!
   }
 
-  const url = `http://127.0.0.1:${port}/`
+  // 用当前页面 host 探测：远程访问时为 NAS IP，而非浏览器本机 127.0.0.1
+  const url = `http://${window.location.hostname}:${port}/`
   const promise = (async (): Promise<boolean> => {
     try {
       const controller = new AbortController()

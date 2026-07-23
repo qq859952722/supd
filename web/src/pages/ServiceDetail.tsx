@@ -1763,10 +1763,11 @@ export function ServiceDetail() {
 
 // ===== 端口列表组件 =====
 
-/** 构造可访问的 URL（0.0.0.0 → 127.0.0.1, :: → [::1]） */
+/** 构造可访问的 URL（0.0.0.0/:: → 当前页面 host，确保远程访问可用） */
 function buildPortUrl(scheme: 'http' | 'https', address: string, port: number): string {
   let host = address
-  if (host === '0.0.0.0' || host === '::' || host === '') host = '127.0.0.1'
+  // 监听所有地址的服务，用当前页面 host（远程访问时为 NAS IP，而非浏览器本机 127.0.0.1）
+  if (host === '0.0.0.0' || host === '::' || host === '') host = window.location.hostname
   // IPv6 地址需要加方括号
   if (host.includes(':') && !host.startsWith('[')) host = `[${host}]`
   // 默认端口省略

@@ -188,7 +188,7 @@ function PortBadges({ ports, total }: { ports: ProbedPortInfo[]; total?: number 
         p.is_http ? (
           <a
             key={`${p.protocol}-${p.port}`}
-            href={`http://127.0.0.1:${p.port}`}
+            href={`http://${window.location.hostname}:${p.port}`}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs font-mono bg-[var(--color-surface-hover)] text-[var(--color-brand-primary)] hover:underline"
