@@ -19,16 +19,34 @@ type CronTrigger struct {
 	// retryAttempts 记录每个扩展 action 的当前重试次数
 	// key = "extName:actionID"
 	retryAttempts map[string]int
-	mu            sync.Mutex // B-05-001 修复：保护 retryAttempts 的并发访问
+	// retryCtx/retryCancel 用于取消所有待执行的重试 goroutine（热重载时调用 ClearRetryState）
+	retryCtx     context.Context
+	retryCancel  context.CancelFunc
+	mu           sync.Mutex // B-05-001 修复：保护 retryAttempts 的并发访问
 }
 
 // NewCronTrigger 创建 cron 触发器
 // REQ-D-004: 初始化 cron 触发器
 func NewCronTrigger(scheduler *CronScheduler) *CronTrigger {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &CronTrigger{
 		scheduler:     scheduler,
 		retryAttempts: make(map[string]int),
+		retryCtx:      ctx,
+		retryCancel:   cancel,
 	}
+}
+
+// ClearRetryState 取消所有待执行的重试 goroutine 并清理重试计数
+// 热重载时由 CronScheduler.ClearAllJobs 调用，避免待执行的重试用旧 discovery 执行
+func (ct *CronTrigger) ClearRetryState() {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	if ct.retryCancel != nil {
+		ct.retryCancel() // 取消所有持有 retryCtx 的待执行 goroutine
+	}
+	ct.retryAttempts = make(map[string]int)
+	ct.retryCtx, ct.retryCancel = context.WithCancel(context.Background())
 }
 
 // HandleResult 处理 cron 触发的执行结果
@@ -73,6 +91,8 @@ func (ct *CronTrigger) HandleResult(ctx context.Context, result *RunResult, retr
 
 	// 增加重试计数
 	ct.retryAttempts[key] = attempts + 1
+	// 在锁内读取 retryCtx 快照，避免与 ClearRetryState 的写入竞态
+	retryCtx := ct.retryCtx
 	ct.mu.Unlock()
 
 	// REQ-D-004: 失败后每次重试生成新的 run_id
@@ -87,13 +107,13 @@ func (ct *CronTrigger) HandleResult(ctx context.Context, result *RunResult, retr
 		"original_run_id", result.RunID,
 	)
 
-	// 使用 timer 延迟触发重试
+	// 使用 retryCtx 调度重试（热重载时 ClearRetryState 可取消待执行的重试）
 	go func() {
 		select {
-		case <-ctx.Done():
+		case <-retryCtx.Done():
 			return
 		case <-time.After(interval):
-			ct.executeRetry(ctx, result.ExtensionName, result.ActionID, discovery, attempts+1)
+			ct.executeRetry(retryCtx, result.ExtensionName, result.ActionID, retryConfig, discovery, attempts+1)
 		}
 	}()
 }
@@ -102,7 +122,8 @@ func (ct *CronTrigger) HandleResult(ctx context.Context, result *RunResult, retr
 // REQ-D-004: 每次重试生成新的 run_id，在任务历史中标记为重试
 // A-04-001 修复：cron retry 走 Dispatcher 路径，应用并发策略和 env 合并
 // A-04-003 修复：TriggerSource 使用规格枚举值 "schedule"（非 "schedule_retry"）
-func (ct *CronTrigger) executeRetry(ctx context.Context, extName, actionID string, discovery *watch.DiscoveryResult, attempt int) {
+// retryConfig 传入以在重试失败后继续调度下一轮重试，形成 max_retries 次重试链
+func (ct *CronTrigger) executeRetry(ctx context.Context, extName, actionID string, retryConfig *RetryConfig, discovery *watch.DiscoveryResult, attempt int) {
 	extEntry, svcName, err := findExtensionByName(discovery, extName)
 	if err != nil {
 		slog.Error("cron retry: extension not found", "extension", extName, "error", err)
@@ -137,8 +158,14 @@ func (ct *CronTrigger) executeRetry(ctx context.Context, extName, actionID strin
 		return
 	}
 
-	// REQ-D-004: 在任务历史中标记为重试（通过日志的 attempt 字段标识）
+	// 记录重试结果到 TaskManager（与 jobFunc 一致，使前端可见重试历史）
 	if result != nil {
+		ct.scheduler.mu.Lock()
+		taskMgr := ct.scheduler.taskMgr
+		ct.scheduler.mu.Unlock()
+		if taskMgr != nil {
+			taskMgr.RecordRun(result)
+		}
 		slog.Info("cron retry: result",
 			"extension", extName,
 			"action", actionID,
@@ -146,6 +173,11 @@ func (ct *CronTrigger) executeRetry(ctx context.Context, extName, actionID strin
 			"run_id", result.RunID,
 			"state", result.State,
 		)
+	}
+
+	// 重试链：重试仍失败时继续调度下一轮，直到 max_retries 用尽
+	if result != nil && result.State != TaskSuccess && retryConfig != nil {
+		ct.HandleResult(ctx, result, retryConfig, discovery)
 	}
 }
 
@@ -180,7 +212,7 @@ func (ct *CronTrigger) RegisterSchedule(extEntry *watch.ExtensionEntry, discover
 			return fmt.Errorf("extension %s: cron action %s not found in actions", extEntry.Name, actionID)
 		}
 
-		err := ct.scheduler.AddJob(extEntry.Name, actionID, schedule.Cron, discovery)
+		err := ct.scheduler.AddJob(extEntry.Name, actionID, schedule.Cron, ToRetryConfig(schedule.RetryOnFailure), discovery)
 		if err != nil {
 			return fmt.Errorf("extension %s: register cron job failed: %w", extEntry.Name, err)
 		}

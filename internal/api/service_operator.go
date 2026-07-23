@@ -70,6 +70,27 @@ func (o *CoreServiceOperator) SetDiscovery(d *watch.DiscoveryResult) {
 	o.Discovery = d
 }
 
+// UpdateRestartEngines 热重载"立即生效"：用最新全局/服务配置原地更新所有 RestartEngine。
+// 规格 §2.4.3: service.yaml:restart 与 config.yaml:defaults.restart 变更均"立即生效"。
+// 保留各 engine 的 retries/lastStartTime 运行时状态，仅更新 policy/backoff/maxRetries 等配置字段。
+// 例如服务在无限重试（max_retries=0）时，用户改为 max_retries=5 后下次 MaxRetriesReached 即为 true。
+func (o *CoreServiceOperator) UpdateRestartEngines(cfg *config.Config, discovery *watch.DiscoveryResult) {
+	if o == nil || cfg == nil || discovery == nil {
+		return
+	}
+	o.restartEnginesMu.Lock()
+	defer o.restartEnginesMu.Unlock()
+	for name, engine := range o.RestartEngines {
+		svcEntry, ok := discovery.Services[name]
+		if !ok {
+			continue // 服务已被删除，跳过（其 engine 会在服务清理时移除）
+		}
+		// 用最新配置构建临时 engine，再原地将配置同步到现有 engine
+		freshEngine := core.BuildRestartEngine(cfg, svcEntry.Config)
+		engine.SyncConfigFrom(freshEngine)
+	}
+}
+
 func (o *CoreServiceOperator) StartService(name string) error {
 	o.stateMachinesMu.RLock()
 	svcEntry, ok := o.Discovery.Services[name]

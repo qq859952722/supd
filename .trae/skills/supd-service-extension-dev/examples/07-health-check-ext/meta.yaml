@@ -1,6 +1,8 @@
-name: qbittorrent-health-check
+# 示例：stdout 协议扩展（混合触发：on_demand + service_lifecycle）
+# 将目录名与 name 字段改为你的扩展名称（格式：^[a-z][a-z0-9-]*$）
+name: health-check-ext
 version: "1.0.0"
-description: qBittorrent 健康检查扩展，检测 WebUI 可用性与种子状态
+description: "通用 HTTP 服务健康检查扩展，支持快速检查（check）和深度诊断（diagnose）两种动作"
 enabled: true
 runtime: bash
 entry: ./run.sh

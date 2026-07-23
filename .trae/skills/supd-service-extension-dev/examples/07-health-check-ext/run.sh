@@ -1,107 +1,84 @@
 #!/bin/bash
-set -e
-
-# qBittorrent 健康检查扩展
-# 支持 action: check | diagnose
+# health-check-ext: 通用 HTTP 服务健康检查扩展
+# 支持两种 action：check（快速检查）、diagnose（深度诊断）
+# 通过环境变量 SERVICE_PORT 配置目标服务端口（默认 8080）
+# 通过环境变量 HEALTH_PATH 配置健康检查路径（默认 /health）
 
 ACTION="${SUPD_ACTION:-check}"
-WEBUI_HOST="127.0.0.1"
-WEBUI_PORT="9091"
-WEBUI_URL="http://${WEBUI_HOST}:${WEBUI_PORT}"
+PORT="${SERVICE_PORT:-8080}"
+HEALTH_PATH="${HEALTH_PATH:-/health}"
+BASE_URL="http://127.0.0.1:${PORT}"
 
 if [ "$ACTION" = "diagnose" ]; then
-    # 诊断模式：服务故障时排查问题
-    echo "::progress:: 10 \"开始诊断 qBittorrent 故障...\""
+    # 深度诊断模式
+    echo "::progress:: 10 \"开始深度诊断服务 (port=${PORT})...\""
     sleep 1
 
     echo "::progress:: 30 \"检查进程是否存在...\""
-    if pgrep -x qbittorrent-nox > /dev/null 2>&1; then
-        echo "  [OK] qbittorrent-nox 进程正在运行"
-        process_ok=1
+    PROC_NAME="${SUPD_SERVICE:-unknown-service}"
+    if pgrep -f "${PROC_NAME}" > /dev/null 2>&1; then
+        echo "  [OK] 服务进程 '${PROC_NAME}' 正在运行"
+        PROC_OK=1
     else
-        echo "  [FAIL] 未找到 qbittorrent-nox 进程"
-        process_ok=0
+        echo "  [WARN] 未找到服务进程 '${PROC_NAME}'（可能进程名不匹配）"
+        PROC_OK=0
     fi
     sleep 1
 
-    echo "::progress:: 50 \"检查端口 ${WEBUI_PORT} 是否监听...\""
+    echo "::progress:: 50 \"检查端口 ${PORT} 是否监听...\""
     if command -v ss > /dev/null 2>&1; then
-        if ss -tlnp 2>/dev/null | grep -q ":${WEBUI_PORT}"; then
-            echo "  [OK] 端口 ${WEBUI_PORT} 正在监听"
-            port_ok=1
+        if ss -tlnp 2>/dev/null | grep -q ":${PORT}"; then
+            echo "  [OK] 端口 ${PORT} 正在监听"
+            PORT_OK=1
         else
-            echo "  [FAIL] 端口 ${WEBUI_PORT} 未监听"
-            port_ok=0
+            echo "  [FAIL] 端口 ${PORT} 未监听"
+            PORT_OK=0
         fi
     else
         echo "  [SKIP] ss 命令不可用，跳过端口检查"
-        port_ok=0
+        PORT_OK=0
     fi
     sleep 1
 
-    echo "::progress:: 70 \"尝试连接 WebUI...\""
-    http_code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 "${WEBUI_URL}/" 2>/dev/null || true)
-    if [ "$http_code" != "000" ]; then
-        echo "  [OK] WebUI 响应 HTTP ${http_code}"
+    echo "::progress:: 75 \"尝试连接健康检查端点...\""
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "${BASE_URL}${HEALTH_PATH}" 2>/dev/null || true)
+    if [ "${HTTP_CODE}" != "000" ]; then
+        echo "  [OK] 健康检查端点响应 HTTP ${HTTP_CODE}"
+        HTTP_OK=1
     else
-        echo "  [FAIL] 无法连接 WebUI"
+        echo "  [FAIL] 无法连接健康检查端点 ${BASE_URL}${HEALTH_PATH}"
+        HTTP_OK=0
     fi
     sleep 1
 
-    echo "::progress:: 90 \"检查磁盘空间...\""
-    df -h . | head -2
+    echo "::progress:: 90 \"汇总诊断结果...\""
     sleep 1
 
-    if [ "$process_ok" = "1" ] && [ "$port_ok" = "1" ]; then
-        echo "::result:: warning \"进程和端口正常但服务可能异常，建议检查日志\""
+    if [ "$PORT_OK" = "1" ] && [ "$HTTP_OK" = "1" ]; then
+        echo "::result:: success \"诊断完成：服务运行正常\""
+    elif [ "$PORT_OK" = "1" ] && [ "$HTTP_OK" = "0" ]; then
+        echo "::result:: warning \"端口监听正常但健康接口异常，建议检查应用日志\""
     else
-        echo "::result:: error \"诊断完成：进程或端口异常，建议重启服务\""
+        echo "::result:: error \"诊断完成：端口未监听或服务无响应，建议重启服务\""
     fi
     exit 0
 fi
 
-# 默认 check 模式
-echo "::progress:: 10 \"开始健康检查...\""
+# 默认 check 模式：快速健康检查
+echo "::progress:: 20 \"开始快速健康检查 (${BASE_URL}${HEALTH_PATH})...\""
 sleep 1
 
-echo "::progress:: 30 \"连接到 qBittorrent WebUI (${WEBUI_URL})...\""
-http_code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "${WEBUI_URL}/" 2>/dev/null || true)
-if [ "$http_code" = "000" ]; then
-    echo "  [FAIL] 无法连接到 WebUI"
-    sleep 1
-    echo "::progress:: 100 \"健康检查失败\""
-    echo "::result:: error \"qBittorrent WebUI 不可访问，连接超时\""
-    exit 0
-fi
-echo "  [OK] WebUI 响应 HTTP ${http_code}"
-sleep 1
+echo "::progress:: 60 \"发送 HTTP GET 请求...\""
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "${BASE_URL}${HEALTH_PATH}" 2>/dev/null || true)
 
-echo "::progress:: 50 \"检查 WebUI API...\""
-api_code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "${WEBUI_URL}/api/v2/app/version" 2>/dev/null || true)
-if [ "$api_code" != "000" ]; then
-    echo "  [OK] API 端点响应 HTTP ${api_code}"
-else
-    echo "  [WARN] API 端点无响应"
-fi
-sleep 1
-
-echo "::progress:: 75 \"检查种子列表...\""
-torrents_json=$(curl -s --connect-timeout 5 "${WEBUI_URL}/api/v2/torrents/info" 2>/dev/null || echo "")
-if [ -n "$torrents_json" ] && [ "$torrents_json" != "" ]; then
-    torrent_count=$(echo "$torrents_json" | grep -o '"name"' | wc -l)
-    echo "  [OK] 当前种子数: ${torrent_count}"
-else
-    torrent_count=0
-    echo "  [WARN] 无法获取种子列表（可能需要认证）"
-fi
-sleep 1
-
-echo "::progress:: 90 \"汇总检查结果...\""
+echo "::progress:: 90 \"解析响应...\""
 sleep 1
 
 echo "::progress:: 100 \"健康检查完成\""
-if [ "$http_code" != "000" ]; then
-    echo "::result:: success \"qBittorrent 运行正常 | WebUI: HTTP ${http_code} | 种子数: ${torrent_count}\""
+if [ "${HTTP_CODE}" = "200" ]; then
+    echo "::result:: success \"服务健康，HTTP ${HTTP_CODE}\""
+elif [ "${HTTP_CODE}" != "000" ]; then
+    echo "::result:: warning \"服务响应 HTTP ${HTTP_CODE}，状态异常\""
 else
-    echo "::result:: error \"qBittorrent WebUI 不可访问\""
+    echo "::result:: error \"服务无响应，连接超时\""
 fi

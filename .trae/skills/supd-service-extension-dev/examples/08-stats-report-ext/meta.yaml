@@ -1,6 +1,8 @@
-name: torrent-stats-report
+# 示例：定时+手动混合扩展（on_schedule + on_demand）
+# 将目录名与 name 字段改为你的扩展名称（格式：^[a-z][a-z0-9-]*$）
+name: stats-report-ext
 version: "1.0.0"
-description: 生成种子统计报告，包含做种数、下载者数、分享率等
+description: "定时生成服务状态统计报告，支持手动触发，完整示范 stdout 协议与 ::progress::/::result:: 用法"
 enabled: true
 runtime: bash
 entry: ./run.sh

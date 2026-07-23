@@ -1,14 +1,17 @@
+# 示例：简单 HTTP 服务（http_check readiness）
+# 【重要】将目录名与 name 字段改为你的服务名称（格式：^[a-z][a-z0-9-]*$）
+# 示例中使用 name: web-demo 演示，部署时请将目录名也改为 web-demo（或两者统一改为你的服务名）
 name: web-demo
 version: "1.0.0"
-description: "Python HTTP server for testing http_check readiness"
+description: "A simple Python HTTP service with http_check readiness"
 icon: globe
 autostart: false
 command:
   - python3
   - run.py
 tags:
-  - test
-  - http
+  - web
+  - demo
 readiness:
   type: http_check
   url: http://127.0.0.1:9001/health

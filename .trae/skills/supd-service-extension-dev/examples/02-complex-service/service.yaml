@@ -1,22 +1,21 @@
-name: qbittorrent
-version: "5.2.3"
-description: "qBittorrent BitTorrent client"
-icon: database
+# 示例：复杂服务（tcp_check readiness）
+# 将目录名与 name 字段改为你的服务名称（格式：^[a-z][a-z0-9-]*$）
+name: tcp-app
+version: "1.0.0"
+description: "A generic TCP application with tcp_check readiness"
+icon: server
 autostart: true
 command:
-  - ./bin/qbittorrent-nox
-  - --confirm-legal-notice
-  - --webui-port=9091
-  - --profile=./data/qbittorrent
+  - ./bin/myapp
+  - --port=8080
 workdir: ""
 tags:
-  - download
-  - media
+  - backend
 readiness:
   type: tcp_check
-  port: 9091
+  port: 8080
   interval_seconds: 1
-  timeout_seconds: 5
+  timeout_seconds: 10
 stop:
   grace_seconds: 10
   timeout_seconds: 60

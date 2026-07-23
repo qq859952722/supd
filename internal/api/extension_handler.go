@@ -64,6 +64,7 @@ type ExtensionDetail struct {
 	ConfigErrors     []string              `json:"config_errors,omitempty"`
 	ConfigPath       string                `json:"config_path,omitempty"`
 	EnvPath          string                `json:"env_path,omitempty"`
+	Service          string                `json:"service,omitempty"`
 }
 
 // RunExtensionRequest POST /api/extensions/{name}/run body
@@ -137,6 +138,14 @@ func (s *Server) handleGetExtension(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// env.yaml 不存在时，从 config_path 推导正确路径（meta.yaml → env.yaml）
+	// 确保服务级扩展也能返回正确的 env_path，而非回退到全局路径
+	configPath := s.stripWorkdirPrefix(ext.ConfigPath)
+	envPath := s.stripWorkdirPrefix(ext.EnvPath)
+	if envPath == "" && configPath != "" {
+		envPath = strings.TrimSuffix(configPath, "meta.yaml") + "env.yaml"
+	}
+
 	detail := ExtensionDetail{
 		Name:         ext.Name,
 		Version:      ext.Version,
@@ -148,8 +157,9 @@ func (s *Server) handleGetExtension(w http.ResponseWriter, r *http.Request) {
 		RunCount:     ext.RunCount,
 		SuccessCount: ext.SuccessCount,
 		FailCount:    ext.FailCount,
-		ConfigPath:   s.stripWorkdirPrefix(ext.ConfigPath),
-		EnvPath:      s.stripWorkdirPrefix(ext.EnvPath),
+		ConfigPath:   configPath,
+		EnvPath:      envPath,
+		Service:      ext.Service,
 	}
 	// D-05-004 修复：ext.Meta 可能为 nil，访问 Concurrency/Actions 前需检查
 	if ext.Meta != nil {
@@ -669,6 +679,13 @@ func (s *Server) handleGetServiceExtension(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// env.yaml 不存在时，从 config_path 推导正确路径（与 handleGetExtension 一致）
+	configPath := s.stripWorkdirPrefix(ext.ConfigPath)
+	envPath := s.stripWorkdirPrefix(ext.EnvPath)
+	if envPath == "" && configPath != "" {
+		envPath = strings.TrimSuffix(configPath, "meta.yaml") + "env.yaml"
+	}
+
 	detail := ExtensionDetail{
 		Name:         ext.Name,
 		Version:      ext.Version,
@@ -680,8 +697,9 @@ func (s *Server) handleGetServiceExtension(w http.ResponseWriter, r *http.Reques
 		RunCount:     ext.RunCount,
 		SuccessCount: ext.SuccessCount,
 		FailCount:    ext.FailCount,
-		ConfigPath:   s.stripWorkdirPrefix(ext.ConfigPath),
-		EnvPath:      s.stripWorkdirPrefix(ext.EnvPath),
+		ConfigPath:   configPath,
+		EnvPath:      envPath,
+		Service:      ext.Service,
 	}
 	// D-05-004 修复：ext.Meta 可能为 nil，访问 Concurrency/Actions 前需检查
 	if ext.Meta != nil {

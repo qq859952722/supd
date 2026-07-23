@@ -1,6 +1,8 @@
-name: demo-lifecycle
+# 示例：服务生命周期扩展（service_lifecycle）
+# 将目录名与 name 字段改为你的扩展名称（格式：^[a-z][a-z0-9-]*$）
+name: service-lifecycle-ext
 version: "1.0.0"
-description: "Service lifecycle hooks for web-demo"
+description: "服务生命周期钩子扩展，响应服务的 post_ready/on_failure/pre_stop 三种事件"
 enabled: true
 runtime: bash
 entry: ./run.sh

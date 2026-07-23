@@ -1,6 +1,8 @@
-name: demo-action
+# 示例：手动扩展（on_demand）- 多 action、action args 演示
+# 将目录名与 name 字段改为你的扩展名称（格式：^[a-z][a-z0-9-]*$）
+name: on-demand-ext
 version: "1.0.0"
-description: "On-demand action extension for web-demo"
+description: "手动触发扩展示例，演示多 action、action args 与 button_style 配置"
 enabled: true
 runtime: bash
 entry: ./run.sh

@@ -1,6 +1,7 @@
 // REQ-U-005: 环境变量编辑器
 // 本服务env(可编辑)+继承env(折叠只读)+合并env(只读)+覆盖关系高亮
-import { useState } from 'react'
+// 布局参照扩展 EnvTab：头部按钮(添加变量/显示敏感值/保存) + 列宽对齐 + 空行内联编辑
+import { useState, useEffect } from 'react'
 import { t } from '@/lib/i18n'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -44,16 +45,22 @@ function EnvSection({
 }) {
   const [collapsed, setCollapsed] = useState(false)
   const [editEntries, setEditEntries] = useState(entries)
-  const [newKey, setNewKey] = useState('')
-  const [newValue, setNewValue] = useState('')
+  const [showSecrets, setShowSecrets] = useState(false)
   const queryClient = useQueryClient()
+
+  // 同步 props → editEntries：异步数据加载后更新编辑状态（修复 hint/enabled 值不显示）
+  useEffect(() => {
+    setEditEntries(entries)
+  }, [entries])
 
   // E-02 修复：silent=true 避免与 onError 重复 toast，提取后端错误消息
   // 发送 config.EnvFile JSON 格式（{env:{KEY:{value,enabled?,hint?}}}），与后端 handleSaveServiceEnv 一致
   const saveMutation = useMutation({
     mutationFn: (envs: EnvEntry[]) => {
+      // 过滤掉空 key 的行（未填写的新增行）
+      const validEntries = envs.filter((e) => e.key.trim() !== '')
       // 本地 EnvEntry（enabled?/hint? 可选）→ lib EnvEntry（enabled/hint 必填）
-      const libEntries = envs.map((e) => ({
+      const libEntries = validEntries.map((e) => ({
         key: e.key,
         value: e.value,
         enabled: e.enabled !== false,
@@ -71,104 +78,144 @@ function EnvSection({
     },
   })
 
-  const handleAdd = () => {
-    if (!newKey.trim()) return
-    setEditEntries([...editEntries, { key: newKey.trim(), value: newValue, source: 'service', enabled: true, hint: '' }])
-    setNewKey('')
-    setNewValue('')
-  }
-
-  const handleRemove = (key: string) => {
-    setEditEntries(editEntries.filter((e) => e.key !== key))
-  }
-
-  const handleChange = (key: string, value: string) => {
-    setEditEntries(editEntries.map((e) => (e.key === key ? { ...e, value } : e)))
-  }
-
-  const handleChangeHint = (key: string, hint: string) => {
-    setEditEntries(editEntries.map((e) => (e.key === key ? { ...e, hint } : e)))
-  }
-
-  const handleToggleEnabled = (key: string) => {
-    setEditEntries(editEntries.map((e) => (e.key === key ? { ...e, enabled: !e.enabled } : e)))
-  }
-
   const handleSave = () => {
     saveMutation.mutate(editEntries)
   }
 
+  const displayEntries = editable ? editEntries : entries
+
   return (
     <div>
-      <div
-        className="flex items-center gap-2 mb-3 cursor-pointer"
-        onClick={() => isCollapsible && setCollapsed(!collapsed)}
-      >
+      {/* 头部：标题 + 计数 + 操作按钮（参照扩展 EnvTab 布局） */}
+      <div className="flex items-center gap-2 mb-3">
         {isCollapsible && (
-          collapsed ? <ChevronRight className="h-4 w-4 text-[var(--color-text-tertiary)]" /> : <ChevronDown className="h-4 w-4 text-[var(--color-text-tertiary)]" />
+          <button
+            onClick={() => setCollapsed(!collapsed)}
+            className="text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]"
+          >
+            {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </button>
         )}
         <h4 className="text-sm font-medium text-[var(--color-text-primary)]">{title}</h4>
-        <Badge variant="secondary">{entries.length}</Badge>
-        {editable && <Badge variant="info">{t.service.editable}</Badge>}
-        {!editable && <Badge variant="secondary">{t.service.readOnly}</Badge>}
+        <Badge variant="secondary">{displayEntries.length}</Badge>
+        {editable ? (
+          <Badge variant="info">{t.service.editable}</Badge>
+        ) : (
+          <Badge variant="secondary">{t.service.readOnly}</Badge>
+        )}
+        {editable && (
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={() => setShowSecrets(!showSecrets)}
+              className="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] underline"
+            >
+              {showSecrets ? '隐藏敏感值' : '显示敏感值'}
+            </button>
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => setEditEntries([...editEntries, { key: '', value: '', source: 'service', enabled: true, hint: '' }])}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              添加变量
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleSave}
+              disabled={saveMutation.isPending}
+            >
+              {saveMutation.isPending ? <Save className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              {t.service.save}
+            </Button>
+          </div>
+        )}
       </div>
 
       {!collapsed && (
-        <>
+        displayEntries.length === 0 ? (
+          <div className="py-8 text-center text-sm text-[var(--color-text-tertiary)]">
+            暂无环境变量{editable ? '，点击"添加变量"创建' : ''}
+          </div>
+        ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Key</TableHead>
+                <TableHead className="w-48">Key</TableHead>
                 <TableHead>Value</TableHead>
-                {editable && <TableHead>说明</TableHead>}
+                {editable && <TableHead className="w-64">说明</TableHead>}
                 {editable && <TableHead className="w-20">启用</TableHead>}
-                <TableHead>来源</TableHead>
-                {editable && <TableHead>操作</TableHead>}
+                <TableHead className="w-20">来源</TableHead>
+                {editable && <TableHead className="w-12">操作</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
-              {(editable ? editEntries : entries).map((entry) => {
+              {displayEntries.map((entry, idx) => {
                 const sensitive = isSensitiveKey(entry.key)
                 return (
-                  <TableRow key={entry.key} className={entry.overridden ? 'bg-[var(--color-surface-warning)]' : ''}>
-                    <TableCell className="font-mono text-sm">
-                      {entry.key}
-                      {entry.overridden && (
-                        <Badge variant="warning" className="ml-2 text-[10px]">覆盖</Badge>
-                      )}
-                    </TableCell>
+                  <TableRow key={idx} className={entry.overridden ? 'bg-[var(--color-surface-warning)]' : ''}>
+                    {/* Key */}
                     <TableCell>
                       {editable ? (
-                        <div>
-                          <Input
-                            type={sensitive ? 'password' : 'text'}
-                            value={entry.value}
-                            onChange={(e) => handleChange(entry.key, e.target.value)}
-                            className="font-mono text-sm h-7"
-                            placeholder={sensitive ? '••••••' : 'value'}
-                          />
-                          {sensitive && (
-                            <span className="text-[10px] text-[var(--color-text-tertiary)]">敏感字段</span>
-                          )}
-                        </div>
+                        <Input
+                          value={entry.key}
+                          onChange={(e) => {
+                            const a = [...editEntries]; a[idx] = { ...entry, key: e.target.value }
+                            setEditEntries(a)
+                          }}
+                          placeholder="VAR_NAME"
+                          className="h-7 text-xs font-mono"
+                        />
                       ) : (
-                        <span className="font-mono text-sm text-[var(--color-text-secondary)]">{entry.value}</span>
+                        <span className="font-mono text-sm">
+                          {entry.key}
+                          {entry.overridden && (
+                            <Badge variant="warning" className="ml-2 text-[10px]">覆盖</Badge>
+                          )}
+                        </span>
                       )}
                     </TableCell>
+                    {/* Value */}
+                    <TableCell>
+                      {editable ? (
+                        <Input
+                          type={sensitive && !showSecrets ? 'password' : 'text'}
+                          value={entry.value}
+                          onChange={(e) => {
+                            const a = [...editEntries]; a[idx] = { ...entry, value: e.target.value }
+                            setEditEntries(a)
+                          }}
+                          placeholder={sensitive ? '••••••' : 'value'}
+                          className="h-7 text-xs font-mono"
+                        />
+                      ) : (
+                        <span className="font-mono text-sm text-[var(--color-text-secondary)]">
+                          {sensitive ? '••••••' : entry.value}
+                        </span>
+                      )}
+                    </TableCell>
+                    {/* 说明 (仅可编辑) */}
                     {editable && (
                       <TableCell>
                         <Input
                           value={entry.hint ?? ''}
-                          onChange={(e) => handleChangeHint(entry.key, e.target.value)}
+                          onChange={(e) => {
+                            const a = [...editEntries]; a[idx] = { ...entry, hint: e.target.value }
+                            setEditEntries(a)
+                          }}
                           placeholder="说明（可选）"
-                          className="text-sm h-7"
+                          className="h-7 text-xs"
                         />
                       </TableCell>
                     )}
+                    {/* 启用 (仅可编辑) */}
                     {editable && (
                       <TableCell>
                         <button
-                          onClick={() => handleToggleEnabled(entry.key)}
+                          onClick={() => {
+                            const a = [...editEntries]; a[idx] = { ...entry, enabled: !entry.enabled }
+                            setEditEntries(a)
+                          }}
                           className={`flex items-center gap-1 px-2 py-1 rounded text-xs border transition-colors ${
                             entry.enabled !== false
                               ? 'border-[var(--color-brand-primary)] bg-[var(--color-brand-primary)]/10 text-[var(--color-brand-primary)]'
@@ -180,14 +227,20 @@ function EnvSection({
                         </button>
                       </TableCell>
                     )}
+                    {/* 来源 */}
                     <TableCell>
                       <Badge variant={entry.source === 'service' ? 'info' : 'secondary'}>
                         {entry.source === 'service' ? '本服务' : '继承'}
                       </Badge>
                     </TableCell>
+                    {/* 操作 (仅可编辑) */}
                     {editable && (
                       <TableCell>
-                        <Button variant="danger" size="sm" onClick={() => handleRemove(entry.key)}>
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          onClick={() => setEditEntries(editEntries.filter((_, i) => i !== idx))}
+                        >
                           <Trash2 className="h-3 w-3" />
                         </Button>
                       </TableCell>
@@ -197,41 +250,7 @@ function EnvSection({
               })}
             </TableBody>
           </Table>
-
-          {editable && (
-            <div className="mt-3 space-y-2">
-              <div className="flex gap-2">
-                <Input
-                  placeholder="KEY"
-                  value={newKey}
-                  onChange={(e) => setNewKey(e.target.value)}
-                  className="font-mono text-sm h-8 flex-1"
-                />
-                <Input
-                  placeholder="VALUE"
-                  value={newValue}
-                  onChange={(e) => setNewValue(e.target.value)}
-                  className="font-mono text-sm h-8 flex-1"
-                />
-                <Button variant="default" size="sm" onClick={handleAdd}>
-                  <Plus className="h-3.5 w-3.5" />
-                  添加
-                </Button>
-              </div>
-              <div className="flex justify-end">
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={handleSave}
-                  disabled={saveMutation.isPending}
-                >
-                  <Save className="h-3.5 w-3.5" />
-                  {t.service.save}
-                </Button>
-              </div>
-            </div>
-          )}
-        </>
+        )
       )}
     </div>
   )

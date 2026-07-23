@@ -14,11 +14,13 @@ import (
 // CronScheduler cron 调度器封装
 // REQ-D-004: type: on_schedule — 定时触发，标准 5 段 cron 表达式
 type CronScheduler struct {
-	cron       *cron.Cron
-	dispatcher *Dispatcher
-	taskMgr    *TaskManager // 用于记录 cron 触发的执行结果
-	entries    map[string]cron.EntryID // key = "extName:actionID"
-	mu         sync.Mutex
+	cron         *cron.Cron
+	dispatcher   *Dispatcher
+	taskMgr      *TaskManager // 用于记录 cron 触发的执行结果
+	cronTrigger  *CronTrigger // REQ-D-004: retry_on_failure 处理器
+	entries      map[string]cron.EntryID            // key = "extName:actionID"
+	retryConfigs map[string]*RetryConfig            // key = "extName:actionID"
+	mu           sync.Mutex
 }
 
 // NewCronScheduler 创建 cron 调度器
@@ -28,10 +30,19 @@ type CronScheduler struct {
 // 改为显式 WithLocation 固定 CST（UTC+8），避免在不同部署环境下时区漂移。
 func NewCronScheduler(dispatcher *Dispatcher) *CronScheduler {
 	return &CronScheduler{
-		cron:       cron.New(cron.WithLocation(time.FixedZone("CST", 8*3600))), // REQ-D-004: 标准 5 段 cron 表达式，固定 Asia/Shanghai 时区
-		dispatcher: dispatcher,
-		entries:    make(map[string]cron.EntryID),
+		cron:         cron.New(cron.WithLocation(time.FixedZone("CST", 8*3600))), // REQ-D-004: 标准 5 段 cron 表达式，固定 Asia/Shanghai 时区
+		dispatcher:   dispatcher,
+		entries:      make(map[string]cron.EntryID),
+		retryConfigs: make(map[string]*RetryConfig),
 	}
+}
+
+// SetCronTrigger 注入 CronTrigger，用于 retry_on_failure 处理
+// REQ-D-004: cron 执行失败后由 CronTrigger.HandleResult 调度重试
+func (s *CronScheduler) SetCronTrigger(ct *CronTrigger) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cronTrigger = ct
 }
 
 // SetTaskManager 注入 TaskManager，用于记录 cron 触发的执行结果
@@ -45,7 +56,8 @@ func (s *CronScheduler) SetTaskManager(tm *TaskManager) {
 // AddJob 添加 cron 定时任务
 // REQ-D-004: on_schedule 的 schedule 字段为标准 cron 表达式
 // extName 和 actionID 用于标识和回调
-func (s *CronScheduler) AddJob(extName, actionID, schedule string, discovery *watch.DiscoveryResult) error {
+// retryCfg 为可选的失败重试配置（nil 表示不重试）
+func (s *CronScheduler) AddJob(extName, actionID, schedule string, retryCfg *RetryConfig, discovery *watch.DiscoveryResult) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -56,6 +68,10 @@ func (s *CronScheduler) AddJob(extName, actionID, schedule string, discovery *wa
 		s.cron.Remove(entryID)
 		delete(s.entries, key)
 	}
+	// 存储重试配置（nil 也存，覆盖旧值）
+	s.retryConfigs[key] = retryCfg
+	// 读取 cronTrigger（在锁内读取，jobFunc 闭包使用快照）
+	cronTrigger := s.cronTrigger
 
 	// REQ-D-004: 创建 cron job，到期时触发扩展执行
 	jobFunc := func() {
@@ -105,8 +121,7 @@ func (s *CronScheduler) AddJob(extName, actionID, schedule string, discovery *wa
 		taskMgr.RecordRun(result)
 	}
 
-	// REQ-D-004: retry_on_failure 处理由 CronTrigger.HandleResult 负责
-		// 这里只执行并返回结果
+	// REQ-D-004: retry_on_failure — 失败后由 CronTrigger.HandleResult 调度重试
 		if result != nil && result.State != TaskSuccess {
 			slog.Warn("cron trigger: extension failed",
 				"extension", extName,
@@ -114,6 +129,10 @@ func (s *CronScheduler) AddJob(extName, actionID, schedule string, discovery *wa
 				"state", result.State,
 				"run_id", result.RunID,
 			)
+			// 有重试配置且 cronTrigger 已注入时，触发重试调度
+			if retryCfg != nil && cronTrigger != nil {
+				cronTrigger.HandleResult(ctx, result, retryCfg, discovery)
+			}
 		}
 	}
 
@@ -138,12 +157,14 @@ func (s *CronScheduler) RemoveJob(extName, actionID string) {
 	if entryID, ok := s.entries[key]; ok {
 		s.cron.Remove(entryID)
 		delete(s.entries, key)
+		delete(s.retryConfigs, key)
 		slog.Info("cron job removed", "extension", extName, "action", actionID)
 	}
 }
 
 // ClearAllJobs 清除所有 cron 定时任务
 // N-04-01 修复：热重载时调用，移除所有旧 jobs，避免闭包捕获旧 discovery
+// 同时取消待执行的重试 goroutine 并清理重试计数，避免热重载后用旧 discovery 执行重试
 func (s *CronScheduler) ClearAllJobs() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -151,6 +172,11 @@ func (s *CronScheduler) ClearAllJobs() {
 	for key, entryID := range s.entries {
 		s.cron.Remove(entryID)
 		delete(s.entries, key)
+	}
+	s.retryConfigs = make(map[string]*RetryConfig)
+	// 取消待执行的重试 goroutine + 清理 retryAttempts，避免热重载后残留状态
+	if s.cronTrigger != nil {
+		s.cronTrigger.ClearRetryState()
 	}
 	slog.Info("all cron jobs cleared for hot reload")
 }

@@ -249,7 +249,7 @@ func TestCronScheduler_AddAndRemoveJob(t *testing.T) {
 	}
 
 	// 添加 job
-	err := scheduler.AddJob("cron-ext", "run", "0 * * * *", discovery)
+	err := scheduler.AddJob("cron-ext", "run", "0 * * * *", nil, discovery)
 	if err != nil {
 		t.Fatalf("AddJob failed: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestCronScheduler_InvalidCronExpression(t *testing.T) {
 		Services:   make(map[string]*watch.ServiceEntry),
 	}
 
-	err := scheduler.AddJob("ext", "run", "invalid-cron", discovery)
+	err := scheduler.AddJob("ext", "run", "invalid-cron", nil, discovery)
 	if err == nil {
 		t.Fatal("expected error for invalid cron expression")
 	}

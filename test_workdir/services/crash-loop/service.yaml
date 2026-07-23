@@ -1,0 +1,11 @@
+name: crash-loop
+version: "1.0.0"
+description: "热重载 max_retries 测试：无自身 restart 配置，使用全局默认，立即退出 code=1"
+icon: alert-triangle
+autostart: false
+command:
+  - bash
+  - run.sh
+tags:
+  - test
+  - restart

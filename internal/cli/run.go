@@ -208,12 +208,15 @@ func runRun(cmd *cobra.Command, args []string) error {
 	// REQ-F-028: 设置 runtime 别名解析所需的三层来源
 	executor.SetRuntimes(cfg.Runtimes, result.Discovery.Runtimes)
 	cronScheduler := extension.NewCronScheduler(dispatcher)
+	// REQ-D-004: 创建 CronTrigger 并注入 CronScheduler，用于 retry_on_failure 处理
+	cronTrigger := extension.NewCronTrigger(cronScheduler)
+	cronScheduler.SetCronTrigger(cronTrigger)
 
 	// 将 on_schedule 扩展注册到 CronScheduler
 	// REQ-D-004: type: on_schedule — 定时触发
 	registerCronJobs(cronScheduler, result.Discovery)
 
-	injectProviders(apiServer, result, cfg, dir, logDir, eventRing, executor, cronScheduler, serviceLifecycleTrigger, supdLifecycleTrigger, dispatcher, taskMgr, ctx)
+	svcOperator := injectProviders(apiServer, result, cfg, dir, logDir, eventRing, executor, cronScheduler, serviceLifecycleTrigger, supdLifecycleTrigger, dispatcher, taskMgr, ctx)
 	// REQ-F-002: 前端静态文件嵌入（非dev模式）
 	webFS := getWebFS()
 	if webFS != nil {
@@ -279,7 +282,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	// N-04-001: 传入 apiServer 以便热重载后更新 providers 的 Discovery 引用
 	reloadMgr := watch.NewReloadManager(watch.NewDiscovery(dir, logDir))
 	go handleWatcherEvents(result.Watcher, reloadMgr, result, dir, logDir,
-		serviceLifecycleTrigger, supdLifecycleTrigger, cronScheduler, eventRing, apiServer, dispatcher)
+		serviceLifecycleTrigger, supdLifecycleTrigger, cronScheduler, eventRing, apiServer, dispatcher, svcOperator)
 
 	infof("supd 运行中 (按 Ctrl+C 停止)")
 
@@ -295,7 +298,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 			// N-04-001: 同时更新 API Server providers 的 Discovery 引用
 			applyReload(result, dir, logDir, reloadMgr,
 				serviceLifecycleTrigger, supdLifecycleTrigger,
-				cronScheduler, eventRing, "sighup", apiServer, dispatcher)
+				cronScheduler, eventRing, "sighup", apiServer, dispatcher, svcOperator)
 		case <-ctx.Done():
 			infof("HTTP 服务器异常，开始退出...")
 			goto shutdown
@@ -362,7 +365,7 @@ shutdown:
 // injectProviders 将 BootstrapResult 中的组件注入到 API Server
 // REQ-F-033 Step 8: HTTP 服务器依赖注入
 // taskMgr 在调用本函数前已创建并注入给 LifecycleTrigger（确保 Bootstrap 阶段触发的回调能记录历史）
-func injectProviders(server *api.Server, result *core.BootstrapResult, cfg *config.Config, baseDir string, logDir string, eventRing *api.EventRingBuffer, executor *extension.Executor, cronScheduler *extension.CronScheduler, serviceLifecycleTrigger *extension.ServiceLifecycleTrigger, supdLifecycleTrigger *extension.SupdLifecycleTrigger, dispatcher *extension.Dispatcher, taskMgr *extension.TaskManager, appCtx context.Context) {
+func injectProviders(server *api.Server, result *core.BootstrapResult, cfg *config.Config, baseDir string, logDir string, eventRing *api.EventRingBuffer, executor *extension.Executor, cronScheduler *extension.CronScheduler, serviceLifecycleTrigger *extension.ServiceLifecycleTrigger, supdLifecycleTrigger *extension.SupdLifecycleTrigger, dispatcher *extension.Dispatcher, taskMgr *extension.TaskManager, appCtx context.Context) *api.CoreServiceOperator {
 	startTime := time.Now()
 
 	pathValidator := api.NewPathValidator(baseDir)
@@ -462,6 +465,7 @@ func injectProviders(server *api.Server, result *core.BootstrapResult, cfg *conf
 		eventRing,
 		pathValidator,
 	)
+	return svcOperator
 }
 
 // buildStopConfigs 从 BootstrapResult 构建服务停止配置映射
@@ -519,6 +523,7 @@ func handleWatcherEvents(
 	eventRing *api.EventRingBuffer,
 	apiServer *api.Server,
 	dispatcher *extension.Dispatcher,
+	svcOperator *api.CoreServiceOperator,
 ) {
 	if watcher == nil {
 		return
@@ -527,7 +532,7 @@ func handleWatcherEvents(
 	for range eventCh {
 		applyReload(result, baseDir, logDir, reloadMgr,
 			serviceLifecycleTrigger, supdLifecycleTrigger,
-			cronScheduler, eventRing, "watcher", apiServer, dispatcher)
+			cronScheduler, eventRing, "watcher", apiServer, dispatcher, svcOperator)
 	}
 }
 
@@ -545,6 +550,7 @@ func applyReload(
 	source string,
 	apiServer *api.Server,
 	dispatcher *extension.Dispatcher,
+	svcOperator *api.CoreServiceOperator,
 ) {
 	slog.Info("检测到配置变更，执行热重载", "source", source)
 	oldDiscovery := result.Discovery
@@ -600,6 +606,13 @@ func applyReload(
 		registerCronJobs(cronScheduler, newDiscovery)
 	}
 
+	// 规格 §2.4.3: restart 配置变更"立即生效"，原地更新所有 RestartEngine 的配置字段。
+	// 使正在重试循环中的服务下次 ShouldRestart/MaxRetriesReached 决策使用最新配置，
+	// 例如 max_retries 从 0（无限）改为 5 后，重试中的服务达到上限即停止。
+	if svcOperator != nil {
+		svcOperator.UpdateRestartEngines(result.Config, newDiscovery)
+	}
+
 	// N-04-001 修复：更新 API Server 中各 provider 的 Discovery 引用
 	// providers 持有 Discovery 指针值拷贝，reload 后需要显式更新，否则 API 响应仍使用旧 Discovery
 	if apiServer != nil {
@@ -644,7 +657,8 @@ func registerCronJobs(cronScheduler *extension.CronScheduler, discovery *watch.D
 			if schedule.Cron == "" {
 				continue
 			}
-			if err := cronScheduler.AddJob(extName, schedule.Action, schedule.Cron, discovery); err != nil {
+			retryCfg := extension.ToRetryConfig(schedule.RetryOnFailure)
+			if err := cronScheduler.AddJob(extName, schedule.Action, schedule.Cron, retryCfg, discovery); err != nil {
 				slog.Error("注册 cron 任务失败", "extension", extName, "schedule", schedule.Cron, "error", err)
 			}
 		}
@@ -660,7 +674,8 @@ func registerCronJobs(cronScheduler *extension.CronScheduler, discovery *watch.D
 				if schedule.Cron == "" {
 					continue
 				}
-				if err := cronScheduler.AddJob(extName, schedule.Action, schedule.Cron, discovery); err != nil {
+				retryCfg := extension.ToRetryConfig(schedule.RetryOnFailure)
+				if err := cronScheduler.AddJob(extName, schedule.Action, schedule.Cron, retryCfg, discovery); err != nil {
 					slog.Error("注册 cron 任务失败", "extension", extName, "schedule", schedule.Cron, "error", err)
 				}
 			}

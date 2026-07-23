@@ -628,6 +628,35 @@ export function ServiceDetail() {
     }
   }
 
+  // 计算环境变量三层：服务env / 继承全局env / 合并后预览
+  // useMemo 确保引用稳定，避免 EnvSection 的 useEffect 在每次渲染都重置 editEntries
+  // 必须在条件 return 之前调用（React Hooks 规则）
+  const { serviceEnvEntries, inheritedEnvEntries, mergedEnvEntries } = useMemo(() => {
+    const serviceEnvParsed = parseEnvYaml(serviceEnvContent ?? '')
+    const serviceKeys = new Set(serviceEnvParsed.map((e) => e.key))
+    const inherited = Object.entries(globalEnv?.env ?? {}).map(([k, v]) => ({
+      key: k,
+      value: v.value ?? '',
+      source: 'inherited' as const,
+      overridden: serviceKeys.has(k),
+    }))
+    // 合并：服务env优先覆盖继承env
+    const mergedMap = new Map<string, { value: string; source: 'service' | 'inherited' }>()
+    for (const e of inherited) {
+      mergedMap.set(e.key, { value: e.value, source: 'inherited' })
+    }
+    for (const e of serviceEnvParsed) {
+      mergedMap.set(e.key, { value: e.value, source: 'service' })
+    }
+    const merged = Array.from(mergedMap.entries()).map(([k, v]) => ({
+      key: k,
+      value: v.value,
+      source: v.source,
+    }))
+    const service = serviceEnvParsed.map((e) => ({ ...e, source: 'service' as const }))
+    return { serviceEnvEntries: service, inheritedEnvEntries: inherited, mergedEnvEntries: merged }
+  }, [serviceEnvContent, globalEnv])
+
   // E-01-001: 加载时显示 skeleton 占位，避免白屏
   if (isLoading) {
     return (
@@ -653,30 +682,6 @@ export function ServiceDetail() {
       </div>
     )
   }
-
-  // 计算环境变量三层：服务env / 继承全局env / 合并后预览
-  const serviceEnvParsed = parseEnvYaml(serviceEnvContent ?? '')
-  const serviceKeys = new Set(serviceEnvParsed.map((e) => e.key))
-  const inheritedEnvEntries = Object.entries(globalEnv?.env ?? {}).map(([k, v]) => ({
-    key: k,
-    value: v.value ?? '',
-    source: 'inherited' as const,
-    overridden: serviceKeys.has(k),
-  }))
-  // 合并：服务env优先覆盖继承env
-  const mergedMap = new Map<string, { value: string; source: 'service' | 'inherited' }>()
-  for (const e of inheritedEnvEntries) {
-    mergedMap.set(e.key, { value: e.value, source: 'inherited' })
-  }
-  for (const e of serviceEnvParsed) {
-    mergedMap.set(e.key, { value: e.value, source: 'service' })
-  }
-  const mergedEnvEntries = Array.from(mergedMap.entries()).map(([k, v]) => ({
-    key: k,
-    value: v.value,
-    source: v.source,
-  }))
-  const serviceEnvEntries = serviceEnvParsed.map((e) => ({ ...e, source: 'service' as const }))
 
   const historyEntries = historyData?.entries ?? []
   const deathEntries = deathsData?.entries ?? []
@@ -1393,7 +1398,7 @@ export function ServiceDetail() {
         </div>
       )}
 
-      {/* E-09-001: 扩展创建/编辑对话框 — JSON 编辑器，头部含保存按钮 */}
+      {/* E-09-001: 扩展创建/编辑对话框 — 可视化表单，头部含保存按钮 */}
       {showExtFormDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowExtFormDialog(false)} />

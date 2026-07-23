@@ -52,8 +52,17 @@ type Triggers struct {
 // TriggerSchedule 定时触发器
 // REQ-2.2.3: on_schedule 段
 type TriggerSchedule struct {
-	Cron   string `yaml:"cron" json:"cron"`
-	Action string `yaml:"action" json:"action"`
+	Cron           string                `yaml:"cron" json:"cron"`
+	Action         string                `yaml:"action" json:"action"`
+	RetryOnFailure *RetryOnFailureConfig `yaml:"retry_on_failure,omitempty" json:"retry_on_failure,omitempty"`
+}
+
+// RetryOnFailureConfig on_schedule 触发器的失败重试配置
+// REQ-D-004: retry_on_failure — 失败后每次重试生成新的 run_id，
+// 在任务历史中标记为重试，max_retries 用尽后不再重试
+type RetryOnFailureConfig struct {
+	MaxRetries      int `yaml:"max_retries" json:"max_retries"`
+	IntervalMinutes int `yaml:"interval_minutes" json:"interval_minutes"`
 }
 
 // TriggerServiceLifecycle 服务生命周期触发器

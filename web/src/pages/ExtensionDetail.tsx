@@ -43,6 +43,8 @@ import {
   FormInput,
   FlaskConical,
   Eraser,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react'
 
 export interface TaskHistory {
@@ -920,12 +922,16 @@ function ConfigTab({ name, configPath }: { name: string; configPath?: string }) 
 
 // --- 扩展环境变量可视化编辑 ---
 
-function EnvTab({ name, envPath }: { name: string; envPath?: string }) {
+function EnvTab({ name, envPath, service }: { name: string; envPath?: string; service?: string }) {
   const queryClient = useQueryClient()
+  // 两个独立状态：yamlContent（YAML 模式编辑）+ editEntries（可视化模式编辑）
+  // 不再用 serialize→parse 往返，避免空 key 新增行被丢弃
   const [yamlContent, setYamlContent] = useState('')
+  const [editEntries, setEditEntries] = useState<EnvEntry[]>([])
   const [initialized, setInitialized] = useState(false)
   const [editMode, setEditMode] = useState<'visual' | 'yaml'>('visual')
   const [showSecrets, setShowSecrets] = useState(false)
+  const [inheritedCollapsed, setInheritedCollapsed] = useState(true)
 
   // 如果没有 env_path，尝试构造路径 extensions/{name}/env.yaml
   const effectivePath = envPath || `extensions/${name}/env.yaml`
@@ -944,15 +950,41 @@ function EnvTab({ name, envPath }: { name: string; envPath?: string }) {
     retry: false,
   })
 
+  // 加载全局环境变量（用于继承/合并展示）
+  const { data: globalEnv } = useQuery({
+    queryKey: ['global-env'],
+    queryFn: async () => {
+      try {
+        return await apiGet<{ env: Record<string, { value: string; enabled?: boolean; hint?: string }> }>('/api/settings/env', undefined, true)
+      } catch {
+        return { env: {} }
+      }
+    },
+    enabled: !!name,
+    retry: false,
+  })
+
+  // 加载服务环境变量（仅服务级扩展，用于继承/合并展示）
+  const { data: serviceEnvContent } = useQuery({
+    queryKey: ['service-env-for-ext', service],
+    queryFn: async () => {
+      try {
+        const res = await apiGet<{ content: string }>('/api/files', { path: `services/${service}/env.yaml` }, true)
+        return res.content
+      } catch {
+        return ''
+      }
+    },
+    enabled: !!service,
+    retry: false,
+  })
+
+  // 加载时同步两个状态：yamlContent（YAML 模式）+ editEntries（可视化模式）
   if (!initialized && fileContent) {
-    setYamlContent(fileContent.content || 'env: {}\n')
+    const content = fileContent.content || 'env: {}\n'
+    setYamlContent(content)
+    setEditEntries(parseEnvYaml(content))
     setInitialized(true)
-  }
-
-  const entries = useMemo(() => parseEnvYaml(yamlContent), [yamlContent])
-
-  const updateEntries = (newEntries: EnvEntry[]) => {
-    setYamlContent(serializeEnvYaml(newEntries))
   }
 
   const saveMutation = useMutation({
@@ -963,6 +995,71 @@ function EnvTab({ name, envPath }: { name: string; envPath?: string }) {
     },
     onError: (err: unknown) => { toast.error(getErrorMessage(err, '保存环境变量失败')) },
   })
+
+  // 切换模式时同步两个状态，避免跨模式数据丢失
+  const switchMode = (mode: 'visual' | 'yaml') => {
+    if (mode === editMode) return
+    if (mode === 'yaml') {
+      // 可视化 → YAML：将编辑中的条目序列化到 yamlContent
+      setYamlContent(serializeEnvYaml(editEntries))
+    } else {
+      // YAML → 可视化：将 yamlContent 解析为条目
+      setEditEntries(parseEnvYaml(yamlContent))
+    }
+    setEditMode(mode)
+  }
+
+  // 保存：根据当前模式取对应内容
+  const handleSave = () => {
+    const content = editMode === 'visual' ? serializeEnvYaml(editEntries) : yamlContent
+    saveMutation.mutate(content)
+  }
+
+  // 计算继承环境变量 + 最终生效环境变量（全局 → 服务 → 扩展，后者覆盖前者）
+  const { inheritedEntries, mergedEntries } = useMemo(() => {
+    const inherited: Array<{ key: string; value: string; source: string; overridden?: boolean }> = []
+    const mergedMap = new Map<string, { value: string; source: string }>()
+
+    // 1. 全局 env
+    if (globalEnv?.env) {
+      for (const [k, v] of Object.entries(globalEnv.env)) {
+        if (v.enabled !== false) {
+          inherited.push({ key: k, value: v.value ?? '', source: '全局' })
+          mergedMap.set(k, { value: v.value ?? '', source: '全局' })
+        }
+      }
+    }
+
+    // 2. 服务 env（覆盖全局）
+    if (service && serviceEnvContent) {
+      const svcParsed = parseEnvYaml(serviceEnvContent)
+      for (const e of svcParsed) {
+        if (e.enabled !== false) {
+          const existingIdx = inherited.findIndex((i) => i.key === e.key)
+          if (existingIdx >= 0) {
+            inherited[existingIdx] = { key: e.key, value: e.value, source: '服务', overridden: true }
+          } else {
+            inherited.push({ key: e.key, value: e.value, source: '服务' })
+          }
+          mergedMap.set(e.key, { value: e.value, source: '服务' })
+        }
+      }
+    }
+
+    // 3. 扩展自身 env（覆盖继承）
+    const currentExtEntries = editMode === 'visual' ? editEntries : parseEnvYaml(yamlContent)
+    for (const e of currentExtEntries) {
+      if (e.key.trim() && e.enabled !== false) {
+        mergedMap.set(e.key, { value: e.value, source: '扩展' })
+      }
+    }
+
+    const merged = Array.from(mergedMap.entries()).map(([k, v]) => ({
+      key: k, value: v.value, source: v.source,
+    }))
+
+    return { inheritedEntries: inherited, mergedEntries: merged }
+  }, [globalEnv, serviceEnvContent, service, editEntries, yamlContent, editMode])
 
   if (isLoading) {
     return (
@@ -981,7 +1078,7 @@ function EnvTab({ name, envPath }: { name: string; envPath?: string }) {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1 rounded-md border border-[var(--color-border-secondary)] p-0.5">
           <button
-            onClick={() => setEditMode('visual')}
+            onClick={() => switchMode('visual')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
               editMode === 'visual'
                 ? 'bg-[var(--color-surface-hover)] text-[var(--color-brand-primary)]'
@@ -991,7 +1088,7 @@ function EnvTab({ name, envPath }: { name: string; envPath?: string }) {
             <FormInput className="h-3.5 w-3.5" /> 可视化
           </button>
           <button
-            onClick={() => setEditMode('yaml')}
+            onClick={() => switchMode('yaml')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
               editMode === 'yaml'
                 ? 'bg-[var(--color-surface-hover)] text-[var(--color-brand-primary)]'
@@ -1004,7 +1101,7 @@ function EnvTab({ name, envPath }: { name: string; envPath?: string }) {
         <Button
           variant="primary"
           size="sm"
-          onClick={() => saveMutation.mutate(yamlContent)}
+          onClick={handleSave}
           disabled={saveMutation.isPending}
         >
           {saveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
@@ -1044,7 +1141,7 @@ function EnvTab({ name, envPath }: { name: string; envPath?: string }) {
                 <Button
                   variant="default"
                   size="sm"
-                  onClick={() => updateEntries([...entries, { key: '', value: '', enabled: true, hint: '' }])}
+                  onClick={() => setEditEntries([...editEntries, { key: '', value: '', enabled: true, hint: '' }])}
                 >
                   <Plus className="h-3.5 w-3.5" /> 添加变量
                 </Button>
@@ -1052,7 +1149,7 @@ function EnvTab({ name, envPath }: { name: string; envPath?: string }) {
             </div>
           </CardHeader>
           <CardContent>
-            {entries.length === 0 ? (
+            {editEntries.length === 0 ? (
               <div className="py-8 text-center text-sm text-[var(--color-text-tertiary)]">
                 暂无环境变量，点击"添加变量"创建
               </div>
@@ -1068,7 +1165,7 @@ function EnvTab({ name, envPath }: { name: string; envPath?: string }) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {entries.map((entry, idx) => {
+                  {editEntries.map((entry, idx) => {
                     const sensitive = isSensitiveKey(entry.key)
                     return (
                       <TableRow key={idx}>
@@ -1076,8 +1173,8 @@ function EnvTab({ name, envPath }: { name: string; envPath?: string }) {
                           <Input
                             value={entry.key}
                             onChange={(e) => {
-                              const a = [...entries]; a[idx] = { ...entry, key: e.target.value }
-                              updateEntries(a)
+                              const a = [...editEntries]; a[idx] = { ...entry, key: e.target.value }
+                              setEditEntries(a)
                             }}
                             placeholder="VAR_NAME"
                             className="h-7 text-xs font-mono"
@@ -1088,8 +1185,8 @@ function EnvTab({ name, envPath }: { name: string; envPath?: string }) {
                             type={sensitive && !showSecrets ? 'password' : 'text'}
                             value={entry.value}
                             onChange={(e) => {
-                              const a = [...entries]; a[idx] = { ...entry, value: e.target.value }
-                              updateEntries(a)
+                              const a = [...editEntries]; a[idx] = { ...entry, value: e.target.value }
+                              setEditEntries(a)
                             }}
                             placeholder={sensitive ? '••••••' : 'value'}
                             className="h-7 text-xs font-mono"
@@ -1102,8 +1199,8 @@ function EnvTab({ name, envPath }: { name: string; envPath?: string }) {
                           <Input
                             value={entry.hint}
                             onChange={(e) => {
-                              const a = [...entries]; a[idx] = { ...entry, hint: e.target.value }
-                              updateEntries(a)
+                              const a = [...editEntries]; a[idx] = { ...entry, hint: e.target.value }
+                              setEditEntries(a)
                             }}
                             placeholder="说明文字（可选）"
                             className="h-7 text-xs"
@@ -1112,8 +1209,8 @@ function EnvTab({ name, envPath }: { name: string; envPath?: string }) {
                         <TableCell>
                           <button
                             onClick={() => {
-                              const a = [...entries]; a[idx] = { ...entry, enabled: !entry.enabled }
-                              updateEntries(a)
+                              const a = [...editEntries]; a[idx] = { ...entry, enabled: !entry.enabled }
+                              setEditEntries(a)
                             }}
                             className={`flex items-center gap-1 px-2 py-1 rounded text-xs border transition-colors ${
                               entry.enabled
@@ -1129,7 +1226,7 @@ function EnvTab({ name, envPath }: { name: string; envPath?: string }) {
                           <Button
                             variant="danger"
                             size="sm"
-                            onClick={() => updateEntries(entries.filter((_, i) => i !== idx))}
+                            onClick={() => setEditEntries(editEntries.filter((_, i) => i !== idx))}
                           >
                             <Trash2 className="h-3 w-3" />
                           </Button>
@@ -1140,6 +1237,97 @@ function EnvTab({ name, envPath }: { name: string; envPath?: string }) {
                 </TableBody>
               </Table>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* 继承环境变量（只读，可折叠） */}
+      {inheritedEntries.length > 0 && (
+        <Card>
+          <CardHeader>
+            <div
+              className="flex items-center gap-2 cursor-pointer"
+              onClick={() => setInheritedCollapsed(!inheritedCollapsed)}
+            >
+              {inheritedCollapsed
+                ? <ChevronRight className="h-4 w-4 text-[var(--color-text-tertiary)]" />
+                : <ChevronDown className="h-4 w-4 text-[var(--color-text-tertiary)]" />}
+              <h4 className="text-sm font-medium text-[var(--color-text-primary)]">继承环境变量</h4>
+              <Badge variant="secondary">{inheritedEntries.length}</Badge>
+              <Badge variant="secondary">只读</Badge>
+            </div>
+          </CardHeader>
+          {!inheritedCollapsed && (
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-48">Key</TableHead>
+                    <TableHead>Value</TableHead>
+                    <TableHead className="w-20">来源</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {inheritedEntries.map((entry, idx) => {
+                    const sensitive = isSensitiveKey(entry.key)
+                    return (
+                      <TableRow key={idx} className={entry.overridden ? 'bg-[var(--color-surface-warning)]' : ''}>
+                        <TableCell className="font-mono text-sm">
+                          {entry.key}
+                          {entry.overridden && <Badge variant="warning" className="ml-2 text-[10px]">覆盖</Badge>}
+                        </TableCell>
+                        <TableCell className="font-mono text-sm text-[var(--color-text-secondary)]">
+                          {sensitive ? '••••••' : entry.value}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary">{entry.source}</Badge>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            </CardContent>
+          )}
+        </Card>
+      )}
+
+      {/* 最终生效环境变量（只读） */}
+      {mergedEntries.length > 0 && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <h4 className="text-sm font-medium text-[var(--color-text-primary)]">最终生效环境变量</h4>
+              <Badge variant="secondary">{mergedEntries.length}</Badge>
+              <Badge variant="secondary">只读</Badge>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-48">Key</TableHead>
+                  <TableHead>Value</TableHead>
+                  <TableHead className="w-20">来源</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {mergedEntries.map((entry, idx) => {
+                  const sensitive = isSensitiveKey(entry.key)
+                  return (
+                    <TableRow key={idx}>
+                      <TableCell className="font-mono text-sm">{entry.key}</TableCell>
+                      <TableCell className="font-mono text-sm text-[var(--color-text-secondary)]">
+                        {sensitive ? '••••••' : entry.value}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={entry.source === '扩展' ? 'info' : 'secondary'}>{entry.source}</Badge>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
           </CardContent>
         </Card>
       )}
@@ -1393,7 +1581,7 @@ export default function ExtensionDetailPage() {
         </TabsContent>
 
         <TabsContent value="env">
-          <EnvTab name={name!} envPath={ext?.env_path ? String(ext.env_path) : undefined} />
+          <EnvTab name={name!} envPath={ext?.env_path ? String(ext.env_path) : undefined} service={ext?.service ? String(ext.service) : undefined} />
         </TabsContent>
 
         <TabsContent value="history">

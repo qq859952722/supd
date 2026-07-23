@@ -146,5 +146,27 @@ func (e *RestartEngine) Retries() int {
 // Policy 返回当前重启策略
 // A-02-001 修复：调用方需根据策略区分 failed vs down 状态
 func (e *RestartEngine) Policy() RestartPolicy {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	return e.policy
+}
+
+// SyncConfigFrom 用 other 的配置字段原地更新当前 engine，保留 retries/lastStartTime 运行时状态。
+// 规格 §2.4.3: restart 配置变更"立即生效"，热重载时对已有 engine 原地更新，
+// 使正在重试循环中的服务下次决策（ShouldRestart/MaxRetriesReached）使用最新配置。
+// 例如 max_retries 从 0（无限）改为 5 后，已累积 100 次重试的服务下次 MaxRetriesReached 即为 true。
+func (e *RestartEngine) SyncConfigFrom(other *RestartEngine) {
+	if other == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	other.mu.Lock()
+	defer other.mu.Unlock()
+	e.policy = other.policy
+	e.backoffMs = other.backoffMs
+	e.maxBackoffMs = other.maxBackoffMs
+	e.multiplier = other.multiplier
+	e.maxRetries = other.maxRetries
+	e.resetAfterSeconds = other.resetAfterSeconds
 }

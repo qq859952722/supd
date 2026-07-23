@@ -261,3 +261,79 @@ func TestRetries(t *testing.T) {
 		t.Errorf("after 3 increments: Retries() = %d, want 3", e.Retries())
 	}
 }
+
+// TestSyncConfigFrom_UpdatesConfigAndPreservesRetries 验证 SyncConfigFrom 更新配置字段且保留 retries 计数
+// 规格 §2.4.3: restart 配置变更"立即生效"，热重载时原地更新 engine 配置
+func TestSyncConfigFrom_UpdatesConfigAndPreservesRetries(t *testing.T) {
+	// 初始 engine: always, max_retries=0(无限), backoff=1000, multiplier=2
+	e := NewRestartEngine(RestartAlways, 1000, 30000, 2, 0, 300)
+	e.IncrementRetries()
+	e.IncrementRetries()
+	e.IncrementRetries()
+	if e.Retries() != 3 {
+		t.Fatalf("setup: Retries() = %d, want 3", e.Retries())
+	}
+
+	// 热重载后的新配置: on-failure, max_retries=5, backoff=500, multiplier=3
+	fresh := NewRestartEngine(RestartOnFailure, 500, 60000, 3, 5, 600)
+	e.SyncConfigFrom(fresh)
+
+	// retries 计数应保留
+	if e.Retries() != 3 {
+		t.Errorf("after sync: Retries() = %d, want 3 (preserved)", e.Retries())
+	}
+
+	// maxRetries 已更新为 5，3 < 5 → 未达上限
+	if e.MaxRetriesReached() {
+		t.Errorf("after sync: MaxRetriesReached()=true, want false (retries=3 < max=5)")
+	}
+
+	// backoff 已更新: retries=3, backoff=500, multiplier=3 → 500*3^2 = 4500ms
+	if d := e.BackoffDuration(); d != 4500*time.Millisecond {
+		t.Errorf("after sync: BackoffDuration() = %v, want 4500ms (backoff=500*3^2)", d)
+	}
+
+	// policy 已更新为 on-failure
+	if e.Policy() != RestartOnFailure {
+		t.Errorf("after sync: Policy() = %v, want on-failure", e.Policy())
+	}
+}
+
+// TestSyncConfigFrom_NilOther 验证 nil other 不 panic
+func TestSyncConfigFrom_NilOther(t *testing.T) {
+	e := newTestEngine(RestartAlways)
+	e.IncrementRetries()
+
+	// 不应 panic
+	e.SyncConfigFrom(nil)
+
+	if e.Retries() != 1 {
+		t.Errorf("after nil sync: Retries() = %d, want 1 (unchanged)", e.Retries())
+	}
+	if e.MaxRetriesReached() {
+		t.Errorf("after nil sync: MaxRetriesReached()=true, want false (max=0 unlimited)")
+	}
+}
+
+// TestSyncConfigFrom_HotReloadMaxRetries 模拟用户报告的场景：
+// 服务在无限重试（max_retries=0）时，用户改全局配置 max_retries=5，
+// 热重载后 MaxRetriesReached 应反映新上限，使重试中的服务停止。
+func TestSyncConfigFrom_HotReloadMaxRetries(t *testing.T) {
+	// 初始: max_retries=0（无限），服务已重试 100 次仍未停止
+	e := NewRestartEngine(RestartAlways, 1000, 30000, 2, 0, 300)
+	for i := 0; i < 100; i++ {
+		e.IncrementRetries()
+	}
+	if e.MaxRetriesReached() {
+		t.Fatal("setup: max_retries=0 should be unlimited, but MaxRetriesReached()=true")
+	}
+
+	// 用户修改全局配置 max_retries=5，热重载后更新 engine
+	fresh := NewRestartEngine(RestartAlways, 1000, 30000, 2, 5, 300)
+	e.SyncConfigFrom(fresh)
+
+	// 100 >= 5 → 现在应达到上限，重试中的服务下次决策将停止
+	if !e.MaxRetriesReached() {
+		t.Errorf("after hot reload: MaxRetriesReached()=false, want true (retries=100 >= max=5)")
+	}
+}

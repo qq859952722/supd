@@ -1,0 +1,23 @@
+name: retry-test-ext
+version: "1.0.0"
+description: "retry_on_failure 重试链测试：on_schedule 触发，必失败，验证 max_retries 重试链"
+enabled: true
+runtime: bash
+entry: run.sh
+timeout_seconds: 10
+concurrency: replace
+ui:
+  show_logs: true
+  button_style: default
+  icon: repeat
+actions:
+  - id: run
+    label: "执行（必失败）"
+    button_style: danger
+triggers:
+  on_schedule:
+    - cron: "* * * * *"
+      action: run
+      retry_on_failure:
+        max_retries: 3
+        interval_minutes: 1

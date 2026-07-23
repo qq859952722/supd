@@ -1,10 +1,11 @@
-// REQ-U-004: 系统资源 — 使用 /api/system/status 端点
+// REQ-U-004: 系统资源 — 使用 /api/system/status 端点 + 服务资源汇总
 import { useQuery } from '@tanstack/react-query'
 import { apiGet } from '@/lib/api-client'
 import { t } from '@/lib/i18n'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { Skeleton } from '@/components/ui/Skeleton'
-import { Cpu, MemoryStick, HardDrive, Box, AlertTriangle } from 'lucide-react'
+import { Cpu, MemoryStick, HardDrive, Box, AlertTriangle, Server, Activity, Clock } from 'lucide-react'
+import type { ServicesResponse } from '@/types/service'
 
 interface SystemStatus {
   start_time: string
@@ -16,6 +17,15 @@ interface SystemStatus {
   memory_mb?: number
   disk_total_mb?: number
   disk_used_mb?: number
+}
+
+// 定时任务条目（GET /api/cron 返回，与 CronTasks.tsx 一致）
+interface CronEntry {
+  extension_name: string
+  action_id: string
+  schedule: string
+  next_run?: string
+  service?: string
 }
 
 function formatMB(mb: number): string {
@@ -50,6 +60,28 @@ export function SystemResourcesPanel() {
     queryFn: () => apiGet<SystemStatus>('/api/system/status', undefined, true),
     refetchInterval: 10_000, // REQ-2.9.11: 资源采集 10s
   })
+
+  // 服务资源汇总：复用 ServiceOverview 的 queryKey（共享缓存，不产生额外请求）
+  const { data: servicesData } = useQuery({
+    queryKey: ['services-list'],
+    queryFn: () => apiGet<ServicesResponse>('/api/services', undefined, true),
+    refetchInterval: 5_000,
+  })
+
+  // 定时任务：复用 CronTasks 的 queryKey（共享缓存）
+  const { data: cronData } = useQuery({
+    queryKey: ['cron'],
+    queryFn: () => apiGet<CronEntry[] | null>('/api/cron', undefined, true),
+    refetchInterval: 10_000,
+  })
+
+  const services = servicesData?.services ?? []
+  // 简单求和：将服务列表中的 CPU/内存占用累加
+  const serviceCpuTotal = services.reduce((sum, s) => sum + (s.cpu_percent ?? 0), 0)
+  const serviceMemoryTotal = services.reduce((sum, s) => sum + (s.memory_mb ?? 0), 0)
+  // 正在运行的服务：状态为 up 或 ready（进程存活）
+  const runningServices = services.filter((s) => s.status === 'up' || s.status === 'ready').length
+  const cronEntries = cronData ?? []
 
   const diskPercent = data?.disk_total_mb && data?.disk_used_mb
     ? (data.disk_used_mb / data.disk_total_mb) * 100
@@ -141,6 +173,80 @@ export function SystemResourcesPanel() {
             )}
             <div className="text-xs text-[var(--color-text-tertiary)]">
               {data ? `v${data.version}` : '-'}
+            </div>
+          </div>
+        </div>
+
+        {/* 服务资源汇总 — 求和所有服务的 CPU/内存 + 运行状态统计 */}
+        <div className="mt-4 pt-4 border-t border-[var(--color-border-secondary)]">
+          <div className="mb-3 flex items-center gap-2">
+            <Server className="h-4 w-4 text-[var(--color-text-tertiary)]" />
+            <span className="text-sm font-medium text-[var(--color-text-secondary)]">服务资源汇总</span>
+            <span className="text-xs text-[var(--color-text-tertiary)]">({services.length} 个服务)</span>
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {/* 服务 CPU 总占用 */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-sm">
+                <Cpu className="h-4 w-4 text-[var(--color-brand-primary)]" />
+                <span className="text-[var(--color-text-secondary)]">服务 CPU 总占用</span>
+              </div>
+              {isLoading ? (
+                <Skeleton className="h-6 w-20" />
+              ) : (
+                <div className="text-xl font-semibold text-[var(--color-text-primary)]">
+                  {services.length > 0 ? `${serviceCpuTotal.toFixed(1)}%` : '-'}
+                </div>
+              )}
+              <div className="text-xs text-[var(--color-text-tertiary)]">所有服务进程求和</div>
+            </div>
+
+            {/* 服务内存总占用 */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-sm">
+                <MemoryStick className="h-4 w-4 text-[var(--color-text-success)]" />
+                <span className="text-[var(--color-text-secondary)]">服务内存总占用</span>
+              </div>
+              {isLoading ? (
+                <Skeleton className="h-6 w-20" />
+              ) : (
+                <div className="text-xl font-semibold text-[var(--color-text-primary)]">
+                  {services.length > 0 ? formatMB(serviceMemoryTotal) : '-'}
+                </div>
+              )}
+              <div className="text-xs text-[var(--color-text-tertiary)]">所有服务进程求和</div>
+            </div>
+
+            {/* 正在运行服务 */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-sm">
+                <Activity className="h-4 w-4 text-[var(--color-text-info)]" />
+                <span className="text-[var(--color-text-secondary)]">正在运行服务</span>
+              </div>
+              {isLoading ? (
+                <Skeleton className="h-6 w-16" />
+              ) : (
+                <div className="text-xl font-semibold text-[var(--color-text-primary)]">
+                  {services.length > 0 ? `${runningServices} / ${services.length}` : '-'}
+                </div>
+              )}
+              <div className="text-xs text-[var(--color-text-tertiary)]">up / ready 状态</div>
+            </div>
+
+            {/* 定时任务数 */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-sm">
+                <Clock className="h-4 w-4 text-[var(--color-accent-warning)]" />
+                <span className="text-[var(--color-text-secondary)]">定时任务数</span>
+              </div>
+              {isLoading ? (
+                <Skeleton className="h-6 w-16" />
+              ) : (
+                <div className="text-xl font-semibold text-[var(--color-text-primary)]">
+                  {cronEntries.length}
+                </div>
+              )}
+              <div className="text-xs text-[var(--color-text-tertiary)]">已注册调度</div>
             </div>
           </div>
         </div>
