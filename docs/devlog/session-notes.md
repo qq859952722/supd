@@ -10,7 +10,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：17 类审计评分 **97.44 / 100（⭐ 优秀）**；913+ 单元测试通过；零竞态；staticcheck/go vet 零警告
-- **当前版本**：v0.0.8（版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.0.12（版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -97,26 +97,20 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 |------|------|------|----------|
 | 2026-07-21 | Docker/tjs/发布/清理 | tjs 集成、v0.0.1 发布、工作区清理、仓库重建、readiness bug、user 字段接入 | [notes/2026-07-21.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-21.md) |
 | 2026-07-22 | env/Dropbear/规格偏差 | tjs 默认配置、Dropbear SSH、env.yaml 加载 BUG、3 项规格偏差修复、前端 env 修复、v0.0.6 | [notes/2026-07-22.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-22.md) |
-| 2026-07-23 | 审计/env/仪表盘/retry/热重载/访问日志 | 全面审计（97.44 分）、env 编辑器统一、仪表盘服务资源汇总、扩展 retry_on_failure 补全、热重载 RestartEngine 不更新 BUG 修复、新增代码审计+运行状态测试、HTTP 访问日志改用 slog + --log-level CLI BUG 修复、v0.0.9 | [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) |
+| 2026-07-23 | 审计/env/仪表盘/retry/热重载/访问日志/tjs工作流/qbittorrent | 全面审计（97.44 分）、env 编辑器统一、仪表盘服务资源汇总、扩展 retry_on_failure 补全、热重载 RestartEngine 不更新 BUG 修复、HTTP 访问日志改用 slog + --log-level CLI BUG 修复、v0.0.9；晚：v0.0.12 镜像 tjs 集成验证全通过、action 字段名（action 非 action_id）、tjs fetch arrayBuffer 大文件卡死坑点（改流式读取）、qbittorrent 服务部署成功（ready） | [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-23 HTTP 访问日志 slog 改造 + --log-level CLI BUG 修复 + v0.0.9）
+## 八、最近会话重点（2026-07-23 tjs 工作流验证 + qbittorrent 服务部署 + v0.0.12）
 
-**问题**：HTTP 访问日志（chi Logger 中间件）使用标准库 `log` 包，不受 `log_level` 配置控制，也不写入 supd.log 文件。
+**tjs 工作流验证**（用户要求"自己把镜像拉下来核实"）：拉取 `ghcr.io/qq859952722/supd:v0.0.12`，确认 tjs musl 链接 + 运行时库（libffi/libstdc++/libgcc）+ tjs v26.6.0 + fetch/readFile/env API 全部正常。CI v0.0.12 已发布，tjs 工作流修复（Alpine 编译 + 缓存 key 加 alpine 标识）完全成功。
 
-**改造**：移除 chi Logger，替换为自定义 `accessLogMiddleware`，用 `slog.Info` 输出结构化访问日志（method/path/remote_addr/status/bytes/duration_ms/request_id），受 `log_level` 控制，写入 supd.log 文件。
+**action_id 传递**（非代码 BUG）：`RunExtensionRequest` JSON 字段是 `action` 非 `action_id`，字段不匹配会回退到第一个 action。正确调用 `{"action":"install-latest"}`。
 
-**审计发现 BUG**：`--log-level` CLI 标志只打印 verbose 消息，未实际覆写配置。根因：`bootstrap.Run()` 重新加载 config 文件，丢弃了 run.go 中的覆写。修复：`BootstrapConfig` 增加 `LogLevel` 字段，参照 `HTTPListen` 模式在 bootstrap 中应用覆写。
+**tjs fetch 大文件坑点**（⚠️ 关键发现）：`resp.arrayBuffer()` 对大响应体（34MB）永久卡死直至超时。改用 `ReadableStream` 流式读取（`resp.body.getReader().read()`），v0.0.12 镜像内实测 34MB 仅 6.8s。已记入 skill 文档 `06_tjs_runtime_guide.md` 5.2/7.5 节。
 
-**运行状态测试**（6/6 PASS ✅）：
-- A：访问日志格式（7 字段完整）
-- B：错误状态码（404）正确记录
-- C：config.yaml `log_level: warn` 抑制访问日志
-- D：`--log-level warn` CLI 标志抑制访问日志（BUG 修复验证）
-- E：访问日志写入 supd.log 文件
-- F：长轮询 `duration_ms=3000.762` 精确记录 3 秒等待
+**qbittorrent 服务**：service.yaml 直接启动 `./qbittorrent-nox --webui-port=8080`，readiness tcp_check 8080。NAS 到 GitHub 网络慢致 tjs 下载超时，改用本地下载（6.7s）+ 文件上传 API + 临时 bash 扩展 chmod。服务 `status: ready`，cpu 2.13% mem 26.44MB ✅。
 
-**版本**：v0.0.8 → v0.0.9，提交 github
+**版本**：v0.0.12，commit `08ae7b9` 已 push。通知用户更新容器镜像到 v0.0.12（永久修复 tjs）。
 
-> 同日早些时候还完成了：全面审计（97.44 分）、env 编辑器统一、仪表盘服务资源汇总、扩展 retry_on_failure 补全、热重载 RestartEngine 不更新 BUG 修复、新增代码审计+运行状态测试 v0.0.8。详情见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md)。
+> 同日早些时候还完成了：全面审计（97.44 分）、env 编辑器统一、仪表盘服务资源汇总、扩展 retry_on_failure 补全、热重载 RestartEngine BUG 修复、HTTP 访问日志 slog 改造 + --log-level CLI BUG 修复、v0.0.9。详情见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md)。
