@@ -1499,11 +1499,18 @@ export function ServiceDetail() {
                     </datalist>
                   </div>
                   <div>
-                    <label className="text-xs text-[var(--color-text-tertiary)]">超时(秒)</label>
+                    <label className="text-xs text-[var(--color-text-tertiary)]">超时(秒,1-1800)</label>
                     <Input
                       type="number"
+                      min={1}
+                      max={1800}
                       value={extForm?.timeout_seconds ?? 600}
-                      onChange={(e) => setExtForm(f => f ? { ...f, timeout_seconds: Number(e.target.value) || 600 } : f)}
+                      onChange={(e) => {
+                        let v = Number(e.target.value) || 600
+                        if (v > 1800) v = 1800
+                        if (v < 1) v = 1
+                        setExtForm(f => f ? { ...f, timeout_seconds: v } : f)
+                      }}
                       className="mt-1 h-8 text-sm"
                     />
                   </div>

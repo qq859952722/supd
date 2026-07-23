@@ -25,6 +25,14 @@ const BINARY_PATH = path.join(SERVICE_DIR, 'qbittorrent-nox');
 // ────────────────────────────────────────────────────────────
 // 工具函数
 // ────────────────────────────────────────────────────────────
+function formatBytes(bytes) {
+  if (bytes == null) return '?';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
 function getArch() {
   // 通过 tjs.system 探测架构；回退到 x86_64
   // qbittorrent-nox-static 的 x86_64 二进制是静态 musl 编译，兼容 alpine
@@ -91,20 +99,28 @@ async function downloadAndInstall(downloadUrl, expectedSize) {
 
   // 流式读取响应体：resp.arrayBuffer() 对大文件（>10MB）会卡死，
   // 必须用 ReadableStream 分块读取（详见 references/06_tjs_runtime_guide.md 坑点）
+  // 同时上报实时下载进度，让前端能看到流式下载过程
   const reader = resp.body.getReader();
   const chunks = [];
   let received = 0;
   let lastReport = 0;
+  let lastTime = Date.now();
+  // 首次上报：显示总大小，让用户知道预期
+  if (expectedSize) {
+    console.log(`::progress:: 30 "开始下载 (总大小 ${formatBytes(expectedSize)})"`);
+  }
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     chunks.push(value);
     received += value.length;
-    // 每接收 ~3MB 上报一次进度（30% → 60%）
-    if (expectedSize && received - lastReport >= 3 * 1024 * 1024) {
+    // 每 ~1MB 或每 1 秒上报一次进度（30% → 60%），让流式进度更直观
+    const now = Date.now();
+    if (expectedSize && (received - lastReport >= 1 * 1024 * 1024 || now - lastTime >= 1000)) {
       const pct = 30 + Math.floor((received / expectedSize) * 30);
-      console.log(`::progress:: ${pct} "下载中 ${received}/${expectedSize}"`);
+      console.log(`::progress:: ${pct} "下载中 ${formatBytes(received)}/${formatBytes(expectedSize)}"`);
       lastReport = received;
+      lastTime = now;
     }
   }
   // 合并 chunks 为单个 Uint8Array
@@ -116,10 +132,10 @@ async function downloadAndInstall(downloadUrl, expectedSize) {
   }
 
   console.log('::progress:: 60 "下载完成，写入文件"');
-  console.log(`下载大小: ${buffer.length} bytes (${(buffer.length / 1024 / 1024).toFixed(2)} MB)`);
+  console.log(`下载大小: ${formatBytes(buffer.length)}`);
 
   if (expectedSize && Math.abs(buffer.length - expectedSize) > 1024) {
-    console.log(`::warning:: 大小不匹配: 期望 ${expectedSize}, 实际 ${buffer.length}`);
+    console.log(`::warning:: 大小不匹配: 期望 ${formatBytes(expectedSize)}, 实际 ${formatBytes(buffer.length)}`);
   }
 
   // 备份旧二进制（如果存在）

@@ -10,7 +10,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：17 类审计评分 **97.44 / 100（⭐ 优秀）**；913+ 单元测试通过；零竞态；staticcheck/go vet 零警告
-- **当前版本**：v0.0.12（版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.0.14（版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -97,7 +97,7 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 |------|------|------|----------|
 | 2026-07-21 | Docker/tjs/发布/清理 | tjs 集成、v0.0.1 发布、工作区清理、仓库重建、readiness bug、user 字段接入 | [notes/2026-07-21.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-21.md) |
 | 2026-07-22 | env/Dropbear/规格偏差 | tjs 默认配置、Dropbear SSH、env.yaml 加载 BUG、3 项规格偏差修复、前端 env 修复、v0.0.6 | [notes/2026-07-22.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-22.md) |
-| 2026-07-23 | 审计/env/仪表盘/retry/热重载/访问日志/tjs工作流/qbittorrent | 全面审计（97.44 分）、env 编辑器统一、仪表盘服务资源汇总、扩展 retry_on_failure 补全、热重载 RestartEngine 不更新 BUG 修复、HTTP 访问日志改用 slog + --log-level CLI BUG 修复、v0.0.9；晚：v0.0.12 镜像 tjs 集成验证全通过、action 字段名（action 非 action_id）、tjs fetch arrayBuffer 大文件卡死坑点（改流式读取）、qbittorrent 服务部署成功（ready） | [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) |
+| 2026-07-23 | 审计/env/仪表盘/retry/热重载/访问日志/tjs工作流/qbittorrent | 全面审计（97.44 分）、env 编辑器统一、仪表盘服务资源汇总、扩展 retry_on_failure 补全、热重载 RestartEngine 不更新 BUG 修复、HTTP 访问日志改用 slog + --log-level CLI BUG 修复、v0.0.9；晚：v0.0.12 镜像 tjs 集成验证全通过、action 字段名（action 非 action_id）、tjs fetch arrayBuffer 大文件卡死坑点（改流式读取）、qbittorrent 服务部署成功（ready）；更晚：扩展列表/删除 bug 修复（discovery 过滤 .bak + 前端 timeout 校验）、下载日志 formatBytes 优化、代码审计 + 运行状态测试、v0.0.14 | [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) |
 
 ---
 
@@ -116,3 +116,11 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 **版本**：v0.0.13（含 tjs 工作流修复 + 前端端口 host 修复），CI 构建中。通知用户更新镜像到 v0.0.13 + 重建容器时映射服务端口（如 qbittorrent `-p 8080:8080`）。
 
 > 同日早些时候还完成了：全面审计（97.44 分）、env 编辑器统一、仪表盘服务资源汇总、扩展 retry_on_failure 补全、热重载 RestartEngine BUG 修复、HTTP 访问日志 slog 改造 + --log-level CLI BUG 修复、v0.0.9。详情见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md)。
+
+**晚（扩展 bug 修复 + qbittorrent 下载日志优化）**：
+- **Bug 1 扩展不显示**：NAS 上 qbittorrent-updater 的 meta.yaml `timeout_seconds:3000` 超 1800 硬上限（§2.2.8）→ `ValidateExtension` 失败 → 扩展从列表消失（解析失败只记 Error 不加入 Extensions map）。数据恢复（改 300，watcher 自动 rescan 恢复显示）+ 前端 `ServiceDetail.tsx` 扩展表单 timeout 加 `max={1800}` + clamp 预防复发。
+- **Bug 2 删除扩展不生效**：`DeleteExtension` 把目录 rename `.bak.<ts>`（备份机制），但 discovery 三处扫描不过滤 `.bak` → `.bak` 里的 meta.yaml 又被当成扩展显示。修复：`discovery.go` 新增 `isBackupDir`（含 `.bak` 即跳过，合法名只含 `[a-z0-9-]` 不含点），`discoverServices`/`discoverGlobalExtensions`/`discoverServiceExtensions` 均加过滤。临时清理 NAS 上 4 个 `.bak` 目录（全局扩展 7→4）。
+- **下载日志优化**：run.js 新增 `formatBytes`，进度日志 `下载中 3.00 MB/34.17 MB`（原原始字节），上报间隔 3MB→1MB + 每秒上报，流式更直观。已部署 NAS。
+- 代码修复（discovery 过滤 .bak + 前端 timeout 校验）需发新版本镜像生效。`go build/vet/test` ✅、`pnpm build` ✅。详见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) 第七节。
+
+**代码审计 + 运行状态测试 + v0.0.14 发版**：新增代码审计（5 问题，4 FP + 1 minor 可接受，无 critical/major）。运行状态测试 T1-T16：单元测试 4 个 PASS、全量 go test PASS、NAS 扩展运行（check-update/install-latest）SUCCESS（验证 formatBytes 流式进度 `下载中 247.1 KB/34.16 MB` + Date.now() 每秒上报）、go build/vet/pnpm build PASS。NAS 服务级 meta.yaml timeout 3000→300 恢复扩展显示（state=active）。v0.0.14 commit + tag + push 触发 CI 构建 amd64/arm64 镜像。详见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) 第八节。

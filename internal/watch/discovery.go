@@ -59,6 +59,14 @@ func NewDiscovery(baseDir, logDir string) *Discovery {
 	}
 }
 
+// isBackupDir 判断目录名是否为删除扩展/服务时生成的备份目录。
+// DeleteExtension 会将目录 rename 为 <name>.bak.<timestamp>，这类目录不应被扫描为有效扩展/服务，
+// 否则会出现"删除扩展后列表里还有"的现象。
+// 合法服务/扩展名只含 [a-z0-9-]（不含点），故含 ".bak" 的目录名一定是备份。
+func isBackupDir(name string) bool {
+	return strings.Contains(name, ".bak")
+}
+
 // Scan 执行全部5种发现规则
 // REQ-F-025: 单个服务/扩展解析失败不影响其他，记录到 Errors
 func (d *Discovery) Scan() *DiscoveryResult {
@@ -99,6 +107,10 @@ func (d *Discovery) discoverServices(result *DiscoveryResult) {
 		}
 
 		svcName := entry.Name()
+		// 跳过删除服务时生成的备份目录（<name>.bak.<timestamp>）
+		if isBackupDir(svcName) {
+			continue
+		}
 		svcDir := filepath.Join(servicesDir, svcName)
 		configPath := filepath.Join(svcDir, "service.yaml")
 
@@ -164,6 +176,10 @@ func (d *Discovery) discoverGlobalExtensions(result *DiscoveryResult) {
 		}
 
 		extName := entry.Name()
+		// 跳过删除扩展时生成的备份目录（<name>.bak.<timestamp>）
+		if isBackupDir(extName) {
+			continue
+		}
 		extSubDir := filepath.Join(extDir, extName)
 		metaPath := filepath.Join(extSubDir, "meta.yaml")
 
@@ -254,6 +270,10 @@ func (d *Discovery) discoverServiceExtensions(svcEntry *ServiceEntry, result *Di
 		}
 
 		extName := entry.Name()
+		// 跳过删除扩展时生成的备份目录（<name>.bak.<timestamp>）
+		if isBackupDir(extName) {
+			continue
+		}
 		extSubDir := filepath.Join(svcExtDir, extName)
 		metaPath := filepath.Join(extSubDir, "meta.yaml")
 

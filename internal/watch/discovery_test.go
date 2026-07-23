@@ -873,3 +873,126 @@ func TestScan_ServiceWithoutExtensionsDir(t *testing.T) {
 		t.Errorf("expected 0 errors, got %d: %+v", len(result.Errors), result.Errors)
 	}
 }
+
+// TestIsBackupDir 验证 isBackupDir 对各种目录名的判断
+// BUG 修复：删除扩展/服务时生成 .bak.<timestamp> 备份目录，扫描时应跳过
+func TestIsBackupDir(t *testing.T) {
+	cases := []struct {
+		name string
+		want bool
+	}{
+		{"foo.bak.20260723-100440", true},     // 标准备份名
+		{"foo.bak.bak.20260723-100426", true}, // 双重备份（重复删除）
+		{"qbittorrent-updater", false},        // 合法扩展名
+		{"supd-startup-hook", false},          // 合法扩展名
+		{"", false},                           // 空字符串
+		{"mybak", false},                      // 含 bak 子串但不含点
+		{"a.b.c", false},                      // 含点但不含 bak
+	}
+	for _, c := range cases {
+		if got := isBackupDir(c.name); got != c.want {
+			t.Errorf("isBackupDir(%q) = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestDiscoverGlobalExtensions_SkipsBackupDirs 验证全局扩展扫描跳过 .bak 备份目录
+// BUG：DeleteExtension 把目录 rename 为 .bak.<timestamp>，扫描器不过滤会重复显示已删扩展
+func TestDiscoverGlobalExtensions_SkipsBackupDirs(t *testing.T) {
+	dir := createTestDir(t)
+	defer os.RemoveAll(dir)
+
+	extDir := filepath.Join(dir, "extensions")
+	// 正常扩展 + 备份目录（两者 meta.yaml 都合法，模拟真实删除场景）
+	for _, dirName := range []string{"my-ext", "my-ext.bak.20260723-100440"} {
+		subDir := filepath.Join(extDir, dirName)
+		if err := os.MkdirAll(subDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(subDir, "meta.yaml"), []byte(validExtensionYAML("my-ext")), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	d := NewDiscovery(dir, filepath.Join(dir, "log"))
+	result := d.Scan()
+
+	if len(result.GlobalExts) != 1 {
+		t.Fatalf("expected 1 global extension (backup should be skipped), got %d", len(result.GlobalExts))
+	}
+	if _, ok := result.GlobalExts["my-ext"]; !ok {
+		t.Errorf("normal extension my-ext not found")
+	}
+	if _, ok := result.GlobalExts["my-ext.bak.20260723-100440"]; ok {
+		t.Errorf("backup directory should not be scanned as extension")
+	}
+}
+
+// TestDiscoverServiceExtensions_SkipsBackupDirs 验证服务级扩展扫描跳过 .bak 备份目录
+func TestDiscoverServiceExtensions_SkipsBackupDirs(t *testing.T) {
+	dir := createTestDir(t)
+	defer os.RemoveAll(dir)
+
+	svcExtDir := filepath.Join(dir, "services", "foo", "extensions")
+	for _, dirName := range []string{"svc-ext", "svc-ext.bak.20260723-100440"} {
+		subDir := filepath.Join(svcExtDir, dirName)
+		if err := os.MkdirAll(subDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(subDir, "meta.yaml"), []byte(validExtensionYAML("svc-ext")), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 服务本身
+	svcDir := filepath.Join(dir, "services", "foo")
+	if err := os.WriteFile(filepath.Join(svcDir, "service.yaml"), []byte(validServiceYAML("foo")), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	d := NewDiscovery(dir, filepath.Join(dir, "log"))
+	result := d.Scan()
+
+	svc, ok := result.Services["foo"]
+	if !ok {
+		t.Fatalf("service foo not found")
+	}
+	if len(svc.Extensions) != 1 {
+		t.Fatalf("expected 1 service extension (backup should be skipped), got %d", len(svc.Extensions))
+	}
+	if _, ok := svc.Extensions["svc-ext"]; !ok {
+		t.Errorf("normal service extension svc-ext not found")
+	}
+	if _, ok := svc.Extensions["svc-ext.bak.20260723-100440"]; ok {
+		t.Errorf("backup directory should not be scanned as service extension")
+	}
+}
+
+// TestDiscoverServices_SkipsBackupDirs 验证服务扫描跳过 .bak 备份目录
+func TestDiscoverServices_SkipsBackupDirs(t *testing.T) {
+	dir := createTestDir(t)
+	defer os.RemoveAll(dir)
+
+	servicesDir := filepath.Join(dir, "services")
+	for _, dirName := range []string{"real-svc", "real-svc.bak.20260723-100440"} {
+		svcDir := filepath.Join(servicesDir, dirName)
+		if err := os.MkdirAll(svcDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(svcDir, "service.yaml"), []byte(validServiceYAML("real-svc")), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	d := NewDiscovery(dir, filepath.Join(dir, "log"))
+	result := d.Scan()
+
+	if len(result.Services) != 1 {
+		t.Fatalf("expected 1 service (backup should be skipped), got %d", len(result.Services))
+	}
+	if _, ok := result.Services["real-svc"]; !ok {
+		t.Errorf("normal service real-svc not found")
+	}
+	if _, ok := result.Services["real-svc.bak.20260723-100440"]; ok {
+		t.Errorf("backup directory should not be scanned as service")
+	}
+}
