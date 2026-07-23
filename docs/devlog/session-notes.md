@@ -111,6 +111,8 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 
 **qbittorrent 服务**：service.yaml 直接启动 `./qbittorrent-nox --webui-port=8080`，readiness tcp_check 8080。NAS 到 GitHub 网络慢致 tjs 下载超时，改用本地下载（6.7s）+ 文件上传 API + 临时 bash 扩展 chmod。服务 `status: ready`，cpu 2.13% mem 26.44MB ✅。
 
-**版本**：v0.0.12，commit `08ae7b9` 已 push。通知用户更新容器镜像到 v0.0.12（永久修复 tjs）。
+**前端端口链接 host 修复**（v0.0.13）：用户报告远程访问时 HTTP 端口链接拼成 `127.0.0.1:port` 无法打开容器内服务。5 处硬编码 127.0.0.1 改为 `window.location.hostname`（http-probe/ServiceTable/ServiceCard/ServiceOverview/ServiceDetail.buildPortUrl）。commit `a794d39`。
+
+**版本**：v0.0.13（含 tjs 工作流修复 + 前端端口 host 修复），CI 构建中。通知用户更新镜像到 v0.0.13 + 重建容器时映射服务端口（如 qbittorrent `-p 8080:8080`）。
 
 > 同日早些时候还完成了：全面审计（97.44 分）、env 编辑器统一、仪表盘服务资源汇总、扩展 retry_on_failure 补全、热重载 RestartEngine BUG 修复、HTTP 访问日志 slog 改造 + --log-level CLI BUG 修复、v0.0.9。详情见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md)。
