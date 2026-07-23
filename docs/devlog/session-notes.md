@@ -97,23 +97,26 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 |------|------|------|----------|
 | 2026-07-21 | Docker/tjs/发布/清理 | tjs 集成、v0.0.1 发布、工作区清理、仓库重建、readiness bug、user 字段接入 | [notes/2026-07-21.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-21.md) |
 | 2026-07-22 | env/Dropbear/规格偏差 | tjs 默认配置、Dropbear SSH、env.yaml 加载 BUG、3 项规格偏差修复、前端 env 修复、v0.0.6 | [notes/2026-07-22.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-22.md) |
-| 2026-07-23 | 审计/env/仪表盘/retry/热重载 | 全面审计（97.44 分）、env 编辑器统一、仪表盘服务资源汇总、扩展 retry_on_failure 补全、热重载 RestartEngine 不更新 BUG 修复、新增代码审计+运行状态测试、v0.0.8 | [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) |
+| 2026-07-23 | 审计/env/仪表盘/retry/热重载/访问日志 | 全面审计（97.44 分）、env 编辑器统一、仪表盘服务资源汇总、扩展 retry_on_failure 补全、热重载 RestartEngine 不更新 BUG 修复、新增代码审计+运行状态测试、HTTP 访问日志改用 slog + --log-level CLI BUG 修复、v0.0.9 | [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-23 新增代码审计 + 运行状态测试 + v0.0.8）
+## 八、最近会话重点（2026-07-23 HTTP 访问日志 slog 改造 + --log-level CLI BUG 修复 + v0.0.9）
 
-**审计**：对 retry_on_failure 接线 + 热重载 RestartEngine 修复的新增代码审计，发现 4 个问题（1 严重 + 2 中等 + 1 低），修复 3 个：
-1. **重试链断裂（严重）**：`executeRetry` 未回调 `HandleResult`，`max_retries>1` 时只重试 1 次 → 修复：增加 `retryConfig` 参数，失败后回调 `HandleResult` 形成完整重试链
-2. **热重载不取消待执行重试（中）**：`HandleResult` 用 `context.Background()` 调度，`ClearAllJobs` 不取消 → 修复：CronTrigger 新增 `retryCtx`/`retryCancel`，`ClearAllJobs` 调用 `ClearRetryState`
-3. **retryAttempts 热重载未清理（中）**：`ClearAllJobs` 不清理 retryAttempts → 修复：`ClearRetryState` 中重置 map
-4. SyncConfigFrom 双锁顺序（低）：理论风险，实际不触发，未修改
+**问题**：HTTP 访问日志（chi Logger 中间件）使用标准库 `log` 包，不受 `log_level` 配置控制，也不写入 supd.log 文件。
 
-**运行状态测试**（全部通过 ✅）：
-- **Test A**：服务热重载 max_retries 生效 — `crash-loop` 服务在 `max_retries=0→2` 热重载后，下次崩溃时 `MaxRetriesReached()=true`，status→failed
-- **Test B**：扩展 retry_on_failure 重试链 — `retry-test-ext` cron 触发失败后，重试链 attempt=1→2→max exhausted 完整执行
-- **Test C**：热重载取消待执行重试 — SIGHUP 后 pending retry 被取消，retryAttempts 清理，下次 cron 触发从 attempt=1 重新开始
+**改造**：移除 chi Logger，替换为自定义 `accessLogMiddleware`，用 `slog.Info` 输出结构化访问日志（method/path/remote_addr/status/bytes/duration_ms/request_id），受 `log_level` 控制，写入 supd.log 文件。
 
-**版本**：v0.0.7 → v0.0.8，提交 github
+**审计发现 BUG**：`--log-level` CLI 标志只打印 verbose 消息，未实际覆写配置。根因：`bootstrap.Run()` 重新加载 config 文件，丢弃了 run.go 中的覆写。修复：`BootstrapConfig` 增加 `LogLevel` 字段，参照 `HTTPListen` 模式在 bootstrap 中应用覆写。
 
-> 同日早些时候还完成了：全面审计（97.44 分）、env 编辑器统一、仪表盘服务资源汇总、扩展 retry_on_failure 补全、热重载 RestartEngine 不更新 BUG 修复。详情见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md)。
+**运行状态测试**（6/6 PASS ✅）：
+- A：访问日志格式（7 字段完整）
+- B：错误状态码（404）正确记录
+- C：config.yaml `log_level: warn` 抑制访问日志
+- D：`--log-level warn` CLI 标志抑制访问日志（BUG 修复验证）
+- E：访问日志写入 supd.log 文件
+- F：长轮询 `duration_ms=3000.762` 精确记录 3 秒等待
+
+**版本**：v0.0.8 → v0.0.9，提交 github
+
+> 同日早些时候还完成了：全面审计（97.44 分）、env 编辑器统一、仪表盘服务资源汇总、扩展 retry_on_failure 补全、热重载 RestartEngine 不更新 BUG 修复、新增代码审计+运行状态测试 v0.0.8。详情见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md)。

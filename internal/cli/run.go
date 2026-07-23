@@ -89,6 +89,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		verbosef("监听地址: %s", runListen)
 	}
 	if runLogLevel != "" {
+		cfg.Settings.LogLevel = runLogLevel
 		verbosef("日志级别: %s", runLogLevel)
 	}
 
@@ -163,6 +164,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		LogDir:         logDir,
 		NoPID1:         runNoPID1,
 		HTTPListen:     runListen,
+		LogLevel:       runLogLevel,
 		EventPublisher: eventRing,    // BUG-02: 将 EventRingBuffer 注入 Bootstrap
 		Runtimes:       cfg.Runtimes, // REQ-F-028: 运行时配置来源
 		// REQ-D-004: 生命周期回调

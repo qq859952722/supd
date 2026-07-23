@@ -22,6 +22,7 @@ type BootstrapConfig struct {
 	LogDir       string         // /var/log/supd/
 	NoPID1       bool           // --no-pid1 标志
 	HTTPListen   string         // 覆盖 http_listen
+	LogLevel     string         // 覆盖 log_level（--log-level 标志）
 	EventPublisher EventPublisher // REQ-2.9.7: 事件发布器
 
 	// REQ-F-028: 运行时配置来源
@@ -110,6 +111,9 @@ func (b *Bootstrap) Run(ctx context.Context) (*BootstrapResult, error) {
 	result.Config = cfg
 	if b.cfg.HTTPListen != "" {
 		cfg.Settings.HTTPListen = b.cfg.HTTPListen
+	}
+	if b.cfg.LogLevel != "" {
+		cfg.Settings.LogLevel = b.cfg.LogLevel
 	}
 
 	// Step 2: 初始化日志系统
