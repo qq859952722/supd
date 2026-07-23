@@ -72,9 +72,30 @@ func (c *CatchAllLogger) Path() string {
 	return c.writer.Path()
 }
 
+// FileWriter 返回仅写文件的 io.Writer（不写 stderr）。
+// 用于高频日志（如 HTTP 访问日志），避免 Docker 日志被淹没。
+// LogWriter 内部有独立 mutex，与 CatchAllLogger.Write 并发安全。
+func (c *CatchAllLogger) FileWriter() io.Writer {
+	return c.writer
+}
+
 // supdLogger 全局 supd 自身日志器
 // REQ-F-010: supd 自身日志写入 /var/log/supd/supd.log
 var supdLogger *CatchAllLogger
+
+// accessLogHandler 仅写文件的 slog handler（不写 stderr）。
+// HTTP 访问日志等高频日志使用此 handler，避免 Docker 日志被淹没。
+// 仍受 log_level 控制（warn/error 级别下不输出）。
+var accessLogHandler slog.Handler
+
+// GetAccessLogLogger 返回仅写文件的访问日志 logger。
+// 未初始化时返回 nil，调用方应 fallback 到 slog.Default()。
+func GetAccessLogLogger() *slog.Logger {
+	if accessLogHandler == nil {
+		return nil
+	}
+	return slog.New(accessLogHandler)
+}
 
 // InitSupdLogger 初始化 supd 自身日志
 // REQ-F-010: supd 自身日志写入 logDir/supd.log，同时写 stderr
@@ -124,6 +145,12 @@ func InitSupdLoggerWithLevel(logDir, logLevel string) error {
 			Level: level,
 		})
 		slog.SetDefault(slog.New(handler))
+
+		// 访问日志 handler：仅写文件不写 stderr（避免 Docker 日志被高频访问日志淹没）
+		// 仍受 log_level 控制（与主 handler 同级别）
+		accessLogHandler = slog.NewTextHandler(supdLogger.FileWriter(), &slog.HandlerOptions{
+			Level: level,
+		})
 	}
 
 	return nil

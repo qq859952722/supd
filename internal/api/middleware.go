@@ -11,6 +11,7 @@ import (
 
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/supdorg/supd/internal/errors"
+	"github.com/supdorg/supd/internal/logging"
 )
 
 // REQ-P-002~004, REQ-I-002: 认证中间件
@@ -275,21 +276,22 @@ func (l *LongPollLimiter) Release(clientKey string) {
 
 // accessLogMiddleware 用 slog 输出结构化 HTTP 访问日志，替代 chi 内置 Logger 中间件。
 //
-// chi Logger 使用标准库 log 包（log.New(os.Stdout, "", log.LstdFlags)），存在两个问题：
-//  1. 不受 config.Settings.LogLevel 控制（log_level 对它无效）
-//  2. 不写入 supd.log 文件（直接写 os.Stdout，绕过 CatchAllLogger）
-//
-// 改用 slog 后：
-//   - 受 log_level 控制（设为 warn/error 时自动过滤 INFO 级访问日志）
-//   - 自动写入 supd.log 文件 + stderr
-//   - 结构化字段（method/path/status/duration 等独立字段，便于检索）
+// 访问日志使用仅写文件的 slog handler（logging.GetAccessLogLogger），
+// 不写 stderr——避免 Docker 日志被高频访问日志淹没。
+// 仍受 log_level 控制（warn/error 级别下自动过滤）。
+// 访问日志可在 supd.log 文件中查看。
 func accessLogMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ww := chiMiddleware.NewWrapResponseWriter(w, r.ProtoMajor)
 		t1 := time.Now()
 
 		defer func() {
-			slog.Info("http_request",
+			// 使用仅写文件的访问日志 handler（不写 stderr）
+			logger := logging.GetAccessLogLogger()
+			if logger == nil {
+				logger = slog.Default() // fallback：未初始化时用默认 handler
+			}
+			logger.Info("http_request",
 				"method", r.Method,
 				"path", r.URL.RequestURI(),
 				"remote_addr", r.RemoteAddr,
