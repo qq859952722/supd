@@ -819,3 +819,53 @@ func TestValidateExtensionRunAsUIDOnly(t *testing.T) {
 		t.Fatalf("unexpected error for run_as_uid only: %v", err)
 	}
 }
+
+// TestValidateExtensionRunAsUIDNegative 测试 run_as_uid 负数拒绝
+func TestValidateExtensionRunAsUIDNegative(t *testing.T) {
+	meta := &ExtensionMeta{
+		Name: "ext", Version: "1.0.0", Entry: "run.sh",
+		TimeoutSeconds: 600, Concurrency: "replace",
+		RunAsUID: -1,
+	}
+	err := ValidateExtension(meta)
+	if err == nil {
+		t.Fatal("expected error for negative run_as_uid, got nil")
+	}
+	if !strings.Contains(err.Error(), "run_as_uid: must be positive") {
+		t.Errorf("expected 'run_as_uid: must be positive' error, got: %v", err)
+	}
+}
+
+// TestValidateExtensionRunAsGIDNegative 测试 run_as_gid 负数拒绝
+func TestValidateExtensionRunAsGIDNegative(t *testing.T) {
+	meta := &ExtensionMeta{
+		Name: "ext", Version: "1.0.0", Entry: "run.sh",
+		TimeoutSeconds: 600, Concurrency: "replace",
+		RunAsUID: 1000, RunAsGID: -5,
+	}
+	err := ValidateExtension(meta)
+	if err == nil {
+		t.Fatal("expected error for negative run_as_gid, got nil")
+	}
+	if !strings.Contains(err.Error(), "run_as_gid: must be non-negative") {
+		t.Errorf("expected 'run_as_gid: must be non-negative' error, got: %v", err)
+	}
+}
+
+// TestValidateExtensionRunAsGroupsNonPositive 测试 run_as_groups 含 0/负数 拒绝
+func TestValidateExtensionRunAsGroupsNonPositive(t *testing.T) {
+	for _, g := range []int{0, -1} {
+		meta := &ExtensionMeta{
+			Name: "ext", Version: "1.0.0", Entry: "run.sh",
+			TimeoutSeconds: 600, Concurrency: "replace",
+			RunAsUID: 1000, RunAsGroups: []int{g},
+		}
+		err := ValidateExtension(meta)
+		if err == nil {
+			t.Fatalf("expected error for non-positive run_as_groups %d, got nil", g)
+		}
+		if !strings.Contains(err.Error(), "run_as_groups[") || !strings.Contains(err.Error(), "must be positive") {
+			t.Errorf("expected run_as_groups[] must be positive error, got: %v", err)
+		}
+	}
+}

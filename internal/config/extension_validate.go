@@ -136,6 +136,22 @@ func ValidateExtension(meta *ExtensionMeta) error {
 		return fmt.Errorf("run_as and run_as_uid are mutually exclusive: specify either run_as (by name) or run_as_uid (by number), not both")
 	}
 
+	// UID 模式数值校验：run_as_uid > 0（0=未设置），run_as_gid >= 0（0=等于 uid），groups 元素 > 0
+	// 防止负数经 uint32 转换回绕成大数（如 -1 → 4294967295）导致行为意外
+	if meta.RunAsUID != 0 {
+		if meta.RunAsUID < 0 {
+			return fmt.Errorf("run_as_uid: must be positive, got %d", meta.RunAsUID)
+		}
+		if meta.RunAsGID < 0 {
+			return fmt.Errorf("run_as_gid: must be non-negative, got %d (0 means = run_as_uid)", meta.RunAsGID)
+		}
+		for i, g := range meta.RunAsGroups {
+			if g <= 0 {
+				return fmt.Errorf("run_as_groups[%d]: must be positive, got %d", i, g)
+			}
+		}
+	}
+
 	return nil
 }
 

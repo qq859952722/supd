@@ -921,3 +921,83 @@ groups:
 		t.Errorf("expected 2 groups, got %d", len(sc.Groups))
 	}
 }
+
+// TestValidateServiceUIDNegative 测试 UID 模式负数 uid 拒绝
+// 防止 -1 经 uint32 回绕成 4294967295
+func TestValidateServiceUIDNegative(t *testing.T) {
+	yaml := `
+name: app
+version: "1.0.0"
+command:
+  - /usr/bin/app
+uid: -1
+`
+	_, err := loadServiceFromYAML(t, yaml)
+	if err == nil {
+		t.Fatal("expected error for negative uid, got nil")
+	}
+	if !strings.Contains(err.Error(), "uid: must be positive") {
+		t.Errorf("expected 'uid: must be positive' error, got: %v", err)
+	}
+}
+
+// TestValidateServiceGIDNegative 测试 UID 模式负数 gid 拒绝
+func TestValidateServiceGIDNegative(t *testing.T) {
+	yaml := `
+name: app
+version: "1.0.0"
+command:
+  - /usr/bin/app
+uid: 1000
+gid: -5
+`
+	_, err := loadServiceFromYAML(t, yaml)
+	if err == nil {
+		t.Fatal("expected error for negative gid, got nil")
+	}
+	if !strings.Contains(err.Error(), "gid: must be non-negative") {
+		t.Errorf("expected 'gid: must be non-negative' error, got: %v", err)
+	}
+}
+
+// TestValidateServiceGroupsNonPositive 测试 UID 模式 groups 含 0/负数 拒绝
+func TestValidateServiceGroupsNonPositive(t *testing.T) {
+	tests := []struct {
+		name  string
+		group string
+	}{
+		{"zero", "0"},
+		{"negative", "-1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			yaml := "name: app\nversion: \"1.0.0\"\ncommand:\n  - /usr/bin/app\nuid: 1000\ngroups:\n  - " + tt.group + "\n"
+			_, err := loadServiceFromYAML(t, yaml)
+			if err == nil {
+				t.Fatal("expected error for non-positive group, got nil")
+			}
+			if !strings.Contains(err.Error(), "groups[") || !strings.Contains(err.Error(), "must be positive") {
+				t.Errorf("expected groups[] must be positive error, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestValidateServiceUIDGIDZeroAllowed 测试 UID 模式 gid=0 允许（0 表示 = uid）
+func TestValidateServiceUIDGIDZeroAllowed(t *testing.T) {
+	yaml := `
+name: app
+version: "1.0.0"
+command:
+  - /usr/bin/app
+uid: 1000
+gid: 0
+`
+	sc, err := loadServiceFromYAML(t, yaml)
+	if err != nil {
+		t.Fatalf("unexpected error for gid=0: %v", err)
+	}
+	if sc.GID != 0 {
+		t.Errorf("expected GID=0 (=uid), got %d", sc.GID)
+	}
+}

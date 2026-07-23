@@ -10,7 +10,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：17 类审计评分 **97.44 / 100（⭐ 优秀）**；913+ 单元测试通过；零竞态；staticcheck/go vet 零警告
-- **当前版本**：v0.0.17（版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.0.18（版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -97,20 +97,16 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 |------|------|------|----------|
 | 2026-07-21 | Docker/tjs/发布/清理 | tjs 集成、v0.0.1 发布、工作区清理、仓库重建、readiness bug、user 字段接入 | [notes/2026-07-21.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-21.md) |
 | 2026-07-22 | env/Dropbear/规格偏差 | tjs 默认配置、Dropbear SSH、env.yaml 加载 BUG、3 项规格偏差修复、前端 env 修复、v0.0.6 | [notes/2026-07-22.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-22.md) |
-| 2026-07-23 | 审计/env/仪表盘/retry/热重载/访问日志/tjs工作流/qbittorrent | 全面审计（97.44 分）、env 编辑器统一、仪表盘服务资源汇总、扩展 retry_on_failure 补全、热重载 RestartEngine 不更新 BUG 修复、HTTP 访问日志改用 slog + --log-level CLI BUG 修复、v0.0.9；晚：v0.0.12 镜像 tjs 集成验证全通过、action 字段名（action 非 action_id）、tjs fetch arrayBuffer 大文件卡死坑点（改流式读取）、qbittorrent 服务部署成功（ready）；更晚：扩展列表/删除 bug 修复（discovery 过滤 .bak + 前端 timeout 校验）、下载日志 formatBytes 优化、代码审计 + 运行状态测试、v0.0.14；编辑扩展保存后 Discovery 缓存不刷新修复、v0.0.15；时区设置 v0.0.16；服务/扩展执行身份 UID 模式（CredentialSpec + 互斥校验 + 前端模式切换）、v0.0.17 | [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) |
+| 2026-07-23 | 审计/env/仪表盘/retry/热重载/访问日志/tjs工作流/qbittorrent | 全面审计（97.44 分）、env 编辑器统一、仪表盘服务资源汇总、扩展 retry_on_failure 补全、热重载 RestartEngine 不更新 BUG 修复、HTTP 访问日志改用 slog + --log-level CLI BUG 修复、v0.0.9；晚：v0.0.12 镜像 tjs 集成验证全通过、action 字段名（action 非 action_id）、tjs fetch arrayBuffer 大文件卡死坑点（改流式读取）、qbittorrent 服务部署成功（ready）；更晚：扩展列表/删除 bug 修复（discovery 过滤 .bak + 前端 timeout 校验）、下载日志 formatBytes 优化、代码审计 + 运行状态测试、v0.0.14；编辑扩展保存后 Discovery 缓存不刷新修复、v0.0.15；时区设置 v0.0.16；服务/扩展执行身份 UID 模式（CredentialSpec + 互斥校验 + 前端模式切换）、v0.0.17；UID 模式代码审计 + 负数校验修复 + 9 项运行状态测试全通过、v0.0.18 | [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-23 服务/扩展执行身份 UID 模式 + v0.0.17）
+## 八、最近会话重点（2026-07-23 UID 模式代码审计 + 运行状态测试 + v0.0.18）
 
-**需求**：服务和扩展指定用户执行时，额外支持直接指定 uid/gid 执行权限（适用于用户不在 /etc/passwd 的场景，如 NAS 固定 uid 服务）。分析结论：User 模式（按用户名）与 UID 模式（按数字）**互斥**，同时指定则配置校验报错，语义清晰。
+**审计**：对 v0.0.17 新增 UID 模式代码全面审计（后端 12 文件 + 前端 4 文件）。发现 1 个中等问题：负数 uid/gid 未校验，`uid:-1` 经 `uint32` 回绕成 4294967295。已修复：`service_validate.go`/`extension_validate.go` 增加 UID 模式数值校验（uid>0, gid>=0, groups>0）。调用链完整性确认（4 处 StartServiceProcess + 1 处 ResolveRunAs + 2 处 serviceSpec 构造均正确）。
 
-**后端**：新增 `CredentialSpec` 结构体统一描述身份（User/Group/UID/GID/Groups）+ `ResolveSpec()` 解析函数；`ServiceConfig` 加 `uid`/`gid`/`groups`，`ExtensionMeta` 加 `run_as_uid`/`run_as_gid`/`run_as_groups`，各加 `ToCredentialSpec()` 方法；`validateService`/`ValidateExtension` 加互斥校验；`ResolveServiceCredential`/`ResolveRunAs` 重写为接收 CredentialSpec 参数，支持 UID 模式；`TriggerContext.ServiceUser` → `ServiceSpec`，dispatcher/API 层传递服务 CredentialSpec 实现服务级扩展身份继承。服务严格拒绝/扩展宽松警告语义差异保持。单元测试全通过。
+**补充单元测试**（7 个全通过）：服务/扩展的负数 uid/gid/groups 拒绝 + gid=0 允许。
 
-**前端**：3 处表单（ServiceForm/ExtensionDetail/Extensions/ServiceDetail 共 4 文件）统一加"执行身份"模式切换按钮（按用户名 / 按 UID）+ 条件字段 + 语义提示文案；序列化/解析/buildConfig 按 identityMode 分支；pnpm build ✅。
+**运行状态测试**（9 项全通过，非 root 环境 uid=1000）：服务 UID 模式启动/拒绝、互斥/负数校验拦截、扩展 UID/User 模式执行、非 root 严格(服务ERROR)/宽松(扩展WARN)语义差异、服务级扩展身份继承。详见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) 第 11.8 节。
 
-**规格说明书**：§2.2.13 重写补充 User/UID 模式/互斥/继承/实现/非 root 语义；meta.yaml 与 service.yaml 字段规范补充 uid/gid/groups 示例。
-
-**验证**：go build/vet/test 全通过、pnpm build ✅。修复 `identity_test.go` 复合字面量方法调用语法错误。详见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) 第十一节。
-
-> 同日早些时候还完成了：时区设置 v0.0.16（run.go 设 time.Local + Dockerfile ENV TZ）、编辑扩展缓存不刷新修复 v0.0.15、扩展列表/删除 bug + 下载日志优化 v0.0.14、tjs 工作流验证 + qbittorrent 服务部署 v0.0.12、全面审计 + retry/热重载/访问日志 v0.0.9。详情见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md)。
+> 上一轮（v0.0.17）：服务/扩展执行身份增加 UID 模式（CredentialSpec + 互斥校验 + 前端模式切换）。同日更早：时区 v0.0.16、缓存刷新 v0.0.15、扩展 bug v0.0.14、tjs+qbittorrent v0.0.12、全面审计+retry/热重载/访问日志 v0.0.9。详情见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md)。

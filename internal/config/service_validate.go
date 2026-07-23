@@ -159,6 +159,22 @@ func validateService(sc *ServiceConfig) error {
 		return fmt.Errorf("user and uid are mutually exclusive: specify either user (by name) or uid (by number), not both")
 	}
 
+	// UID 模式数值校验：uid > 0（0=未设置），gid >= 0（0=等于 uid），groups 元素 > 0
+	// 防止负数经 uint32 转换回绕成大数（如 -1 → 4294967295）导致行为意外
+	if sc.UID != 0 {
+		if sc.UID < 0 {
+			return fmt.Errorf("uid: must be positive, got %d", sc.UID)
+		}
+		if sc.GID < 0 {
+			return fmt.Errorf("gid: must be non-negative, got %d (0 means = uid)", sc.GID)
+		}
+		for i, g := range sc.Groups {
+			if g <= 0 {
+				return fmt.Errorf("groups[%d]: must be positive, got %d", i, g)
+			}
+		}
+	}
+
 	return nil
 }
 
