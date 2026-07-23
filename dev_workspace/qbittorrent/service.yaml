@@ -1,0 +1,43 @@
+name: qbittorrent
+version: "5.2.3"
+description: "qBittorrent — 基于 libtorrent 的 BitTorrent 客户端，自带 WebUI"
+icon: download
+autostart: false  # 首次部署需先运行 qbittorrent-updater 扩展下载二进制
+
+# 直接启动 qbittorrent-nox 二进制，不通过包装脚本
+# 二进制由 qbittorrent-updater 扩展下载到服务目录
+command:
+  - ./qbittorrent-nox
+  - --webui-port=8080
+
+# 工作目录默认为服务自身目录，qbittorrent 会在此生成 .config/.local 等配置子目录
+workdir: /etc/supd/services/qbittorrent
+
+tags:
+  - download
+  - webui
+
+# WebUI 就绪检测：qbittorrent-nox 启动后监听 8080 端口
+# 使用 tcp_check 而非 http_check，因为 WebUI 未登录时会返回 302 重定向
+readiness:
+  type: tcp_check
+  port: 8080
+  interval_seconds: 2
+  timeout_seconds: 30
+
+restart:
+  policy: on-failure
+  backoff_ms: 2000
+  max_backoff_ms: 60000
+  multiplier: 2
+  max_retries: 5
+  reset_after_seconds: 60
+
+stop:
+  grace_seconds: 15
+  timeout_seconds: 30
+
+logging:
+  enabled: true
+  max_size_mb: 10
+  max_files: 3

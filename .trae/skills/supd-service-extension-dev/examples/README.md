@@ -14,6 +14,7 @@
 | 06 | `06-supd-lifecycle-ext/` | supd_lifecycle 扩展 | `pre_start`/`post_ready`/`pre_shutdown` 钩子、parallel 并发、stdout 协议 |
 | 07 | `07-health-check-ext/` | stdout 协议扩展 | on_demand+service_lifecycle 混合触发、多 action、`::progress::`/`::result::` 协议 |
 | 08 | `08-stats-report-ext/` | 定时+手动混合扩展 | on_schedule+on_demand 混合、完整 stdout 协议输出 |
+| 09 | `09-tjs-ext/` | **tjs 运行时扩展** | `runtime: tjs`、`fetch`、文件读写、`tjs:path` 模块、stdout 协议 |
 
 ## 使用方法
 

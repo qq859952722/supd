@@ -67,12 +67,15 @@ RUN apk add --no-cache \
         psmisc procps-ng util-linux \
         jq nano \
         dropbear openssh-sftp-server \
+        libffi libstdc++ libgcc \
     && addgroup -S supd && adduser -S -G supd -h /etc/supd supd \
     && mkdir -p /etc/dropbear
 
 COPY --from=go-builder /supd /usr/local/bin/supd
 
-# tjs 二进制：由 CI 在对应平台原生编译后复制到 build context 根目录（./tjs）
+# tjs 二进制：由 CI 在 Alpine 容器中编译（musl 链接），复制到 build context 根目录（./tjs）
+# 重要：必须在 Alpine 中编译，glibc 链接的二进制无法在 Alpine(musl) 运行
+# 运行时依赖 libffi/libstdc++/libgcc（已在上方 apk add 中安装）
 COPY tjs /usr/local/bin/tjs-bin
 
 # tjs 包装脚本：兼容 `tjs script.js` 和 `tjs run script.js` 两种调用方式

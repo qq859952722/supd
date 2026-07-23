@@ -1,0 +1,20 @@
+name: tjs-demo
+version: "1.0.0"
+description: "tjs 运行时扩展示例：演示 fetch、文件操作、stdout 协议"
+runtime: tjs
+entry: run.js
+timeout_seconds: 30
+
+concurrency: replace
+
+ui:
+  show_logs: true
+  button_style: primary
+
+actions:
+  - id: run
+    label: 运行演示
+    button_style: primary
+
+triggers:
+  on_demand: true

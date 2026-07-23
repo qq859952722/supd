@@ -1,0 +1,34 @@
+name: qbittorrent-updater
+version: "1.0.0"
+description: "qBittorrent 二进制更新管理：检查 GitHub 最新版本、下载并安装静态二进制"
+runtime: tjs
+entry: run.js
+timeout_seconds: 300
+
+concurrency: serialize
+
+ui:
+  show_logs: true
+  button_style: primary
+  icon: refresh
+
+# 三个 action：仅检查 / 仅安装（指定版本） / 检查并安装最新版
+actions:
+  - id: check-update
+    label: 检查更新
+    button_style: default
+  - id: install
+    label: 安装指定版本
+    button_style: primary
+    args:
+      - id: version
+        label: 版本标签
+        type: string
+        default: "release-5.2.3_v2.0.13"
+        description: "GitHub release tag，如 release-5.2.3_v2.0.13"
+  - id: install-latest
+    label: 检查并安装最新版
+    button_style: primary
+
+triggers:
+  on_demand: true

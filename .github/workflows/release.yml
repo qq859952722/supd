@@ -42,6 +42,10 @@ jobs:
 
   # ────────────────────────────────────────────────────────────
   # Job 1: 编译 tjs（矩阵构建 amd64 / arm64 并缓存）
+  # 重要：必须在 Alpine 容器中编译，确保产出 musl 链接的二进制。
+  # 运行时镜像为 alpine:3.20（musl libc），若在 ubuntu（glibc）上编译，
+  # 产出的二进制因依赖 /lib64/ld-linux-x86-64.so.2 与 glibc 符号而无法运行
+  # （症状：tjs-bin: cannot execute: required file not found）。
   # ────────────────────────────────────────────────────────────
   build-tjs:
     name: "编译 tjs (${{ matrix.arch }})"
@@ -64,30 +68,49 @@ jobs:
           path: /tmp/tjs-binary
           key: tjs-${{ matrix.arch }}-${{ env.TJS_VERSION }}
 
-      - name: 安装编译依赖
+      - name: 在 Alpine 容器中编译 txiki.js（确保 musl 兼容）
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build \
-            libcurl4-openssl-dev libtool libltdl-dev \
-            git ca-certificates
-
-      - name: 克隆并编译 txiki.js
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          git clone --recursive --depth 1 --branch "${TJS_VERSION}" \
-            https://github.com/saghul/txiki.js.git /tmp/txiki-src
-          cd /tmp/txiki-src && make
-          TJS_BIN="$(find /tmp/txiki-src/build -name 'tjs' -type f | head -1)"
+          # 使用与运行时镜像一致的 alpine:3.20 编译 tjs
+          # 编译产物为 musl 动态链接，可在 alpine 运行时镜像中正常执行
           mkdir -p /tmp/tjs-binary
-          cp "$TJS_BIN" /tmp/tjs-binary/tjs
-          chmod +x /tmp/tjs-binary/tjs
+          docker run --rm \
+            -e TJS_VERSION \
+            -v /tmp/tjs-binary:/output \
+            alpine:3.20 sh -c '
+              set -e
+              echo "=== 安装编译依赖（Alpine）==="
+              apk add --no-cache \
+                build-base cmake ninja \
+                git ca-certificates \
+                curl-dev libffi-dev openssl-dev zlib-dev linux-headers
 
-      - name: 验证 tjs
+              echo "=== 克隆 txiki.js ${TJS_VERSION} ==="
+              git clone --recursive --depth 1 --branch "${TJS_VERSION}" \
+                https://github.com/saghul/txiki.js.git /tmp/txiki-src
+              cd /tmp/txiki-src
+
+              echo "=== 编译（耗时较长）==="
+              make
+
+              TJS_BIN="$(find build -name tjs -type f | head -1)"
+              echo "tjs binary: ${TJS_BIN}"
+              file "${TJS_BIN}"
+
+              echo "=== 验证二进制可运行（musl 环境）==="
+              "${TJS_BIN}" --version
+
+              cp "${TJS_BIN}" /output/tjs
+              chmod +x /output/tjs
+              echo "=== 编译完成 ==="
+            '
+
+      - name: 验证 tjs（在 Alpine 容器中验证 musl 二进制）
         run: |
-          /tmp/tjs-binary/tjs --version
           file /tmp/tjs-binary/tjs
+          # ubuntu(glibc) 无法运行 musl 二进制，需在 alpine 容器中验证
+          docker run --rm -v /tmp/tjs-binary/tjs:/usr/local/bin/tjs alpine:3.20 \
+            sh -c 'tjs --version && echo "✅ tjs musl 二进制验证通过"'
 
       - name: 上传 tjs artifact
         uses: actions/upload-artifact@v6
