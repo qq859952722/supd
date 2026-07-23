@@ -54,6 +54,16 @@ func init() {
 // runRun 执行 run 命令
 // REQ-F-039: 启动监督器，若工作目录不存在自动调用 init 流程
 func runRun(cmd *cobra.Command, args []string) error {
+	// 设置默认时区：优先使用 TZ 环境变量，未设置时默认 Asia/Shanghai。
+	// 影响日志时间戳（slog handler 与手动 time.Now().Format）和所有 time.Now() 调用。
+	tz := os.Getenv("TZ")
+	if tz == "" {
+		tz = "Asia/Shanghai"
+	}
+	if loc, err := time.LoadLocation(tz); err == nil {
+		time.Local = loc
+	}
+
 	dir := getWorkDir()
 	cfgPath := getConfigPath()
 

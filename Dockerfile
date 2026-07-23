@@ -90,6 +90,9 @@ WORKDIR /etc/supd
 # 将 runtimes 目录加入 PATH，使扩展/服务脚本可直接通过名字调用其中安装的运行时工具
 # （supd 通过 config.runtimes 映射以绝对路径启动 runtime，此处仅为脚本内部调用提供便利）
 ENV PATH="/etc/supd/runtimes:${PATH}"
+# 默认时区 Asia/Shanghai（日志时间戳、扩展脚本等容器内进程均按此时区）
+# Go 进程在启动时也会读取 TZ 设置 time.Local；docker run -e TZ=... 可覆盖
+ENV TZ=Asia/Shanghai
 USER supd
 EXPOSE 7979 2222
 VOLUME ["/etc/supd", "/var/log/supd"]

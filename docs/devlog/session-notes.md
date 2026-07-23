@@ -10,7 +10,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：17 类审计评分 **97.44 / 100（⭐ 优秀）**；913+ 单元测试通过；零竞态；staticcheck/go vet 零警告
-- **当前版本**：v0.0.15（版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.0.16（版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -126,3 +126,5 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 **代码审计 + 运行状态测试 + v0.0.14 发版**：新增代码审计（5 问题，4 FP + 1 minor 可接受，无 critical/major）。运行状态测试 T1-T16：单元测试 4 个 PASS、全量 go test PASS、NAS 扩展运行（check-update/install-latest）SUCCESS（验证 formatBytes 流式进度 `下载中 247.1 KB/34.16 MB` + Date.now() 每秒上报）、go build/vet/pnpm build PASS。NAS 服务级 meta.yaml timeout 3000→300 恢复扩展显示（state=active）。v0.0.14 commit + tag + push 触发 CI 构建 amd64/arm64 镜像。详见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) 第八节。
 
 **编辑扩展保存后缓存不刷新修复**（v0.0.15）：用户报告"编辑扩展保存后关闭再打开仍是旧值"。NAS 实测定位根因：PUT 写 meta.yaml 成功，但 GET 扩展详情返回 Discovery 缓存的旧 Meta（watcher rescan 有 500ms 防抖延迟，期间 GET 命中旧缓存）。修复：`UpdateExtension` 写文件后调用 `refreshDiscoveryMeta` 立即更新 Discovery 内存中对应 `ExtensionEntry.Meta`，GET 立即返回新值。新增 2 个单元测试（服务级 + 全局级）。详见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) 第九节。
+
+**时区设置**（v0.0.16）：日志时间戳默认 UTC（容器内未设 TZ）。修复：`run.go` runRun 开头设 `time.Local`（默认 Asia/Shanghai，`TZ` 环境变量可覆盖）+ Dockerfile 加 `ENV TZ=Asia/Shanghai`。本地验证默认 `+08:00`、`TZ=America/New_York` → `-04:00`。未加 config 字段（遵守 AGENTS.md 约束）。详见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) 第十节。
