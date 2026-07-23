@@ -2,11 +2,14 @@ package api
 
 import (
 	"crypto/subtle"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
+	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/supdorg/supd/internal/errors"
 )
 
@@ -268,4 +271,35 @@ func (l *LongPollLimiter) Release(clientKey string) {
 		delete(l.clientMap, clientKey)
 	}
 	l.mu.Unlock()
+}
+
+// accessLogMiddleware 用 slog 输出结构化 HTTP 访问日志，替代 chi 内置 Logger 中间件。
+//
+// chi Logger 使用标准库 log 包（log.New(os.Stdout, "", log.LstdFlags)），存在两个问题：
+//  1. 不受 config.Settings.LogLevel 控制（log_level 对它无效）
+//  2. 不写入 supd.log 文件（直接写 os.Stdout，绕过 CatchAllLogger）
+//
+// 改用 slog 后：
+//   - 受 log_level 控制（设为 warn/error 时自动过滤 INFO 级访问日志）
+//   - 自动写入 supd.log 文件 + stderr
+//   - 结构化字段（method/path/status/duration 等独立字段，便于检索）
+func accessLogMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ww := chiMiddleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		t1 := time.Now()
+
+		defer func() {
+			slog.Info("http_request",
+				"method", r.Method,
+				"path", r.URL.RequestURI(),
+				"remote_addr", r.RemoteAddr,
+				"status", ww.Status(),
+				"bytes", ww.BytesWritten(),
+				"duration_ms", float64(time.Since(t1).Microseconds())/1000.0,
+				"request_id", chiMiddleware.GetReqID(r.Context()),
+			)
+		}()
+
+		next.ServeHTTP(ww, r)
+	})
 }

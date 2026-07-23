@@ -128,7 +128,7 @@ func (s *Server) setupMiddleware() {
 	// 导致 local_skip 认证模式可被伪造 IP 头绕过（H-05-001）。
 	// 如需支持反向代理，应显式校验上游可信后再解析 XFF。
 	r.Use(chiMiddleware.RequestID)
-	r.Use(chiMiddleware.Logger)
+	r.Use(accessLogMiddleware)
 	// C-02-003 修复：使用自定义 panic 恢复中间件，返回 JSON 格式错误响应
 	// （替代 chi Recoverer 的纯文本 "Internal Server Error"）
 	r.Use(panicRecoverer)
