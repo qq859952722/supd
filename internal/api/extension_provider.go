@@ -166,14 +166,41 @@ func (p *CoreExtensionProvider) UpdateExtension(name string, meta *config.Extens
 	}
 
 	configPath := info.ConfigPath
-	// service 参数在 UpdateExtension 中不使用（configPath 已定位文件），
+	// service 参数在 UpdateExtension 中不用于定位文件（configPath 已定位），
 	// 保留参数以与 CreateExtension 接口一致
 
 	data, err := yaml.Marshal(meta)
 	if err != nil {
 		return fmt.Errorf("marshal extension meta: %w", err)
 	}
-	return os.WriteFile(configPath, data, 0644)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		return err
+	}
+	// 写入成功后立即更新 Discovery 内存缓存中该扩展的 Meta，避免 GET 扩展详情
+	// 命中旧缓存。watcher rescan 有 500ms 防抖延迟，期间 GET 会返回修改前的值，
+	// 表现为"编辑保存后关闭再打开仍是旧值"。watcher 下次 rescan 会从文件重新
+	// 解析并整体替换 Discovery，与此处更新最终一致。
+	p.refreshDiscoveryMeta(info.Service, name, meta)
+	return nil
+}
+
+// refreshDiscoveryMeta 更新 Discovery 内存中指定扩展的 Meta 指针，使后续 GET 立即反映 PUT 的修改。
+// 仅做即时填充，最终以 watcher 扫描结果为准（文件已写入，扫描结果与此处一致）。
+func (p *CoreExtensionProvider) refreshDiscoveryMeta(service, name string, meta *config.ExtensionMeta) {
+	if p.Discovery == nil {
+		return
+	}
+	if service != "" {
+		if svc, ok := p.Discovery.Services[service]; ok {
+			if ext, ok := svc.Extensions[name]; ok {
+				ext.Meta = meta
+			}
+		}
+	} else {
+		if ext, ok := p.Discovery.GlobalExts[name]; ok {
+			ext.Meta = meta
+		}
+	}
 }
 
 func (p *CoreExtensionProvider) DeleteExtension(name string, service string) error {
