@@ -169,3 +169,98 @@ func getCurrentUsername(t *testing.T) string {
 	}
 	return u.Username
 }
+
+// TestCredentialSpecIsEmpty 测试 IsEmpty 方法
+func TestCredentialSpecIsEmpty(t *testing.T) {
+	if !(CredentialSpec{}).IsEmpty() {
+		t.Error("empty spec should be IsEmpty=true")
+	}
+	if !(CredentialSpec{Group: "docker"}).IsEmpty() {
+		t.Error("spec with only Group should be IsEmpty=true (no User/UID)")
+	}
+	if (CredentialSpec{User: "alice"}).IsEmpty() {
+		t.Error("spec with User should be IsEmpty=false")
+	}
+	if (CredentialSpec{UID: 1000}).IsEmpty() {
+		t.Error("spec with UID should be IsEmpty=false")
+	}
+}
+
+// TestCredentialSpecIsUIDMode 测试 IsUIDMode 方法
+func TestCredentialSpecIsUIDMode(t *testing.T) {
+	if (CredentialSpec{User: "alice"}).IsUIDMode() {
+		t.Error("User mode spec should not be UID mode")
+	}
+	if !(CredentialSpec{UID: 1000}).IsUIDMode() {
+		t.Error("UID mode spec should be IsUIDMode=true")
+	}
+	if (CredentialSpec{}).IsUIDMode() {
+		t.Error("empty spec should not be UID mode")
+	}
+}
+
+// TestResolveSpecEmpty 空 spec 返回 (0,0,nil,nil)
+func TestResolveSpecEmpty(t *testing.T) {
+	uid, gid, groups, err := ResolveSpec(CredentialSpec{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if uid != 0 || gid != 0 {
+		t.Errorf("expected (0,0), got (%d,%d)", uid, gid)
+	}
+	if groups != nil {
+		t.Errorf("expected nil groups, got %v", groups)
+	}
+}
+
+// TestResolveSpecUIDMode UID 模式直接返回 uid/gid/groups
+func TestResolveSpecUIDMode(t *testing.T) {
+	uid, gid, groups, err := ResolveSpec(CredentialSpec{UID: 1000, GID: 1001, Groups: []int{27, 100}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if uid != 1000 {
+		t.Errorf("expected uid 1000, got %d", uid)
+	}
+	if gid != 1001 {
+		t.Errorf("expected gid 1001, got %d", gid)
+	}
+	if len(groups) != 2 || groups[0] != 27 || groups[1] != 100 {
+		t.Errorf("expected groups [27,100], got %v", groups)
+	}
+}
+
+// TestResolveSpecUIDModeGIDDefaultsToUID UID 模式 GID=0 时取 UID
+func TestResolveSpecUIDModeGIDDefaultsToUID(t *testing.T) {
+	uid, gid, _, err := ResolveSpec(CredentialSpec{UID: 1000})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if uid != 1000 {
+		t.Errorf("expected uid 1000, got %d", uid)
+	}
+	if gid != 1000 {
+		t.Errorf("expected gid 1000 (=uid), got %d", gid)
+	}
+}
+
+// TestResolveSpecUserMode User 模式通过 user.Lookup 解析
+func TestResolveSpecUserMode(t *testing.T) {
+	curUsername := getCurrentUsername(t)
+	uid, _, _, err := ResolveSpec(CredentialSpec{User: curUsername})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	curUID := uint32(os.Getuid())
+	if uid != curUID {
+		t.Errorf("expected uid %d, got %d", curUID, uid)
+	}
+}
+
+// TestResolveSpecUserModeNonexistent User 模式查找不存在的用户返回错误
+func TestResolveSpecUserModeNonexistent(t *testing.T) {
+	_, _, _, err := ResolveSpec(CredentialSpec{User: "nonexistent_user_xyz_12345"})
+	if err == nil {
+		t.Error("expected error for nonexistent user")
+	}
+}

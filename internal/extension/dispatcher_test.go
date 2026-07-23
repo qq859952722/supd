@@ -1206,8 +1206,8 @@ func TestDispatchMultipleFailures(t *testing.T) {
 	}
 }
 
-// TestFindMatchingExtensionsPropagatesServiceUser 测试服务级扩展匹配时填充 serviceUser 字段
-// REQ-F-023, §2.2.13: 服务级扩展继承服务的 user 字段值，serviceUser 应等于 svcEntry.Config.User
+// TestFindMatchingExtensionsPropagatesServiceUser 测试服务级扩展匹配时填充 serviceSpec 字段
+// REQ-F-023, §2.2.13: 服务级扩展继承服务的身份配置，serviceSpec.User 应等于 svcEntry.Config.User
 func TestFindMatchingExtensionsPropagatesServiceUser(t *testing.T) {
 	discovery := &watch.DiscoveryResult{
 		GlobalExts: map[string]*watch.ExtensionEntry{
@@ -1248,29 +1248,29 @@ func TestFindMatchingExtensionsPropagatesServiceUser(t *testing.T) {
 		t.Fatalf("expected 3 matched extensions, got %d", len(matched))
 	}
 
-	// 验证 serviceUser 字段被正确填充
+	// 验证 serviceSpec 字段被正确填充
 	for _, m := range matched {
 		switch m.extEntry.Name {
 		case "global-ext":
-			// 全局扩展：serviceUser 必须为空（继承 supd 用户）
-			if m.serviceUser != "" {
-				t.Errorf("global ext serviceUser should be empty, got %q", m.serviceUser)
+			// 全局扩展：serviceSpec 必须为空（继承 supd 用户）
+			if !m.serviceSpec.IsEmpty() {
+				t.Errorf("global ext serviceSpec should be empty, got %+v", m.serviceSpec)
 			}
 			if m.serviceName != "" {
 				t.Errorf("global ext serviceName should be empty, got %q", m.serviceName)
 			}
 		case "svc-ext":
-			// svc1 的扩展：serviceUser 应为 "appuser"
-			if m.serviceUser != "appuser" {
-				t.Errorf("svc-ext serviceUser should be %q, got %q", "appuser", m.serviceUser)
+			// svc1 的扩展：serviceSpec.User 应为 "appuser"
+			if m.serviceSpec.User != "appuser" {
+				t.Errorf("svc-ext serviceSpec.User should be %q, got %q", "appuser", m.serviceSpec.User)
 			}
 			if m.serviceName != "svc1" {
 				t.Errorf("svc-ext serviceName should be %q, got %q", "svc1", m.serviceName)
 			}
 		case "svc2-ext":
-			// svc2 的扩展：svc2.User 为空，serviceUser 也应为空
-			if m.serviceUser != "" {
-				t.Errorf("svc2-ext serviceUser should be empty (svc has no user), got %q", m.serviceUser)
+			// svc2 的扩展：svc2.User 为空，serviceSpec 也应为空
+			if !m.serviceSpec.IsEmpty() {
+				t.Errorf("svc2-ext serviceSpec should be empty (svc has no user), got %+v", m.serviceSpec)
 			}
 			if m.serviceName != "svc2" {
 				t.Errorf("svc2-ext serviceName should be %q, got %q", "svc2", m.serviceName)
@@ -1279,9 +1279,9 @@ func TestFindMatchingExtensionsPropagatesServiceUser(t *testing.T) {
 	}
 }
 
-// TestFindMatchingExtensionsGlobalExtNoServiceUser 测试全局扩展的 serviceUser 始终为空
+// TestFindMatchingExtensionsGlobalExtNoServiceUser 测试全局扩展的 serviceSpec 始终为空
 // REQ-F-023: 全局扩展未指定用户 → 继承 supd 启动用户（不继承任何服务身份）
-// 即使服务存在 user 字段，全局扩展的 serviceUser 也不应被填充
+// 即使服务存在 user 字段，全局扩展的 serviceSpec 也不应被填充
 func TestFindMatchingExtensionsGlobalExtNoServiceUser(t *testing.T) {
 	discovery := &watch.DiscoveryResult{
 		GlobalExts: map[string]*watch.ExtensionEntry{
@@ -1318,18 +1318,18 @@ func TestFindMatchingExtensionsGlobalExtNoServiceUser(t *testing.T) {
 		t.Fatalf("expected global-ext, got %s", m.extEntry.Name)
 	}
 
-	// 全局扩展的 serviceUser 必须为空（即使被 service_lifecycle 触发）
-	if m.serviceUser != "" {
-		t.Errorf("global ext serviceUser should be empty even when triggered by service_lifecycle, got %q", m.serviceUser)
+	// 全局扩展的 serviceSpec 必须为空（即使被 service_lifecycle 触发）
+	if !m.serviceSpec.IsEmpty() {
+		t.Errorf("global ext serviceSpec should be empty even when triggered by service_lifecycle, got %+v", m.serviceSpec)
 	}
 	if m.serviceName != "" {
 		t.Errorf("global ext serviceName should be empty, got %q", m.serviceName)
 	}
 }
 
-// TestDispatchServiceUserPropagatedToTriggerContext 测试 serviceUser 通过 TriggerContext 传递到执行器
-// REQ-F-023, §2.2.13: 服务级扩展执行时 TriggerContext.ServiceUser 应等于服务 user 字段
-// 通过 executeForService 间接验证（matchedExtension.serviceUser → TriggerContext.ServiceUser）
+// TestDispatchServiceUserPropagatedToTriggerContext 测试 serviceSpec 通过 TriggerContext 传递到执行器
+// REQ-F-023, §2.2.13: 服务级扩展执行时 TriggerContext.ServiceSpec 应携带服务身份配置
+// 通过 findMatchingExtensions 间接验证（matchedExtension.serviceSpec ← svcEntry.Config）
 func TestDispatchServiceUserPropagatedToTriggerContext(t *testing.T) {
 	// 创建一个简单的服务级扩展，其 entry 是 /bin/true（无需实际执行）
 	// 因为扩展会被实际执行，我们只能验证调度路径不报错
@@ -1370,8 +1370,8 @@ func TestDispatchServiceUserPropagatedToTriggerContext(t *testing.T) {
 	}
 
 	m := matched[0]
-	if m.serviceUser != "appuser" {
-		t.Errorf("expected serviceUser %q, got %q", "appuser", m.serviceUser)
+	if m.serviceSpec.User != "appuser" {
+		t.Errorf("expected serviceSpec.User %q, got %q", "appuser", m.serviceSpec.User)
 	}
 	if m.serviceName != "svc1" {
 		t.Errorf("expected serviceName %q, got %q", "svc1", m.serviceName)

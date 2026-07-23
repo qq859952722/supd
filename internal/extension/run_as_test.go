@@ -7,12 +7,14 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/supdorg/supd/internal/identity"
 )
 
 // TestResolveRunAsGlobalEmpty 测试全局扩展 run_as 为空时使用当前用户
 // REQ-F-023: 全局扩展默认 run_as = supd 启动用户
 func TestResolveRunAsGlobalEmpty(t *testing.T) {
-	uid, gid, groups, warn, err := ResolveRunAs("", "", false)
+	uid, gid, groups, warn, err := ResolveRunAs(identity.CredentialSpec{}, identity.CredentialSpec{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -33,12 +35,12 @@ func TestResolveRunAsGlobalEmpty(t *testing.T) {
 	_ = groups
 }
 
-// TestResolveRunAsServiceLevelEmptyWithUser 测试服务级扩展 run_as 为空且有 serviceUser 时使用 serviceUser
-// REQ-F-023: 服务级扩展默认 run_as = 服务的 user 字段值
+// TestResolveRunAsServiceLevelEmptyWithUser 测试服务级扩展 run_as 为空且有 serviceSpec 时使用 serviceSpec
+// REQ-F-023: 服务级扩展默认 run_as = 服务的身份配置
 func TestResolveRunAsServiceLevelEmptyWithUser(t *testing.T) {
 	curUsername := getCurrentUsername(t)
 
-	uid, gid, groups, warn, err := ResolveRunAs("", curUsername, true)
+	uid, gid, groups, warn, err := ResolveRunAs(identity.CredentialSpec{}, identity.CredentialSpec{User: curUsername}, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -47,10 +49,10 @@ func TestResolveRunAsServiceLevelEmptyWithUser(t *testing.T) {
 	curGID := uint32(os.Getgid())
 
 	if uid != curUID {
-		t.Errorf("expected uid %d (current user via serviceUser), got %d", curUID, uid)
+		t.Errorf("expected uid %d (current user via serviceSpec), got %d", curUID, uid)
 	}
 	if gid != curGID {
-		t.Errorf("expected gid %d (current user via serviceUser), got %d", curGID, gid)
+		t.Errorf("expected gid %d (current user via serviceSpec), got %d", curGID, gid)
 	}
 	if warn != "" {
 		t.Errorf("expected no warning, got %q", warn)
@@ -58,10 +60,10 @@ func TestResolveRunAsServiceLevelEmptyWithUser(t *testing.T) {
 	_ = groups
 }
 
-// TestResolveRunAsServiceLevelEmptyNoUser 测试服务级扩展 run_as 为空且 serviceUser 为空时使用当前用户
-// REQ-F-023: 服务级扩展 run_as/serviceUser 都为空 → 当前用户
+// TestResolveRunAsServiceLevelEmptyNoUser 测试服务级扩展 run_as 为空且 serviceSpec 为空时使用当前用户
+// REQ-F-023: 服务级扩展 run_as/serviceSpec 都为空 → 当前用户
 func TestResolveRunAsServiceLevelEmptyNoUser(t *testing.T) {
-	uid, gid, groups, warn, err := ResolveRunAs("", "", true)
+	uid, gid, groups, warn, err := ResolveRunAs(identity.CredentialSpec{}, identity.CredentialSpec{}, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -86,7 +88,7 @@ func TestResolveRunAsServiceLevelEmptyNoUser(t *testing.T) {
 func TestResolveRunAsExplicitCurrentUser(t *testing.T) {
 	curUsername := getCurrentUsername(t)
 
-	uid, gid, groups, warn, err := ResolveRunAs(curUsername, "", false)
+	uid, gid, groups, warn, err := ResolveRunAs(identity.CredentialSpec{User: curUsername}, identity.CredentialSpec{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -109,7 +111,7 @@ func TestResolveRunAsExplicitCurrentUser(t *testing.T) {
 // TestResolveRunAsExplicitRoot 测试显式指定 root
 // REQ-F-023: 显式 root → 用 root
 func TestResolveRunAsExplicitRoot(t *testing.T) {
-	uid, gid, groups, warn, err := ResolveRunAs("root", "", false)
+	uid, gid, groups, warn, err := ResolveRunAs(identity.CredentialSpec{User: "root"}, identity.CredentialSpec{}, false)
 
 	curUID := uint32(os.Getuid())
 
@@ -139,7 +141,7 @@ func TestResolveRunAsExplicitRoot(t *testing.T) {
 		if warn == "" {
 			t.Error("expected warning for non-root switching to root")
 		}
-		if !strings.Contains(warn, "cannot switch to user root") {
+		if !strings.Contains(warn, "cannot switch to root") {
 			t.Errorf("expected warning about root switch, got %q", warn)
 		}
 	}
@@ -149,12 +151,12 @@ func TestResolveRunAsExplicitRoot(t *testing.T) {
 // TestResolveRunAsNonexistentUser 测试指定不存在的用户
 // REQ-F-023: user.Lookup 失败时返回错误
 func TestResolveRunAsNonexistentUser(t *testing.T) {
-	_, _, _, _, err := ResolveRunAs("nonexistent_user_xyz_12345", "", false)
+	_, _, _, _, err := ResolveRunAs(identity.CredentialSpec{User: "nonexistent_user_xyz_12345"}, identity.CredentialSpec{}, false)
 	if err == nil {
 		t.Error("expected error for nonexistent user")
 	}
-	if !strings.Contains(err.Error(), "lookup user nonexistent_user_xyz_12345") {
-		t.Errorf("expected lookup error, got %v", err)
+	if !strings.Contains(err.Error(), "nonexistent_user_xyz_12345") {
+		t.Errorf("expected error mentioning username, got %v", err)
 	}
 }
 
@@ -167,7 +169,7 @@ func TestResolveRunAsNonRootSwitchWarning(t *testing.T) {
 	}
 
 	// root 用户在大多数系统上存在
-	uid, gid, _, warn, err := ResolveRunAs("root", "", false)
+	uid, gid, _, warn, err := ResolveRunAs(identity.CredentialSpec{User: "root"}, identity.CredentialSpec{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -319,13 +321,13 @@ func TestLookupUserGroupsNonexistent(t *testing.T) {
 	}
 }
 
-// TestResolveRunAsServiceLevelWithServiceUser 测试服务级扩展使用服务 user 字段
-// REQ-F-023: 服务级扩展默认 run_as = 服务的 user 字段值
+// TestResolveRunAsServiceLevelWithServiceUser 测试服务级扩展使用服务身份配置
+// REQ-F-023: 服务级扩展默认 run_as = 服务的身份配置
 func TestResolveRunAsServiceLevelWithServiceUser(t *testing.T) {
 	curUsername := getCurrentUsername(t)
 
-	// run_as 为空，serviceUser 为当前用户
-	uid, gid, _, warn, err := ResolveRunAs("", curUsername, true)
+	// extSpec 为空，serviceSpec 为当前用户
+	uid, gid, _, warn, err := ResolveRunAs(identity.CredentialSpec{}, identity.CredentialSpec{User: curUsername}, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -344,21 +346,43 @@ func TestResolveRunAsServiceLevelWithServiceUser(t *testing.T) {
 	}
 }
 
-// TestResolveRunAsOverridesServiceUser 测试 run_as 显式指定时覆盖 serviceUser
-// REQ-F-023: 显式 run_as 优先于 serviceUser
+// TestResolveRunAsOverridesServiceUser 测试 extSpec 显式指定时覆盖 serviceSpec
+// REQ-F-023: 显式 extSpec 优先于 serviceSpec
 func TestResolveRunAsOverridesServiceUser(t *testing.T) {
 	curUsername := getCurrentUsername(t)
 
-	// run_as 显式指定当前用户，serviceUser 为另一个值（这里用 root 测试优先级）
-	uid, _, _, warn, err := ResolveRunAs(curUsername, "root", true)
+	// extSpec 显式指定当前用户，serviceSpec 为另一个值（这里用 root 测试优先级）
+	uid, _, _, warn, err := ResolveRunAs(identity.CredentialSpec{User: curUsername}, identity.CredentialSpec{User: "root"}, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	curUID := uint32(os.Getuid())
-	// 应使用 runAs 指定的当前用户，而非 serviceUser 的 root
+	// 应使用 extSpec 指定的当前用户，而非 serviceSpec 的 root
 	if uid != curUID {
-		t.Errorf("expected uid %d (runAs takes priority), got %d", curUID, uid)
+		t.Errorf("expected uid %d (extSpec takes priority), got %d", curUID, uid)
+	}
+	if warn != "" {
+		t.Errorf("expected no warning, got %q", warn)
+	}
+}
+
+// TestResolveRunAsUIDMode 测试 UID 模式直接指定 uid
+// §2.2.13: UID 模式不查 /etc/passwd
+func TestResolveRunAsUIDMode(t *testing.T) {
+	curUID := uint32(os.Getuid())
+
+	// extSpec 使用 UID 模式指定当前 uid
+	uid, gid, _, warn, err := ResolveRunAs(identity.CredentialSpec{UID: int(curUID)}, identity.CredentialSpec{}, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if uid != curUID {
+		t.Errorf("expected uid %d, got %d", curUID, uid)
+	}
+	// GID=0 时取 UID
+	if gid != curUID {
+		t.Errorf("expected gid %d (=uid), got %d", curUID, gid)
 	}
 	if warn != "" {
 		t.Errorf("expected no warning, got %q", warn)

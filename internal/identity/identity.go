@@ -108,3 +108,77 @@ func GetCurrentUser() (uid uint32, gid uint32, groups []uint32, err error) {
 
 	return uid, gid, groups, nil
 }
+
+// LookupGroup 通过组名查找 gid。
+// 用于 User 模式下 Group 字段覆盖主组 gid（如 user:alice + group:docker）。
+func LookupGroup(name string) (uint32, error) {
+	g, err := user.LookupGroup(name)
+	if err != nil {
+		return 0, fmt.Errorf("group lookup %s: %w", name, err)
+	}
+	gid, err := strconv.ParseUint(g.Gid, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("parse gid %s: %w", g.Gid, err)
+	}
+	return uint32(gid), nil
+}
+
+// CredentialSpec 描述服务/扩展的执行身份配置。
+// User 模式（User 非空）与 UID 模式（UID 非 0）互斥，由 config 校验层拦截同时指定的情况。
+//   - User 模式：通过 user.Lookup 获取 uid/gid/补充组；Group 可选覆盖主组 gid（保留补充组）
+//   - UID 模式：直接用 UID/GID/Groups，不查 /etc/passwd（适用于用户不在 passwd 的场景，如 NAS 固定 uid 服务）
+type CredentialSpec struct {
+	User   string // 用户名（User 模式）
+	Group  string // 组名（User 模式下可选，覆盖主组 gid）
+	UID    int    // 直接 uid（UID 模式，0 表示未设置）
+	GID    int    // 直接 gid（UID 模式下可选，0 表示 = UID）
+	Groups []int  // 补充组 gid 列表（UID 模式下可选）
+}
+
+// IsEmpty 返回 spec 是否完全未设置（两种模式均未配置）。
+func (s CredentialSpec) IsEmpty() bool {
+	return s.User == "" && s.UID == 0
+}
+
+// IsUIDMode 返回是否为 UID 模式（UID 非 0）。
+func (s CredentialSpec) IsUIDMode() bool {
+	return s.UID != 0
+}
+
+// ResolveSpec 解析 CredentialSpec 为 uid/gid/补充组。
+//   - IsEmpty → 返回 (0,0,nil,nil)，调用方应回退到 GetCurrentUser
+//   - User 模式 → LookupUserGroups，Group 非空时 LookupGroup 覆盖 gid
+//   - UID 模式 → 直接用 UID/GID/Groups（GID=0 时取 UID）
+//
+// 不处理非 root 切换限制（由调用方 ResolveServiceCredential/ResolveRunAs 按语义处理）。
+func ResolveSpec(spec CredentialSpec) (uid uint32, gid uint32, groups []uint32, err error) {
+	if spec.IsEmpty() {
+		return 0, 0, nil, nil
+	}
+	if spec.IsUIDMode() {
+		uid = uint32(spec.UID)
+		gid = uint32(spec.GID)
+		if gid == 0 {
+			gid = uid
+		}
+		groups = make([]uint32, 0, len(spec.Groups))
+		for _, g := range spec.Groups {
+			groups = append(groups, uint32(g))
+		}
+		return uid, gid, groups, nil
+	}
+	// User 模式
+	uid, gid, groups, err = LookupUserGroups(spec.User)
+	if err != nil {
+		return 0, 0, nil, err
+	}
+	// Group 可选覆盖主组 gid（保留用户的补充组不变）
+	if spec.Group != "" {
+		newGID, gerr := LookupGroup(spec.Group)
+		if gerr != nil {
+			return 0, 0, nil, gerr
+		}
+		gid = newGID
+	}
+	return uid, gid, groups, nil
+}

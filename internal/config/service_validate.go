@@ -153,6 +153,12 @@ func validateService(sc *ServiceConfig) error {
 		}
 	}
 
+	// 身份字段互斥校验：user（User 模式）与 uid（UID 模式）不能同时指定
+	// §2.2.13: User 模式通过用户名查找，UID 模式直接用数字，同时指定会产生歧义
+	if sc.User != "" && sc.UID != 0 {
+		return fmt.Errorf("user and uid are mutually exclusive: specify either user (by name) or uid (by number), not both")
+	}
+
 	return nil
 }
 

@@ -156,7 +156,11 @@ interface ExtFormData {
   runtime: string
   entry: string
   timeout_seconds: number
+  identityMode: 'user' | 'uid'
   run_as: string
+  run_as_uid: string
+  run_as_gid: string
+  run_as_groups: string
   concurrency: string
   triggers_on_demand: boolean
 }
@@ -444,7 +448,11 @@ export function ServiceDetail() {
       runtime: 'bash',
       entry: 'run.sh',
       timeout_seconds: 600,
+      identityMode: 'user',
       run_as: '',
+      run_as_uid: '',
+      run_as_gid: '',
+      run_as_groups: '',
       concurrency: 'replace',
       triggers_on_demand: true,
     })
@@ -468,7 +476,11 @@ export function ServiceDetail() {
         runtime: String(c.runtime ?? 'bash'),
         entry: String(c.entry ?? 'run.sh'),
         timeout_seconds: Number(c.timeout_seconds) || 600,
+        identityMode: c.run_as_uid ? 'uid' : 'user',
         run_as: String(c.run_as ?? ''),
+        run_as_uid: c.run_as_uid != null ? String(c.run_as_uid) : '',
+        run_as_gid: c.run_as_gid != null ? String(c.run_as_gid) : '',
+        run_as_groups: Array.isArray(c.run_as_groups) ? (c.run_as_groups as number[]).join(', ') : '',
         concurrency: String(c.concurrency ?? 'replace'),
         triggers_on_demand: triggers?.on_demand !== false,
       })
@@ -492,7 +504,17 @@ export function ServiceDetail() {
       timeout_seconds: extForm.timeout_seconds,
       concurrency: extForm.concurrency,
     }
-    if (extForm.run_as) meta.run_as = extForm.run_as
+    // §2.2.13: run_as（User 模式）与 run_as_uid（UID 模式）互斥，由 identityMode 决定
+    if (extForm.identityMode === 'uid') {
+      const uid = parseInt(extForm.run_as_uid, 10)
+      if (!isNaN(uid) && uid > 0) meta.run_as_uid = uid
+      const gid = parseInt(extForm.run_as_gid, 10)
+      if (!isNaN(gid) && gid > 0) meta.run_as_gid = gid
+      const groupsNums = extForm.run_as_groups.split(',').map((s) => s.trim()).filter(Boolean).map(Number).filter((n) => !isNaN(n) && n > 0)
+      if (groupsNums.length) meta.run_as_groups = groupsNums
+    } else {
+      if (extForm.run_as) meta.run_as = extForm.run_as
+    }
     if (editingExtName && extFormOriginal) {
       // 编辑模式：以原有配置为基础，仅更新表单编辑的字段
       // 保留原有的 triggers/actions/ui/enabled 等配置不被覆盖
@@ -1515,15 +1537,6 @@ export function ServiceDetail() {
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-[var(--color-text-tertiary)]">运行身份</label>
-                    <Input
-                      value={extForm?.run_as ?? ''}
-                      onChange={(e) => setExtForm(f => f ? { ...f, run_as: e.target.value } : f)}
-                      className="mt-1 h-8 text-sm font-mono"
-                      placeholder="root（留空继承服务用户）"
-                    />
-                  </div>
-                  <div>
                     <label className="text-xs text-[var(--color-text-tertiary)]">并发策略</label>
                     <Select
                       className="mt-1 w-full"
@@ -1537,6 +1550,67 @@ export function ServiceDetail() {
                       ]}
                     />
                   </div>
+                </div>
+
+                {/* §2.2.13: 执行身份 — User 模式与 UID 模式互斥，留空则继承服务身份 */}
+                <div className="mt-3 border-t border-[var(--color-border-secondary)] pt-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs text-[var(--color-text-tertiary)]">执行身份</label>
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setExtForm(f => f ? { ...f, identityMode: 'user' } : f)}
+                        className={`px-2.5 py-1 text-xs rounded border transition-colors ${extForm?.identityMode === 'user' ? 'bg-[var(--color-brand-primary)] text-white border-[var(--color-brand-primary)]' : 'border-[var(--color-border-secondary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)]'}`}
+                      >
+                        按用户名（run_as）
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setExtForm(f => f ? { ...f, identityMode: 'uid' } : f)}
+                        className={`px-2.5 py-1 text-xs rounded border transition-colors ${extForm?.identityMode === 'uid' ? 'bg-[var(--color-brand-primary)] text-white border-[var(--color-brand-primary)]' : 'border-[var(--color-border-secondary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)]'}`}
+                      >
+                        按 UID（run_as_uid）
+                      </button>
+                    </div>
+                  </div>
+                  <p className="mt-1 text-xs text-[var(--color-text-tertiary)]">
+                    {extForm?.identityMode === 'uid'
+                      ? '直接指定数字 uid/gid，不依赖 /etc/passwd（适用于 NAS 固定 uid 服务）；留空则继承服务身份'
+                      : '通过用户名查找（需存在于 /etc/passwd）；留空则继承服务身份'}
+                  </p>
+                  {extForm?.identityMode === 'uid' ? (
+                    <div className="mt-2 grid grid-cols-3 gap-3">
+                      <Input
+                        type="number"
+                        value={extForm?.run_as_uid ?? ''}
+                        onChange={(e) => setExtForm(f => f ? { ...f, run_as_uid: e.target.value } : f)}
+                        className="h-8 text-sm font-mono"
+                        placeholder="UID"
+                      />
+                      <Input
+                        type="number"
+                        value={extForm?.run_as_gid ?? ''}
+                        onChange={(e) => setExtForm(f => f ? { ...f, run_as_gid: e.target.value } : f)}
+                        className="h-8 text-sm font-mono"
+                        placeholder="GID（留空=UID）"
+                      />
+                      <Input
+                        value={extForm?.run_as_groups ?? ''}
+                        onChange={(e) => setExtForm(f => f ? { ...f, run_as_groups: e.target.value } : f)}
+                        className="h-8 text-sm font-mono"
+                        placeholder="补充组（逗号分隔）"
+                      />
+                    </div>
+                  ) : (
+                    <div className="mt-2">
+                      <Input
+                        value={extForm?.run_as ?? ''}
+                        onChange={(e) => setExtForm(f => f ? { ...f, run_as: e.target.value } : f)}
+                        className="h-8 text-sm font-mono"
+                        placeholder="root（留空继承服务用户）"
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
 

@@ -423,9 +423,9 @@ func (b *Bootstrap) startService(ctx context.Context, name string, svcEntry *wat
 
 	// 启动子进程
 	// REQ-F-006: fork+exec+进程组
-	// REQ-F-023, §2.2.13: 通过 StartServiceProcess 解析 user 字段，
-	// user 不存在或非 root 切换其他用户时返回 *ServiceError 拒绝启动
-	proc, err := StartServiceProcess(name, command, env, workdir, svcConfig.User, svcEntry.ConfigPath, extraFiles...)
+	// REQ-F-023, §2.2.13: 通过 StartServiceProcess 解析身份配置（user 或 uid 模式），
+	// 身份解析失败或非 root 切换其他用户时返回 *ServiceError 拒绝启动
+	proc, err := StartServiceProcess(name, command, env, workdir, svcConfig.ToCredentialSpec(), svcEntry.ConfigPath, extraFiles...)
 	if err != nil {
 		// 进程启动失败，转移至 failed
 		if preChecker != nil {
@@ -812,9 +812,9 @@ func (b *Bootstrap) superviseService(ctx context.Context, name string, svcEntry 
 	}
 
 	// 启动新进程
-	// REQ-F-023, §2.2.13: 通过 StartServiceProcess 解析 user 字段，
-	// user 不存在或非 root 切换其他用户时返回 *ServiceError 拒绝启动
-	newProc, err := StartServiceProcess(name, command, env, workdir, svcEntry.Config.User, svcEntry.ConfigPath, extraFiles...)
+	// REQ-F-023, §2.2.13: 通过 StartServiceProcess 解析身份配置（user 或 uid 模式），
+	// 身份解析失败或非 root 切换其他用户时返回 *ServiceError 拒绝启动
+	newProc, err := StartServiceProcess(name, command, env, workdir, svcEntry.Config.ToCredentialSpec(), svcEntry.ConfigPath, extraFiles...)
 	if err != nil {
 		if preChecker != nil {
 			preChecker.Close()

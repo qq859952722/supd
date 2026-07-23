@@ -62,6 +62,9 @@ export interface ServiceConfig {
   runtime?: string
   user?: string
   group?: string
+  uid?: number // UID 模式：直接指定 uid（与 user 互斥）
+  gid?: number // UID 模式：直接指定 gid（0 表示 = uid）
+  groups?: number[] // UID 模式：补充组 gid 列表
   workdir?: string
   depends_on?: string[]
   tags?: string[]
@@ -126,6 +129,12 @@ export function serializeServiceConfig(config: ServiceConfig): string {
   if (config.runtime) lines.push(`runtime: ${yamlStr(config.runtime)}`)
   if (config.user) lines.push(`user: ${yamlStr(config.user)}`)
   if (config.group) lines.push(`group: ${yamlStr(config.group)}`)
+  if (config.uid) lines.push(`uid: ${config.uid}`)
+  if (config.gid) lines.push(`gid: ${config.gid}`)
+  if (config.groups?.length) {
+    lines.push('groups:')
+    for (const g of config.groups) lines.push(`  - ${g}`)
+  }
   if (config.workdir) lines.push(`workdir: ${yamlStr(config.workdir)}`)
 
   if (config.depends_on?.length) {
@@ -308,8 +317,12 @@ interface FormState {
   workdir: string
   runtime: string
   autostart: boolean
+  identityMode: 'user' | 'uid'
   user: string
   group: string
+  uid: string
+  gid: string
+  groups: string
   depends_on: string
   // 就绪检查
   readinessType: string
@@ -351,8 +364,12 @@ function defaultFormState(): FormState {
     workdir: '',
     runtime: '',
     autostart: true,
+    identityMode: 'user',
     user: '',
     group: '',
+    uid: '',
+    gid: '',
+    groups: '',
     depends_on: '',
     readinessType: 'none',
     readinessFd: '3',
@@ -393,8 +410,12 @@ function formStateFromConfig(config?: Partial<ServiceConfig>): FormState {
     workdir: config.workdir ?? '',
     runtime: config.runtime ?? '',
     autostart: config.autostart ?? true,
+    identityMode: config.uid ? 'uid' : 'user',
     user: config.user ?? '',
     group: config.group ?? '',
+    uid: config.uid?.toString() ?? '',
+    gid: config.gid?.toString() ?? '',
+    groups: config.groups?.join(', ') ?? '',
     depends_on: config.depends_on?.join(', ') ?? '',
     readinessType: config.readiness?.type ?? 'none',
     readinessFd: config.readiness?.fd?.toString() ?? '3',
@@ -461,6 +482,8 @@ const serviceFormSchema = z.object({
   stopTimeoutSeconds: intStr(1, 3600, '停止超时 '),
   maxSizeMb: intStr(1, 10240, '单文件上限 '),
   maxFiles: intStr(1, 1000, '保留文件数 '),
+  uid: intStr(1, 4294967295, 'UID '),
+  gid: intStr(1, 4294967295, 'GID '),
 })
 
 type FormErrors = Partial<Record<keyof FormState, string>>
@@ -478,8 +501,18 @@ function buildConfig(form: FormState): ServiceConfig {
   config.autostart = form.autostart
   if (form.workdir.trim()) config.workdir = form.workdir.trim()
   if (form.runtime.trim()) config.runtime = form.runtime.trim()
-  if (form.user.trim()) config.user = form.user.trim()
-  if (form.group.trim()) config.group = form.group.trim()
+  // §2.2.13: User 模式（user/group）与 UID 模式（uid/gid/groups）互斥，由 identityMode 决定
+  if (form.identityMode === 'uid') {
+    const uid = toInt(form.uid)
+    if (uid !== undefined && uid > 0) config.uid = uid
+    const gid = toInt(form.gid)
+    if (gid !== undefined && gid > 0) config.gid = gid
+    const groupsNums = form.groups.split(',').map((s) => s.trim()).filter(Boolean).map(Number).filter((n) => !isNaN(n) && n > 0)
+    if (groupsNums.length) config.groups = groupsNums
+  } else {
+    if (form.user.trim()) config.user = form.user.trim()
+    if (form.group.trim()) config.group = form.group.trim()
+  }
 
   const tags = form.tags.split(',').map((s) => s.trim()).filter(Boolean)
   if (tags.length) config.tags = tags
@@ -787,22 +820,70 @@ export function ServiceForm({ initial, onSubmit, onCancel, submitLabel = '提交
             </datalist>
           </Field>
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="运行用户">
-            <Input
-              value={form.user}
-              onChange={(e) => set('user', e.target.value)}
-              placeholder="root"
-            />
-          </Field>
-          <Field label="用户组">
-            <Input
-              value={form.group}
-              onChange={(e) => set('group', e.target.value)}
-              placeholder="root"
-            />
-          </Field>
-        </div>
+        <Field label="执行身份" hint="按用户名（需存在于 /etc/passwd）或按 UID（直接指定数字，适用于 NAS 固定 uid 服务）；两者互斥，留空则继承 supd 启动用户">
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => set('identityMode', 'user')}
+              className={`px-3 py-1.5 text-sm rounded-md border transition-colors ${form.identityMode === 'user' ? 'bg-[var(--color-brand-primary)] text-white border-[var(--color-brand-primary)]' : 'border-[var(--color-border-secondary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)]'}`}
+            >
+              按用户名（user/group）
+            </button>
+            <button
+              type="button"
+              onClick={() => set('identityMode', 'uid')}
+              className={`px-3 py-1.5 text-sm rounded-md border transition-colors ${form.identityMode === 'uid' ? 'bg-[var(--color-brand-primary)] text-white border-[var(--color-brand-primary)]' : 'border-[var(--color-border-secondary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)]'}`}
+            >
+              按 UID（uid/gid/groups）
+            </button>
+          </div>
+        </Field>
+        {form.identityMode === 'user' ? (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="运行用户">
+              <Input
+                value={form.user}
+                onChange={(e) => set('user', e.target.value)}
+                placeholder="root"
+              />
+            </Field>
+            <Field label="用户组">
+              <Input
+                value={form.group}
+                onChange={(e) => set('group', e.target.value)}
+                placeholder="root"
+              />
+            </Field>
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="UID" hint="直接指定数字 uid" error={errors.uid}>
+                <Input
+                  type="number"
+                  value={form.uid}
+                  onChange={(e) => set('uid', e.target.value)}
+                  placeholder="1000"
+                />
+              </Field>
+              <Field label="GID" hint="留空则等于 UID">
+                <Input
+                  type="number"
+                  value={form.gid}
+                  onChange={(e) => set('gid', e.target.value)}
+                  placeholder="1000"
+                />
+              </Field>
+            </div>
+            <Field label="补充组（groups）" hint="逗号分隔的 gid 列表（可选）">
+              <Input
+                value={form.groups}
+                onChange={(e) => set('groups', e.target.value)}
+                placeholder="27, 100"
+              />
+            </Field>
+          </>
+        )}
         <Field label="依赖服务" hint="逗号分隔">
           <Input
             value={form.depends_on}

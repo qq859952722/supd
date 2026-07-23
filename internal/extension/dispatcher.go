@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/supdorg/supd/internal/config"
 	"github.com/supdorg/supd/internal/core"
+	"github.com/supdorg/supd/internal/identity"
 	"github.com/supdorg/supd/internal/watch"
 )
 
@@ -126,10 +127,10 @@ type matchedExtension struct {
 	actionID    string
 	actionArgs  []string
 	serviceName string // 空=全局扩展
-	// serviceUser 服务级扩展匹配时携带的服务 user 字段值，
-	// 用于扩展执行时 ResolveRunAs 的服务级 run_as 继承（REQ-F-023, §2.2.13）
+	// serviceSpec 服务级扩展匹配时携带的服务身份配置，
+	// 用于扩展执行时 ResolveRunAs 的服务级身份继承（REQ-F-023, §2.2.13）
 	// 全局扩展此字段为空 → ResolveRunAs 回退到 supd 启动用户
-	serviceUser string
+	serviceSpec identity.CredentialSpec
 }
 
 // Dispatch 触发调度
@@ -171,30 +172,30 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req DispatchRequest) []*RunRe
 // findMatchingExtensions 找到所有匹配当前事件的扩展
 // REQ-F-022: 遍历 DiscoveryResult 中的所有扩展的 triggers，匹配 EventType+Phase
 // REQ-D-004: service_lifecycle 时仅匹配指定服务的服务级扩展
-// REQ-F-023, §2.2.13: 服务级扩展匹配时携带 svcEntry.Config.User，供执行时 ResolveRunAs 继承
+// REQ-F-023, §2.2.13: 服务级扩展匹配时携带服务的身份配置，供执行时 ResolveRunAs 继承
 func findMatchingExtensions(req DispatchRequest) []matchedExtension {
 	var matched []matchedExtension
 
-	// 遍历全局扩展（serviceUser 为空 → ResolveRunAs 回退到 supd 启动用户）
+	// 遍历全局扩展（serviceSpec 为空 → ResolveRunAs 回退到 supd 启动用户）
 	for _, extEntry := range req.Discovery.GlobalExts {
-		if m := matchExtension(extEntry, req, "", ""); m != nil {
+		if m := matchExtension(extEntry, req, "", identity.CredentialSpec{}); m != nil {
 			matched = append(matched, *m)
 		}
 	}
 
-	// 遍历服务级扩展（serviceUser = svcEntry.Config.User）
+	// 遍历服务级扩展（serviceSpec = svcEntry.Config 的身份配置）
 	for _, svcEntry := range req.Discovery.Services {
 		// REQ-D-004: service_lifecycle 时仅匹配触发该事件的服务
 		if req.EventType == "service_lifecycle" && req.ServiceName != "" && svcEntry.Name != req.ServiceName {
 			continue
 		}
 		// 防御性：Config 可能在异常 DiscoveryResult 中为 nil（如测试桩或部分加载）
-		var serviceUser string
+		var serviceSpec identity.CredentialSpec
 		if svcEntry.Config != nil {
-			serviceUser = svcEntry.Config.User
+			serviceSpec = svcEntry.Config.ToCredentialSpec()
 		}
 		for _, extEntry := range svcEntry.Extensions {
-			if m := matchExtension(extEntry, req, svcEntry.Name, serviceUser); m != nil {
+			if m := matchExtension(extEntry, req, svcEntry.Name, serviceSpec); m != nil {
 				matched = append(matched, *m)
 			}
 		}
@@ -205,8 +206,8 @@ func findMatchingExtensions(req DispatchRequest) []matchedExtension {
 
 // matchExtension 检查单个扩展是否匹配当前触发事件
 // REQ-F-022: 根据 EventType+Phase 匹配扩展的 triggers 定义
-// REQ-F-023: serviceName/serviceUser 描述扩展所属服务的上下文，供执行时身份继承
-func matchExtension(extEntry *watch.ExtensionEntry, req DispatchRequest, serviceName, serviceUser string) *matchedExtension {
+// REQ-F-023: serviceName/serviceSpec 描述扩展所属服务的上下文，供执行时身份继承
+func matchExtension(extEntry *watch.ExtensionEntry, req DispatchRequest, serviceName string, serviceSpec identity.CredentialSpec) *matchedExtension {
 	meta := extEntry.Meta
 	if meta.Enabled == nil || !*meta.Enabled {
 		return nil
@@ -221,7 +222,7 @@ func matchExtension(extEntry *watch.ExtensionEntry, req DispatchRequest, service
 				actionID:    actionID,
 				actionArgs:  actionArgs,
 				serviceName: serviceName,
-				serviceUser: serviceUser,
+				serviceSpec: serviceSpec,
 			}
 		}
 	case "on_schedule":
@@ -239,7 +240,7 @@ func matchExtension(extEntry *watch.ExtensionEntry, req DispatchRequest, service
 					actionID:    actionID,
 					actionArgs:  actionArgs,
 					serviceName: serviceName,
-					serviceUser: serviceUser,
+					serviceSpec: serviceSpec,
 				}
 			}
 		}
@@ -258,7 +259,7 @@ func matchExtension(extEntry *watch.ExtensionEntry, req DispatchRequest, service
 					actionID:    actionID,
 					actionArgs:  actionArgs,
 					serviceName: serviceName,
-					serviceUser: serviceUser,
+					serviceSpec: serviceSpec,
 				}
 			}
 		}
@@ -277,7 +278,7 @@ func matchExtension(extEntry *watch.ExtensionEntry, req DispatchRequest, service
 					actionID:    actionID,
 					actionArgs:  actionArgs,
 					serviceName: serviceName,
-					serviceUser: serviceUser,
+					serviceSpec: serviceSpec,
 				}
 			}
 		}
@@ -402,16 +403,16 @@ func (d *Dispatcher) executeForService(ctx context.Context, serviceName string, 
 			svcName = req.ServiceName
 		}
 		// REQ-F-023, §2.2.13 line 677: 全局扩展默认 run_as = supd 启动用户（不继承任何服务身份）
-		// 即使被 service_lifecycle 触发，全局扩展的 ServiceUser 也必须为空，
+		// 即使被 service_lifecycle 触发，全局扩展的 ServiceSpec 也必须为空，
 		// 让 ResolveRunAs 走全局分支继承 supd 用户。
-		// 服务级扩展的 serviceUser 在 findMatchingExtensions 中已填充为 svcEntry.Config.User。
+		// 服务级扩展的 serviceSpec 在 findMatchingExtensions 中已填充为 svcEntry.Config 的身份配置。
 		tc := TriggerContext{
 			EventType:       req.EventType,
 			TriggerSource:   req.EventType,
 			TriggerUser:     req.TriggerUser,
 			Phase:           req.Phase,
 			ServiceName:     svcName,
-			ServiceUser:     ext.serviceUser,
+			ServiceSpec:     ext.serviceSpec,
 			ServicePID:      req.ServicePID,
 			ServiceExitCode: req.ServiceExitCode,
 			ServiceSignal:   req.ServiceSignal,

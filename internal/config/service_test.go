@@ -852,3 +852,72 @@ logging:
 		t.Error("expected error for negative max_files")
 	}
 }
+
+// TestValidateServiceUserUIDMutex 测试 user 与 uid 互斥校验
+// §2.2.13: User 模式与 UID 模式不能同时指定
+func TestValidateServiceUserUIDMutex(t *testing.T) {
+	yaml := `
+name: app
+version: "1.0.0"
+command:
+  - /usr/bin/app
+user: alice
+uid: 1000
+`
+	_, err := loadServiceFromYAML(t, yaml)
+	if err == nil {
+		t.Fatal("expected error for user+uid mutual exclusion, got nil")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("expected mutual exclusion error, got: %v", err)
+	}
+}
+
+// TestValidateServiceUserOnly 仅指定 user（User 模式）应通过
+func TestValidateServiceUserOnly(t *testing.T) {
+	yaml := `
+name: app
+version: "1.0.0"
+command:
+  - /usr/bin/app
+user: alice
+`
+	sc, err := loadServiceFromYAML(t, yaml)
+	if err != nil {
+		t.Fatalf("unexpected error for user-only: %v", err)
+	}
+	if sc.User != "alice" {
+		t.Errorf("expected User=alice, got %q", sc.User)
+	}
+	if sc.UID != 0 {
+		t.Errorf("expected UID=0, got %d", sc.UID)
+	}
+}
+
+// TestValidateServiceUIDOnly 仅指定 uid（UID 模式）应通过
+func TestValidateServiceUIDOnly(t *testing.T) {
+	yaml := `
+name: app
+version: "1.0.0"
+command:
+  - /usr/bin/app
+uid: 1000
+gid: 1001
+groups:
+  - 27
+  - 100
+`
+	sc, err := loadServiceFromYAML(t, yaml)
+	if err != nil {
+		t.Fatalf("unexpected error for uid-only: %v", err)
+	}
+	if sc.UID != 1000 {
+		t.Errorf("expected UID=1000, got %d", sc.UID)
+	}
+	if sc.GID != 1001 {
+		t.Errorf("expected GID=1001, got %d", sc.GID)
+	}
+	if len(sc.Groups) != 2 {
+		t.Errorf("expected 2 groups, got %d", len(sc.Groups))
+	}
+}

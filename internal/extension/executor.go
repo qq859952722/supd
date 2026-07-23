@@ -83,10 +83,10 @@ func (e *Executor) buildExecContext(runID string, meta *config.ExtensionMeta, tc
 	}
 
 	// Step 4: 设置进程组（Setpgid: true），关闭 stdin — 由 StartProcess 处理
-	// Step 5: 设置执行身份（REQ-F-023, 2.2.13: run_as 字段语义）
+	// Step 5: 设置执行身份（REQ-F-023, 2.2.13: run_as 字段语义，User/UID 模式互斥）
 	// REQ-P-005: 非 root 启动 supd 时，run_as 只能切换到当前用户（记录警告）
 	isServiceLevel := tc.ServiceName != ""
-	uid, gid, groups, warn, rerr := ResolveRunAs(meta.RunAs, tc.ServiceUser, isServiceLevel)
+	uid, gid, groups, warn, rerr := ResolveRunAs(meta.ToCredentialSpec(), tc.ServiceSpec, isServiceLevel)
 	if rerr != nil {
 		return nil, fmt.Errorf("extension %s: resolve run_as: %w", meta.Name, rerr)
 	}
@@ -288,7 +288,7 @@ func (e *Executor) Execute(ctx context.Context, meta *config.ExtensionMeta, tc T
 		slog.Error("extension build context failed",
 			"extension", meta.Name,
 			"run_as", meta.RunAs,
-			"service_user", tc.ServiceUser,
+			"run_as_uid", meta.RunAsUID,
 			"service", tc.ServiceName,
 			"error", err)
 		return result, err

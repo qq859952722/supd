@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"os"
+
+	"github.com/supdorg/supd/internal/identity"
 )
 
 // ServiceConfig 服务配置
@@ -17,6 +19,9 @@ type ServiceConfig struct {
 	Runtime     string   `yaml:"runtime"`
 	User        string   `yaml:"user"`
 	Group       string   `yaml:"group"`
+	UID         int      `yaml:"uid"`          // UID 模式：直接指定 uid（与 user 互斥）
+	GID         int      `yaml:"gid"`          // UID 模式：直接指定 gid（0 表示 = uid）
+	Groups      []int    `yaml:"groups"`       // UID 模式：补充组 gid 列表
 	Workdir     string   `yaml:"workdir"`
 	DependsOn   []string `yaml:"depends_on"`
 	Tags        []string `yaml:"tags"`
@@ -88,4 +93,17 @@ func LoadService(path string) (*ServiceConfig, error) {
 	}
 
 	return sc, nil
+}
+
+// ToCredentialSpec 从服务配置构造身份 spec。
+// §2.2.13: User 模式（user/group）与 UID 模式（uid/gid/groups）互斥，
+// 互斥由 validateService 保证，此处直接映射。
+func (sc *ServiceConfig) ToCredentialSpec() identity.CredentialSpec {
+	return identity.CredentialSpec{
+		User:   sc.User,
+		Group:  sc.Group,
+		UID:    sc.UID,
+		GID:    sc.GID,
+		Groups: sc.Groups,
+	}
 }

@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"os"
+
+	"github.com/supdorg/supd/internal/identity"
 )
 
 // ExtensionMeta 扩展 meta.yaml 完整映射
@@ -16,6 +18,9 @@ type ExtensionMeta struct {
 	Entry          string   `yaml:"entry" json:"entry"`
 	TimeoutSeconds int      `yaml:"timeout_seconds" json:"timeout_seconds"`
 	RunAs          string   `yaml:"run_as" json:"run_as,omitempty"`
+	RunAsUID       int      `yaml:"run_as_uid" json:"run_as_uid,omitempty"`          // UID 模式：直接指定 uid（与 run_as 互斥）
+	RunAsGID       int      `yaml:"run_as_gid" json:"run_as_gid,omitempty"`          // UID 模式：直接指定 gid（0 表示 = run_as_uid）
+	RunAsGroups    []int    `yaml:"run_as_groups" json:"run_as_groups,omitempty"`    // UID 模式：补充组 gid 列表
 	Concurrency    string   `yaml:"concurrency" json:"concurrency"`
 	UI             UIConfig `yaml:"ui" json:"ui"`
 	Actions        []Action `yaml:"actions" json:"actions,omitempty"`
@@ -133,4 +138,16 @@ func LoadExtension(path string) (*ExtensionMeta, error) {
 	}
 
 	return meta, nil
+}
+
+// ToCredentialSpec 从扩展配置构造身份 spec。
+// §2.2.13: User 模式（run_as）与 UID 模式（run_as_uid/run_as_gid/run_as_groups）互斥，
+// 互斥由 ValidateExtension 保证，此处直接映射。
+func (m *ExtensionMeta) ToCredentialSpec() identity.CredentialSpec {
+	return identity.CredentialSpec{
+		User:   m.RunAs,
+		UID:    m.RunAsUID,
+		GID:    m.RunAsGID,
+		Groups: m.RunAsGroups,
+	}
 }

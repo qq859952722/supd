@@ -781,3 +781,41 @@ func TestValidateExtension_TimeoutBoundary599_IsValid(t *testing.T) {
 		t.Errorf("expected 599s (below default but positive) to be valid, got error: %v", err)
 	}
 }
+
+// TestValidateExtensionRunAsMutex 测试 run_as 与 run_as_uid 互斥校验
+// §2.2.13: User 模式与 UID 模式不能同时指定
+func TestValidateExtensionRunAsMutex(t *testing.T) {
+	meta := &ExtensionMeta{
+		Name:           "ext",
+		Version:        "1.0.0",
+		Entry:          "run.sh",
+		TimeoutSeconds: 600,
+		Concurrency:    "replace",
+		RunAs:          "alice",
+		RunAsUID:       1000,
+	}
+	err := ValidateExtension(meta)
+	if err == nil {
+		t.Fatal("expected error for run_as+run_as_uid mutual exclusion, got nil")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("expected mutual exclusion error, got: %v", err)
+	}
+}
+
+// TestValidateExtensionRunAsUIDOnly 仅指定 run_as_uid（UID 模式）应通过
+func TestValidateExtensionRunAsUIDOnly(t *testing.T) {
+	meta := &ExtensionMeta{
+		Name:           "ext",
+		Version:        "1.0.0",
+		Entry:          "run.sh",
+		TimeoutSeconds: 600,
+		Concurrency:    "replace",
+		RunAsUID:       1000,
+		RunAsGID:       1001,
+		RunAsGroups:    []int{27, 100},
+	}
+	if err := ValidateExtension(meta); err != nil {
+		t.Fatalf("unexpected error for run_as_uid only: %v", err)
+	}
+}

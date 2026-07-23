@@ -87,7 +87,11 @@ interface CreateFormState {
   description: string
   version: string
   runtime: string
+  identityMode: 'user' | 'uid'
   run_as: string
+  run_as_uid: string
+  run_as_gid: string
+  run_as_groups: string
   concurrency: string
   timeout: number
   enabled: boolean
@@ -111,7 +115,11 @@ const initialFormState: CreateFormState = {
   description: '',
   version: '1.0.0',
   runtime: '',
+  identityMode: 'user',
   run_as: '',
+  run_as_uid: '',
+  run_as_gid: '',
+  run_as_groups: '',
   concurrency: 'replace',
   timeout: 600,
   enabled: true,
@@ -228,8 +236,18 @@ export default function ExtensionsPage() {
         runtime: createForm.runtime || undefined,
         entry: createForm.entry,
         timeout_seconds: createForm.timeout || undefined,
-        run_as: createForm.run_as || undefined,
         concurrency: createForm.concurrency || undefined,
+        // §2.2.13: run_as（User 模式）与 run_as_uid（UID 模式）互斥，由 identityMode 决定
+        ...(createForm.identityMode === 'uid'
+          ? (() => {
+              const groupsNums = createForm.run_as_groups.split(',').map((s) => s.trim()).filter(Boolean).map(Number).filter((n) => !isNaN(n) && n > 0)
+              return {
+                run_as_uid: parseInt(createForm.run_as_uid, 10) || undefined,
+                run_as_gid: parseInt(createForm.run_as_gid, 10) || undefined,
+                run_as_groups: groupsNums.length ? groupsNums : undefined,
+              }
+            })()
+          : { run_as: createForm.run_as || undefined }),
         ui: { button_style: 'default', icon: createForm.icon },
         actions: createForm.actions.map((a) => ({
           id: a.id,
@@ -660,20 +678,69 @@ export default function ExtensionsPage() {
                   <p className="text-xs text-[var(--color-text-tertiary)] mt-1">如 bash/python3/node</p>
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-[var(--color-text-primary)]">运行身份</label>
-                  <Input
-                    value={createForm.run_as}
-                    onChange={(e) => setCreateForm((f) => ({ ...f, run_as: e.target.value }))}
-                    placeholder="root"
-                  />
-                </div>
-                <div>
                   <label className="text-sm font-medium text-[var(--color-text-primary)]">图标</label>
                   <IconPicker
                     value={createForm.icon}
                     onChange={(v) => setCreateForm((f) => ({ ...f, icon: v }))}
                   />
                 </div>
+              </div>
+
+              {/* §2.2.13: 执行身份 — User 模式与 UID 模式互斥 */}
+              <div className="rounded-lg border border-[var(--color-border-secondary)] p-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium text-[var(--color-text-primary)]">执行身份</label>
+                  <div className="flex gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setCreateForm((f) => ({ ...f, identityMode: 'user' }))}
+                      className={`px-2.5 py-1 text-xs rounded border transition-colors ${createForm.identityMode === 'user' ? 'bg-[var(--color-brand-primary)] text-white border-[var(--color-brand-primary)]' : 'border-[var(--color-border-secondary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)]'}`}
+                    >
+                      按用户名（run_as）
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCreateForm((f) => ({ ...f, identityMode: 'uid' }))}
+                      className={`px-2.5 py-1 text-xs rounded border transition-colors ${createForm.identityMode === 'uid' ? 'bg-[var(--color-brand-primary)] text-white border-[var(--color-brand-primary)]' : 'border-[var(--color-border-secondary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)]'}`}
+                    >
+                      按 UID（run_as_uid）
+                    </button>
+                  </div>
+                </div>
+                <p className="mt-1 text-xs text-[var(--color-text-tertiary)]">
+                  {createForm.identityMode === 'uid'
+                    ? '直接指定数字 uid/gid，不依赖 /etc/passwd（适用于 NAS 固定 uid 服务）；留空则服务级扩展继承服务身份/全局扩展继承 supd 启动用户'
+                    : '通过用户名查找（需存在于 /etc/passwd）；留空同上继承规则'}
+                </p>
+                {createForm.identityMode === 'user' ? (
+                  <div className="mt-2">
+                    <Input
+                      value={createForm.run_as}
+                      onChange={(e) => setCreateForm((f) => ({ ...f, run_as: e.target.value }))}
+                      placeholder="root"
+                    />
+                  </div>
+                ) : (
+                  <div className="mt-2 grid grid-cols-3 gap-3">
+                    <Input
+                      type="number"
+                      value={createForm.run_as_uid}
+                      onChange={(e) => setCreateForm((f) => ({ ...f, run_as_uid: e.target.value }))}
+                      placeholder="UID"
+                    />
+                    <Input
+                      type="number"
+                      value={createForm.run_as_gid}
+                      onChange={(e) => setCreateForm((f) => ({ ...f, run_as_gid: e.target.value }))}
+                      placeholder="GID（留空=UID）"
+                    />
+                    <Input
+                      value={createForm.run_as_groups}
+                      onChange={(e) => setCreateForm((f) => ({ ...f, run_as_groups: e.target.value }))}
+                      placeholder="补充组（逗号分隔）"
+                    />
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-3 gap-3">

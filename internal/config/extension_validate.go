@@ -130,6 +130,12 @@ func ValidateExtension(meta *ExtensionMeta) error {
 		return err
 	}
 
+	// 身份字段互斥校验：run_as（User 模式）与 run_as_uid（UID 模式）不能同时指定
+	// §2.2.13: User 模式通过用户名查找，UID 模式直接用数字，同时指定会产生歧义
+	if meta.RunAs != "" && meta.RunAsUID != 0 {
+		return fmt.Errorf("run_as and run_as_uid are mutually exclusive: specify either run_as (by name) or run_as_uid (by number), not both")
+	}
+
 	return nil
 }
 

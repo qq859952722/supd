@@ -3,6 +3,8 @@ package extension
 import (
 	"fmt"
 	"time"
+
+	"github.com/supdorg/supd/internal/identity"
 )
 
 // TriggerContext 触发上下文
@@ -20,9 +22,10 @@ type TriggerContext struct {
 	ServiceName string
 	// ServiceDir 服务目录绝对路径（服务级扩展时注入为 SUPD_SERVICE_DIR）
 	ServiceDir string
-	// ServiceUser 服务级扩展触发时，对应服务的 user 字段值
-	// REQ-F-023, 2.2.13: 服务级扩展默认 run_as = 服务的 user 字段值
-	ServiceUser string
+	// ServiceSpec 服务级扩展触发时，对应服务的身份配置（user/group 或 uid/gid/groups）
+	// REQ-F-023, 2.2.13: 服务级扩展默认 run_as = 服务的身份配置
+	// 全局扩展此字段为空 → ResolveRunAs 回退到 supd 启动用户
+	ServiceSpec identity.CredentialSpec
 	// ServicePID 服务 PID
 	ServicePID int
 	// ServiceExitCode on_failure 时的退出码

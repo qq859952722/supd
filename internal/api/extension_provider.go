@@ -17,6 +17,7 @@ import (
 	"github.com/supdorg/supd/internal/config"
 	"github.com/supdorg/supd/internal/errors"
 	"github.com/supdorg/supd/internal/extension"
+	"github.com/supdorg/supd/internal/identity"
 	"github.com/supdorg/supd/internal/watch"
 )
 
@@ -299,8 +300,15 @@ func (p *CoreExtensionProvider) RunExtension(ctx context.Context, name string, a
 	// 工作目录为扩展自身目录（meta.yaml 所在目录），这样 entry 中的相对路径（如 run.sh）可以正确定位
 	workDir := filepath.Dir(info.ConfigPath)
 	serviceDir := ""
+	var serviceSpec identity.CredentialSpec
 	if svcName != "" && p.BaseDir != "" {
 		serviceDir = filepath.Join(p.BaseDir, "services", svcName)
+	}
+	// REQ-F-023, §2.2.13: 服务级扩展 on_demand 触发时携带服务的身份配置，供 ResolveRunAs 继承
+	if svcName != "" && p.Discovery != nil {
+		if svcEntry, exists := p.Discovery.Services[svcName]; exists && svcEntry.Config != nil {
+			serviceSpec = svcEntry.Config.ToCredentialSpec()
+		}
 	}
 
 	tc := extension.TriggerContext{
@@ -310,6 +318,7 @@ func (p *CoreExtensionProvider) RunExtension(ctx context.Context, name string, a
 		ActionArgs:    actionArgs,
 		ServiceName:   svcName,
 		ServiceDir:    serviceDir,
+		ServiceSpec:   serviceSpec,
 		WorkDir:       workDir,
 		RunID:         runID,
 	}

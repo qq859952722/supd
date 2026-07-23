@@ -10,7 +10,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：17 类审计评分 **97.44 / 100（⭐ 优秀）**；913+ 单元测试通过；零竞态；staticcheck/go vet 零警告
-- **当前版本**：v0.0.16（版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.0.17（版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -30,7 +30,7 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 
 - **生命周期**：`starting→up→ready`（唯一就绪路径）、`stopping→down`；自动重启不经过 down
 - **环境变量**：4 层合并（os.Environ → 全局 env 文件 → 服务 env.yaml → 扩展 env.yaml）；`env.yaml` 必须含 `env:` 包装层；`enabled:false` 不注入
-- **身份权限**：服务 user 空=继承 supd；服务级扩展 run_as 空=继承服务 user；全局扩展 run_as 空=继承 supd；服务严格/扩展宽松语义差异
+- **身份权限**：User 模式（user/run_as 按用户名）与 UID 模式（uid/run_as_uid 按数字）互斥；服务 user/uid 空=继承 supd；服务级扩展 run_as/run_as_uid 空=继承服务身份；全局扩展空=继承 supd；服务严格拒绝/扩展宽松警告语义差异；CredentialSpec 统一描述
 - **关机**：单一 `shutdown_grace_seconds` 预算贯穿 cron stop / 扩展等待 / GracefulShutdown / HTTP Stop
 - **PID1**：supd 自带 PR_SET_CHILD_SUBREAPER + SIGCHLD 回收；Docker 中禁用 `--no-pid1`；维护 PID 文件清理孤儿进程
 - **前端嵌入**：`//go:embed dist` 在 `web/embed.go`，改前端后必须 `pnpm build` + `go build` 才能生效
@@ -97,34 +97,20 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 |------|------|------|----------|
 | 2026-07-21 | Docker/tjs/发布/清理 | tjs 集成、v0.0.1 发布、工作区清理、仓库重建、readiness bug、user 字段接入 | [notes/2026-07-21.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-21.md) |
 | 2026-07-22 | env/Dropbear/规格偏差 | tjs 默认配置、Dropbear SSH、env.yaml 加载 BUG、3 项规格偏差修复、前端 env 修复、v0.0.6 | [notes/2026-07-22.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-22.md) |
-| 2026-07-23 | 审计/env/仪表盘/retry/热重载/访问日志/tjs工作流/qbittorrent | 全面审计（97.44 分）、env 编辑器统一、仪表盘服务资源汇总、扩展 retry_on_failure 补全、热重载 RestartEngine 不更新 BUG 修复、HTTP 访问日志改用 slog + --log-level CLI BUG 修复、v0.0.9；晚：v0.0.12 镜像 tjs 集成验证全通过、action 字段名（action 非 action_id）、tjs fetch arrayBuffer 大文件卡死坑点（改流式读取）、qbittorrent 服务部署成功（ready）；更晚：扩展列表/删除 bug 修复（discovery 过滤 .bak + 前端 timeout 校验）、下载日志 formatBytes 优化、代码审计 + 运行状态测试、v0.0.14；编辑扩展保存后 Discovery 缓存不刷新修复、v0.0.15 | [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) |
+| 2026-07-23 | 审计/env/仪表盘/retry/热重载/访问日志/tjs工作流/qbittorrent | 全面审计（97.44 分）、env 编辑器统一、仪表盘服务资源汇总、扩展 retry_on_failure 补全、热重载 RestartEngine 不更新 BUG 修复、HTTP 访问日志改用 slog + --log-level CLI BUG 修复、v0.0.9；晚：v0.0.12 镜像 tjs 集成验证全通过、action 字段名（action 非 action_id）、tjs fetch arrayBuffer 大文件卡死坑点（改流式读取）、qbittorrent 服务部署成功（ready）；更晚：扩展列表/删除 bug 修复（discovery 过滤 .bak + 前端 timeout 校验）、下载日志 formatBytes 优化、代码审计 + 运行状态测试、v0.0.14；编辑扩展保存后 Discovery 缓存不刷新修复、v0.0.15；时区设置 v0.0.16；服务/扩展执行身份 UID 模式（CredentialSpec + 互斥校验 + 前端模式切换）、v0.0.17 | [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-23 tjs 工作流验证 + qbittorrent 服务部署 + v0.0.12）
+## 八、最近会话重点（2026-07-23 服务/扩展执行身份 UID 模式 + v0.0.17）
 
-**tjs 工作流验证**（用户要求"自己把镜像拉下来核实"）：拉取 `ghcr.io/qq859952722/supd:v0.0.12`，确认 tjs musl 链接 + 运行时库（libffi/libstdc++/libgcc）+ tjs v26.6.0 + fetch/readFile/env API 全部正常。CI v0.0.12 已发布，tjs 工作流修复（Alpine 编译 + 缓存 key 加 alpine 标识）完全成功。
+**需求**：服务和扩展指定用户执行时，额外支持直接指定 uid/gid 执行权限（适用于用户不在 /etc/passwd 的场景，如 NAS 固定 uid 服务）。分析结论：User 模式（按用户名）与 UID 模式（按数字）**互斥**，同时指定则配置校验报错，语义清晰。
 
-**action_id 传递**（非代码 BUG）：`RunExtensionRequest` JSON 字段是 `action` 非 `action_id`，字段不匹配会回退到第一个 action。正确调用 `{"action":"install-latest"}`。
+**后端**：新增 `CredentialSpec` 结构体统一描述身份（User/Group/UID/GID/Groups）+ `ResolveSpec()` 解析函数；`ServiceConfig` 加 `uid`/`gid`/`groups`，`ExtensionMeta` 加 `run_as_uid`/`run_as_gid`/`run_as_groups`，各加 `ToCredentialSpec()` 方法；`validateService`/`ValidateExtension` 加互斥校验；`ResolveServiceCredential`/`ResolveRunAs` 重写为接收 CredentialSpec 参数，支持 UID 模式；`TriggerContext.ServiceUser` → `ServiceSpec`，dispatcher/API 层传递服务 CredentialSpec 实现服务级扩展身份继承。服务严格拒绝/扩展宽松警告语义差异保持。单元测试全通过。
 
-**tjs fetch 大文件坑点**（⚠️ 关键发现）：`resp.arrayBuffer()` 对大响应体（34MB）永久卡死直至超时。改用 `ReadableStream` 流式读取（`resp.body.getReader().read()`），v0.0.12 镜像内实测 34MB 仅 6.8s。已记入 skill 文档 `06_tjs_runtime_guide.md` 5.2/7.5 节。
+**前端**：3 处表单（ServiceForm/ExtensionDetail/Extensions/ServiceDetail 共 4 文件）统一加"执行身份"模式切换按钮（按用户名 / 按 UID）+ 条件字段 + 语义提示文案；序列化/解析/buildConfig 按 identityMode 分支；pnpm build ✅。
 
-**qbittorrent 服务**：service.yaml 直接启动 `./qbittorrent-nox --webui-port=8080`，readiness tcp_check 8080。NAS 到 GitHub 网络慢致 tjs 下载超时，改用本地下载（6.7s）+ 文件上传 API + 临时 bash 扩展 chmod。服务 `status: ready`，cpu 2.13% mem 26.44MB ✅。
+**规格说明书**：§2.2.13 重写补充 User/UID 模式/互斥/继承/实现/非 root 语义；meta.yaml 与 service.yaml 字段规范补充 uid/gid/groups 示例。
 
-**前端端口链接 host 修复**（v0.0.13）：用户报告远程访问时 HTTP 端口链接拼成 `127.0.0.1:port` 无法打开容器内服务。5 处硬编码 127.0.0.1 改为 `window.location.hostname`（http-probe/ServiceTable/ServiceCard/ServiceOverview/ServiceDetail.buildPortUrl）。commit `a794d39`。
+**验证**：go build/vet/test 全通过、pnpm build ✅。修复 `identity_test.go` 复合字面量方法调用语法错误。详见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) 第十一节。
 
-**版本**：v0.0.13（含 tjs 工作流修复 + 前端端口 host 修复），CI 构建中。通知用户更新镜像到 v0.0.13 + 重建容器时映射服务端口（如 qbittorrent `-p 8080:8080`）。
-
-> 同日早些时候还完成了：全面审计（97.44 分）、env 编辑器统一、仪表盘服务资源汇总、扩展 retry_on_failure 补全、热重载 RestartEngine BUG 修复、HTTP 访问日志 slog 改造 + --log-level CLI BUG 修复、v0.0.9。详情见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md)。
-
-**晚（扩展 bug 修复 + qbittorrent 下载日志优化）**：
-- **Bug 1 扩展不显示**：NAS 上 qbittorrent-updater 的 meta.yaml `timeout_seconds:3000` 超 1800 硬上限（§2.2.8）→ `ValidateExtension` 失败 → 扩展从列表消失（解析失败只记 Error 不加入 Extensions map）。数据恢复（改 300，watcher 自动 rescan 恢复显示）+ 前端 `ServiceDetail.tsx` 扩展表单 timeout 加 `max={1800}` + clamp 预防复发。
-- **Bug 2 删除扩展不生效**：`DeleteExtension` 把目录 rename `.bak.<ts>`（备份机制），但 discovery 三处扫描不过滤 `.bak` → `.bak` 里的 meta.yaml 又被当成扩展显示。修复：`discovery.go` 新增 `isBackupDir`（含 `.bak` 即跳过，合法名只含 `[a-z0-9-]` 不含点），`discoverServices`/`discoverGlobalExtensions`/`discoverServiceExtensions` 均加过滤。临时清理 NAS 上 4 个 `.bak` 目录（全局扩展 7→4）。
-- **下载日志优化**：run.js 新增 `formatBytes`，进度日志 `下载中 3.00 MB/34.17 MB`（原原始字节），上报间隔 3MB→1MB + 每秒上报，流式更直观。已部署 NAS。
-- 代码修复（discovery 过滤 .bak + 前端 timeout 校验）需发新版本镜像生效。`go build/vet/test` ✅、`pnpm build` ✅。详见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) 第七节。
-
-**代码审计 + 运行状态测试 + v0.0.14 发版**：新增代码审计（5 问题，4 FP + 1 minor 可接受，无 critical/major）。运行状态测试 T1-T16：单元测试 4 个 PASS、全量 go test PASS、NAS 扩展运行（check-update/install-latest）SUCCESS（验证 formatBytes 流式进度 `下载中 247.1 KB/34.16 MB` + Date.now() 每秒上报）、go build/vet/pnpm build PASS。NAS 服务级 meta.yaml timeout 3000→300 恢复扩展显示（state=active）。v0.0.14 commit + tag + push 触发 CI 构建 amd64/arm64 镜像。详见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) 第八节。
-
-**编辑扩展保存后缓存不刷新修复**（v0.0.15）：用户报告"编辑扩展保存后关闭再打开仍是旧值"。NAS 实测定位根因：PUT 写 meta.yaml 成功，但 GET 扩展详情返回 Discovery 缓存的旧 Meta（watcher rescan 有 500ms 防抖延迟，期间 GET 命中旧缓存）。修复：`UpdateExtension` 写文件后调用 `refreshDiscoveryMeta` 立即更新 Discovery 内存中对应 `ExtensionEntry.Meta`，GET 立即返回新值。新增 2 个单元测试（服务级 + 全局级）。详见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) 第九节。
-
-**时区设置**（v0.0.16）：日志时间戳默认 UTC（容器内未设 TZ）。修复：`run.go` runRun 开头设 `time.Local`（默认 Asia/Shanghai，`TZ` 环境变量可覆盖）+ Dockerfile 加 `ENV TZ=Asia/Shanghai`。本地验证默认 `+08:00`、`TZ=America/New_York` → `-04:00`。未加 config 字段（遵守 AGENTS.md 约束）。详见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) 第十节。
+> 同日早些时候还完成了：时区设置 v0.0.16（run.go 设 time.Local + Dockerfile ENV TZ）、编辑扩展缓存不刷新修复 v0.0.15、扩展列表/删除 bug + 下载日志优化 v0.0.14、tjs 工作流验证 + qbittorrent 服务部署 v0.0.12、全面审计 + retry/热重载/访问日志 v0.0.9。详情见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md)。

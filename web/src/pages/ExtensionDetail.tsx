@@ -303,7 +303,11 @@ interface ExtConfigForm {
   runtime: string
   entry: string
   timeout_seconds: number
+  identityMode: 'user' | 'uid'
   run_as: string
+  run_as_uid: string
+  run_as_gid: string
+  run_as_groups: string
   concurrency: string
   ui_show_logs: boolean
   ui_button_style: string
@@ -318,7 +322,9 @@ interface ExtConfigForm {
 function parseExtConfig(yaml: string): ExtConfigForm {
   const form: ExtConfigForm = {
     name: '', version: '', description: '', enabled: true,
-    runtime: '', entry: '', timeout_seconds: 600, run_as: '', concurrency: 'replace',
+    runtime: '', entry: '', timeout_seconds: 600,
+    identityMode: 'user', run_as: '', run_as_uid: '', run_as_gid: '', run_as_groups: '',
+    concurrency: 'replace',
     ui_show_logs: true, ui_button_style: 'default',
     actions: [],
     triggers_on_demand: false,
@@ -355,6 +361,8 @@ function parseExtConfig(yaml: string): ExtConfigForm {
           case 'entry': form.entry = String(parseYamlValue(value)); break
           case 'timeout_seconds': form.timeout_seconds = Number(parseYamlValue(value)) || 600; break
           case 'run_as': form.run_as = String(parseYamlValue(value)); break
+          case 'run_as_uid': form.run_as_uid = String(parseYamlValue(value)); form.identityMode = 'uid'; break
+          case 'run_as_gid': form.run_as_gid = String(parseYamlValue(value)); break
           case 'concurrency': form.concurrency = String(parseYamlValue(value)); break
         }
         i++
@@ -378,6 +386,18 @@ function parseExtConfig(yaml: string): ExtConfigForm {
             if (bt.startsWith('show_logs:')) form.ui_show_logs = parseYamlValue(bt.slice(bt.indexOf(':') + 1).trim()) === true
             if (bt.startsWith('button_style:')) form.ui_button_style = String(parseYamlValue(bt.slice(bt.indexOf(':') + 1).trim()))
           }
+        } else if (currentSection === 'run_as_groups') {
+          // §2.2.13: run_as_groups 为 gid 数组（如 - 27）
+          const gids: number[] = []
+          for (const bl of blockLines) {
+            const bt = bl.trim()
+            if (bt.startsWith('- ')) {
+              const v = bt.slice(2).trim()
+              const n = Number(parseYamlValue(v))
+              if (!isNaN(n) && n > 0) gids.push(n)
+            }
+          }
+          if (gids.length) form.run_as_groups = gids.join(', ')
         } else if (currentSection === 'actions') {
           // 解析 actions 列表
           let curAction: { id: string; label: string; button_style: string; args: string } | null = null
@@ -463,7 +483,20 @@ function serializeExtConfig(form: ExtConfigForm): string {
   if (form.runtime) lines.push(`runtime: ${yamlStr(form.runtime)}`)
   lines.push(`entry: ${yamlStr(form.entry)}`)
   if (form.timeout_seconds) lines.push(`timeout_seconds: ${form.timeout_seconds}`)
-  if (form.run_as) lines.push(`run_as: ${yamlStr(form.run_as)}`)
+  // §2.2.13: User 模式（run_as）与 UID 模式（run_as_uid/run_as_gid/run_as_groups）互斥，由 identityMode 决定
+  if (form.identityMode === 'uid') {
+    const uid = parseInt(form.run_as_uid, 10)
+    if (!isNaN(uid) && uid > 0) lines.push(`run_as_uid: ${uid}`)
+    const gid = parseInt(form.run_as_gid, 10)
+    if (!isNaN(gid) && gid > 0) lines.push(`run_as_gid: ${gid}`)
+    const groups = form.run_as_groups.split(',').map((s) => s.trim()).filter(Boolean).map(Number).filter((n) => !isNaN(n) && n > 0)
+    if (groups.length) {
+      lines.push('run_as_groups:')
+      for (const g of groups) lines.push(`  - ${g}`)
+    }
+  } else {
+    if (form.run_as) lines.push(`run_as: ${yamlStr(form.run_as)}`)
+  }
   if (form.concurrency) lines.push(`concurrency: ${yamlStr(form.concurrency)}`)
 
   // ui
@@ -722,10 +755,6 @@ function ConfigTab({ name, configPath }: { name: string; configPath?: string }) 
                   <Input type="number" value={form.timeout_seconds} onChange={(e) => updateForm({ timeout_seconds: Number(e.target.value) || 600 })} className="mt-1 h-8 text-sm" />
                 </div>
                 <div>
-                  <label className="text-xs text-[var(--color-text-tertiary)]">运行身份</label>
-                  <Input value={form.run_as} onChange={(e) => updateForm({ run_as: e.target.value })} className="mt-1 h-8 text-sm font-mono" placeholder="root" />
-                </div>
-                <div>
                   <label className="text-xs text-[var(--color-text-tertiary)]">并发策略</label>
                   <Select
                     className="mt-1 w-full"
@@ -739,6 +768,56 @@ function ConfigTab({ name, configPath }: { name: string; configPath?: string }) 
                     ]}
                   />
                 </div>
+              </div>
+              {/* §2.2.13: 执行身份 — User 模式与 UID 模式互斥，留空则服务级扩展继承服务身份/全局扩展继承 supd 启动用户 */}
+              <div className="mt-4 border-t border-[var(--color-border-secondary)] pt-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-[var(--color-text-tertiary)]">执行身份</label>
+                  <div className="flex gap-1">
+                    <button
+                      type="button"
+                      onClick={() => updateForm({ identityMode: 'user' })}
+                      className={`px-2.5 py-1 text-xs rounded border transition-colors ${form.identityMode === 'user' ? 'bg-[var(--color-brand-primary)] text-white border-[var(--color-brand-primary)]' : 'border-[var(--color-border-secondary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)]'}`}
+                    >
+                      按用户名（run_as）
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateForm({ identityMode: 'uid' })}
+                      className={`px-2.5 py-1 text-xs rounded border transition-colors ${form.identityMode === 'uid' ? 'bg-[var(--color-brand-primary)] text-white border-[var(--color-brand-primary)]' : 'border-[var(--color-border-secondary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)]'}`}
+                    >
+                      按 UID（run_as_uid）
+                    </button>
+                  </div>
+                </div>
+                <p className="mt-1 text-xs text-[var(--color-text-tertiary)]">
+                  {form.identityMode === 'uid'
+                    ? '直接指定数字 uid/gid，不依赖 /etc/passwd（适用于 NAS 固定 uid 服务）；留空则继承 supd 启动用户'
+                    : '通过用户名查找（需存在于 /etc/passwd）；服务级扩展留空则继承服务身份，全局扩展留空则继承 supd 启动用户'}
+                </p>
+                {form.identityMode === 'user' ? (
+                  <div className="mt-2 grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-xs text-[var(--color-text-tertiary)]">运行用户（run_as）</label>
+                      <Input value={form.run_as} onChange={(e) => updateForm({ run_as: e.target.value })} className="mt-1 h-8 text-sm font-mono" placeholder="root" />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-2 grid grid-cols-3 gap-4">
+                    <div>
+                      <label className="text-xs text-[var(--color-text-tertiary)]">UID</label>
+                      <Input type="number" value={form.run_as_uid} onChange={(e) => updateForm({ run_as_uid: e.target.value })} className="mt-1 h-8 text-sm font-mono" placeholder="1000" />
+                    </div>
+                    <div>
+                      <label className="text-xs text-[var(--color-text-tertiary)]">GID（留空=UID）</label>
+                      <Input type="number" value={form.run_as_gid} onChange={(e) => updateForm({ run_as_gid: e.target.value })} className="mt-1 h-8 text-sm font-mono" placeholder="1000" />
+                    </div>
+                    <div>
+                      <label className="text-xs text-[var(--color-text-tertiary)]">补充组（逗号分隔）</label>
+                      <Input value={form.run_as_groups} onChange={(e) => updateForm({ run_as_groups: e.target.value })} className="mt-1 h-8 text-sm font-mono" placeholder="27, 100" />
+                    </div>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
