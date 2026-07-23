@@ -273,18 +273,44 @@ async function doInstall() {
 ### 5.2 文件下载与保存（fetch + tjs.writeFile）
 
 ```javascript
+// ⚠️ 重要：大文件（>10MB）必须用流式读取，resp.arrayBuffer() 会卡死！
+// 详见 7.5 节「fetch 大文件 arrayBuffer 卡死」
 async function downloadFile(url, destPath) {
   console.log(`下载: ${url}`);
-  const resp = await fetch(url);
+  const resp = await fetch(url, {
+    headers: { 'User-Agent': 'supd-tjs-ext' },
+  });
   if (!resp.ok) {
     throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
   }
-  const buffer = new Uint8Array(await resp.arrayBuffer());
+
+  // ✅ 流式读取：resp.body.getReader() 分块接收，稳定可靠
+  const reader = resp.body.getReader();
+  const chunks = [];
+  let received = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+  }
+  // 合并 chunks（内存占用 = 文件大小，对几十 MB 可接受）
+  const buffer = new Uint8Array(received);
+  let pos = 0;
+  for (const chunk of chunks) {
+    buffer.set(chunk, pos);
+    pos += chunk.length;
+  }
+
   await tjs.writeFile(destPath, buffer);
   console.log(`已保存到 ${destPath} (${buffer.length} bytes)`);
   return buffer.length;
 }
 ```
+
+> **❌ 错误写法（大文件会卡死）**：`const buffer = new Uint8Array(await resp.arrayBuffer());`
+> tjs 的 `resp.arrayBuffer()` 对大响应体（实测 34MB 即触发）会永久挂起直至扩展超时。
+> 小响应（JSON API、几 KB 文本）用 `await resp.json()` / `await resp.text()` 没问题。
 
 ### 5.3 执行外部命令（tjs.spawn）
 
@@ -393,6 +419,34 @@ const text = decoder.decode(uint8array);
 **症状**：`fetch` HTTPS 请求报证书错误。
 
 **解决**：确保容器安装了 `ca-certificates`（Dockerfile 已含）。自定义 CA 用 `--tls-ca` 或 `TJS_CA_BUNDLE` 环境变量。
+
+### 7.5 fetch 大文件 arrayBuffer 卡死（⚠️ 高频坑）
+
+**症状**：用 `await resp.arrayBuffer()` 读取大响应体（实测 34MB 即触发）时，扩展永久挂起，直至 `timeout_seconds` 超时。日志停在 `arrayBuffer()` 调用前，无任何错误输出，状态变为 `timeout`。
+
+**根因**：tjs 的 `resp.arrayBuffer()` 对大响应体存在阻塞/死锁问题，会卡住事件循环。
+
+**解决**：改用 `ReadableStream` 流式分块读取，收集后合并：
+
+```javascript
+const reader = resp.body.getReader();
+const chunks = [];
+let received = 0;
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+  chunks.push(value);
+  received += value.length;
+}
+const buffer = new Uint8Array(received);
+let pos = 0;
+for (const chunk of chunks) { buffer.set(chunk, pos); pos += chunk.length; }
+// buffer 即为完整文件内容，可用 tjs.writeFile 写入
+```
+
+流式读取实测 34MB 仅需 ~7 秒，稳定可靠（已在 v0.0.12 镜像验证）。
+
+**注意**：小响应（JSON API、几 KB 文本）用 `await resp.json()` / `await resp.text()` / `await resp.arrayBuffer()` 均正常，问题仅出现在大响应体（>10MB 量级）。
 
 ---
 

@@ -89,8 +89,33 @@ async function downloadAndInstall(downloadUrl, expectedSize) {
     throw new Error(`下载失败 HTTP ${resp.status}: ${resp.statusText}`);
   }
 
+  // 流式读取响应体：resp.arrayBuffer() 对大文件（>10MB）会卡死，
+  // 必须用 ReadableStream 分块读取（详见 references/06_tjs_runtime_guide.md 坑点）
+  const reader = resp.body.getReader();
+  const chunks = [];
+  let received = 0;
+  let lastReport = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+    // 每接收 ~3MB 上报一次进度（30% → 60%）
+    if (expectedSize && received - lastReport >= 3 * 1024 * 1024) {
+      const pct = 30 + Math.floor((received / expectedSize) * 30);
+      console.log(`::progress:: ${pct} "下载中 ${received}/${expectedSize}"`);
+      lastReport = received;
+    }
+  }
+  // 合并 chunks 为单个 Uint8Array
+  const buffer = new Uint8Array(received);
+  let pos = 0;
+  for (const chunk of chunks) {
+    buffer.set(chunk, pos);
+    pos += chunk.length;
+  }
+
   console.log('::progress:: 60 "下载完成，写入文件"');
-  const buffer = new Uint8Array(await resp.arrayBuffer());
   console.log(`下载大小: ${buffer.length} bytes (${(buffer.length / 1024 / 1024).toFixed(2)} MB)`);
 
   if (expectedSize && Math.abs(buffer.length - expectedSize) > 1024) {
