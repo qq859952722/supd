@@ -253,8 +253,11 @@ jobs:
           build-args: |
             VERSION=${{ needs.meta.outputs.version }}
             BUILD_TIME=${{ github.run_id }}
-          cache-from: type=gha,scope=release-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=release-${{ matrix.arch }}
+          # 使用 registry 缓存替代 GHA 缓存（GHA 缓存有 10GB 总量限制，
+          # mode=max 在双架构下易触发 "error writing layer blob: not_found"）
+          # registry 缓存存储在 GHCR 的 buildcache-<arch> tag 中，无大小限制，更可靠
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache-${{ matrix.arch }}
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache-${{ matrix.arch }},mode=max
 
   # ────────────────────────────────────────────────────────────
   # Job 4: 创建 manifest并自动生成 GitHub Release Notes
