@@ -314,21 +314,20 @@ async function downloadFile(url, destPath) {
 
 ### 5.3 执行外部命令（tjs.spawn）
 
+> 完整可复用的 `runCmd()` / `readStream()` 辅助函数见 §8.3「通用辅助函数」。以下为简要说明：
+
 ```javascript
-async function runCommand(args, cwd) {
-  const proc = await tjs.spawn(args, {
-    cwd: cwd || tjs.cwd,
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-  // 读取输出
-  const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
-  // ... 读取 proc.stdout / proc.stderr ...
-  const status = await proc.wait();
-  return status;
-}
+// tjs.spawn 启动子进程，stdout/stderr 为 ReadableStream，需流式读取
+const proc = await tjs.spawn(['tar', '-xf', path, '-C', dir], {
+  stdout: 'pipe',
+  stderr: 'pipe',
+});
+// 读取输出：用 readStream() 辅助函数（见 §8.3）流式接收
+const stdout = await readStream(proc.stdout);
+const status = await proc.wait();  // 等待退出，返回 {exitCode}
 ```
+
+> **注意**：`tjs.spawn` 的 `stdout`/`stderr` 是 `ReadableStream` 对象，**不能直接当字符串用**，必须通过 `getReader()` 流式读取（见 §8.3 `readStream()`）。
 
 ### 5.4 读取 action 参数
 
@@ -450,7 +449,205 @@ for (const chunk of chunks) { buffer.set(chunk, pos); pos += chunk.length; }
 
 ---
 
-## 8. 完整示例：on_demand tjs 扩展
+## 8. 外部命令依赖管理（减少外部依赖）
+
+tjs 扩展应优先使用内置 API，仅在「无等价替代」时才调用外部命令。下表基于实际开发经验整理。
+
+### 8.1 可用 tjs 内置 API 替代的 shell 工具
+
+| shell 工具 | tjs 替代方案 | 说明 |
+|---|---|---|
+| `curl` / `wget` | `fetch()` | 全局函数，支持 headers/stream |
+| `jq` | `JSON.parse()` / `JSON.stringify()` | 原生 JSON 处理 |
+| `cat` | `await tjs.readFile(path)` | 返回 `Uint8Array`，用 `TextDecoder` 转字符串 |
+| `rm` / `rm -r` | `await tjs.remove(path)` | 自动递归删除目录 |
+| `mkdir -p` | `await tjs.makeDir(path)` | 递归创建 |
+| `mv` | `await tjs.rename(old, new)` | 重命名/移动 |
+| `chmod` | `await tjs.chmod(path, 0o755)` | mode 为数字 |
+| `test -f` / `test -d` | `await tjs.stat(path)` try/catch | 抛错即不存在 |
+| `find <dir> -name <pat>` | `findFile()` 见 §8.3 | 递归 `tjs.readDir` |
+| `cp -r` | `copyDir()` 见 §8.3 | 递归 `tjs.readDir` + `tjs.copyFile` |
+| `echo > file` | `await tjs.writeFile(path, data)` | data 为 string 或 Uint8Array |
+
+### 8.2 无 tjs 等价替代、必须保留的外部工具
+
+| 工具 | 原因 | 备注 |
+|---|---|---|
+| `tar` | `DecompressionStream` 仅支持 gzip/deflate，**不支持 tar 多文件归档格式** | .tar.gz/.tar.xz 解压必须保留 |
+| `unzip` | `DecompressionStream` **不支持 ZIP 归档格式**（ZIP 有独立文件索引） | .zip 解压必须保留 |
+| `chown -R` | `tjs.chown` 存在但**不支持递归**，需手动遍历 | 整目录改属主建议保留 shell；少量文件可手动递归 |
+| `uname -m` | `tjs.platform`/`tjs.system` 无可靠的 CPU 架构字段 | 获取架构信息需保留 |
+
+> **原则**：调用外部命令时统一封装 `runCmd()` 辅助函数（见 §8.3），集中管理 `tjs.spawn` + 流读取 + 退出码，避免散落各处。
+
+### 8.3 通用辅助函数（可直接复用）
+
+```javascript
+// --- 1. 读取 ReadableStream 为字符串（用于读取子进程 stdout/stderr） ---
+async function readStream(stream) {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let result = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    result += decoder.decode(value, { stream: true });
+  }
+  result += decoder.decode();
+  return result;
+}
+
+// --- 2. 执行外部命令（tjs 无法替代的场景：tar/unzip/chown 等） ---
+async function runCmd(args, options = {}) {
+  const proc = await tjs.spawn(args, {
+    stdout: 'pipe',
+    stderr: 'pipe',
+    ...options,
+  });
+  const stdout = await readStream(proc.stdout);
+  const stderr = await readStream(proc.stderr);
+  const status = await proc.wait();
+  return { stdout, stderr, exitCode: status.exitCode ?? 0 };
+}
+
+// --- 3. 递归查找文件（替代 find 命令） ---
+// pattern 为 RegExp，返回首个匹配的完整路径，未找到返回 null
+async function findFile(dir, pattern) {
+  let entries;
+  try {
+    entries = await tjs.readDir(dir);
+  } catch (e) {
+    return null; // 非目录或不存在
+  }
+  for (const entry of entries) {
+    const name = typeof entry === 'string' ? entry : entry.name;
+    const fullPath = `${dir}/${name}`;
+    if (pattern.test(name)) return fullPath;
+    const found = await findFile(fullPath, pattern); // 递归子目录
+    if (found) return found;
+  }
+  return null;
+}
+
+// --- 4. 递归复制目录（替代 cp -r） ---
+async function copyDir(src, dst) {
+  await tjs.makeDir(dst);
+  const entries = await tjs.readDir(src);
+  for (const entry of entries) {
+    const name = typeof entry === 'string' ? entry : entry.name;
+    const srcPath = `${src}/${name}`;
+    const dstPath = `${dst}/${name}`;
+    let isDir = false;
+    try { (await tjs.readDir(srcPath)); isDir = true; } catch (e) {}
+    if (isDir) {
+      await copyDir(srcPath, dstPath);
+    } else {
+      await tjs.copyFile(srcPath, dstPath);
+    }
+  }
+}
+
+// --- 5. 流式下载文件（避免 arrayBuffer 卡死，>10MB 必须用此方式） ---
+async function downloadFile(url, destPath) {
+  const resp = await fetch(url, { headers: { 'User-Agent': 'supd-tjs-ext' } });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+  const reader = resp.body.getReader();
+  const chunks = [];
+  let received = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+  }
+  const buffer = new Uint8Array(received);
+  let pos = 0;
+  for (const chunk of chunks) { buffer.set(chunk, pos); pos += chunk.length; }
+  await tjs.writeFile(destPath, buffer);
+  return received;
+}
+```
+
+### 8.4 tjs.chown 不支持递归的应对方案
+
+当需要对整棵目录树改属主时，两种方案：
+
+- **方案 A（推荐，整目录）**：调用 shell `chown -R`，一行命令搞定：
+  ```javascript
+  await runCmd(['chown', '-R', 'nobody:nobody', serviceDir]);
+  ```
+- **方案 B（少量文件/无 shell 环境）**：手动递归 `tjs.chown`：
+  ```javascript
+  async function chownRecursive(path, uid, gid) {
+    try { await tjs.chown(path, uid, gid); } catch (e) {}
+    let entries;
+    try { entries = await tjs.readDir(path); } catch (e) { return; }
+    for (const entry of entries) {
+      const name = typeof entry === 'string' ? entry : entry.name;
+      await chownRecursive(`${path}/${name}`, uid, gid);
+    }
+  }
+  ```
+
+---
+
+## 9. 服务与扩展的权限配置最佳实践
+
+针对「服务降权运行 + 扩展按需提权」的常见安全模式，supd 提供两种身份配置方式（详见 `02_extension_spec.md` §2）：
+
+### 9.1 典型模式：服务 nobody + 扩展 root
+
+适用于「服务面向网络、扩展需管理文件权限」的场景（如下载器、媒体服务）：
+
+```yaml
+# service.yaml — 服务以非特权用户运行
+name: my-service
+user: nobody          # 服务进程降权为 nobody
+command: [./my-daemon]
+```
+
+```yaml
+# meta.yaml — 扩展以 root 运行以便 chown/下载安装
+name: my-updater
+runtime: tjs
+run_as: root          # 扩展提权，可执行 chown/写入服务目录
+actions:
+  - id: install
+```
+
+### 9.2 权限协调要点
+
+1. **服务 `user` 字段**：服务以指定用户身份启动，其写入的文件属主为该用户（如 `nobody`）。
+2. **扩展 `run_as: root`**：扩展需要修改服务目录文件属主、安装二进制等操作时，必须提权为 root。
+3. **扩展安装后 chown**：扩展以 root 下载/创建文件后，应 `chown -R` 为服务用户，确保服务进程能读写：
+   ```javascript
+   await runCmd(['chown', '-R', 'nobody:nobody', serviceDir]);
+   ```
+4. **服务级扩展继承规则**：`run_as` 为空时继承所属服务身份；显式指定 `run_as` 则覆盖继承。
+
+### 9.3 服务直接启动二进制（避免 start.sh 包装）
+
+当二进制自身支持指定配置目录时，**直接在 `command` 中调用二进制**，无需 `start.sh` 包装脚本：
+
+```yaml
+# ✅ 推荐：直接启动二进制，-g 指定配置目录为当前目录
+command:
+  - ./my-daemon
+  - -f          # 前台运行（supd 管理生命周期，禁止 daemonize）
+  - -g
+  - .           # 配置目录为服务工作目录
+```
+
+避免的 `start.sh` 反模式：
+- ❌ 用 shell 脚本下载/安装二进制（应由扩展负责更新）
+- ❌ 用 shell 脚本设置目录权限（应由扩展 `run_as: root` 负责）
+- ❌ 在脚本中 daemonize 服务（supd 通过 PID 管理生命周期）
+
+> 二进制版本更新、目录初始化等「一次性/按需」操作交给 `on_demand` 扩展完成，服务 `command` 只负责启动常驻进程。
+
+---
+
+## 10. 完整示例：on_demand tjs 扩展
 
 见 `examples/09-tjs-ext/`（如存在）或本节内联示例：
 

@@ -58,7 +58,7 @@ def check_executable(filepath):
 
 
 def validate_env_yaml(target_dir):
-    """校验 env.yaml 是否包含强制的 env: 包装层"""
+    """校验 env.yaml 是否包含强制的 env: 包装层，以及是否使用了简单键值对格式（变量不生效）"""
     env_yaml = target_dir / "env.yaml"
     if not env_yaml.exists():
         return
@@ -68,6 +68,18 @@ def validate_env_yaml(target_dir):
         log_fail(f"{target_dir.name}/env.yaml 缺失强制的 'env:' 顶层包装，环境变量将被框架静默忽略！")
     else:
         log_pass(f"{target_dir.name}/env.yaml 正确包含 'env:' 包装层")
+    
+    # 检测简单键值对格式：KEY: scalar_value（非结构体），value 字段将为空，变量不生效
+    # 正确格式：KEY:\n    value: "..."  或  KEY:\n  value: ...
+    # 错误格式：KEY: /some/path  或  KEY: 123  或  KEY: "string"
+    # 注意：使用 [ \t]+ 而非 \s+ 避免跨行匹配（\s 会匹配换行符）
+    simple_inline_pattern = re.compile(
+        r"^\s{2}([A-Za-z_][A-Za-z0-9_]*):[ \t]+\S", re.MULTILINE
+    )
+    inline_matches = simple_inline_pattern.findall(content)
+    if inline_matches:
+        for key in inline_matches:
+            log_fail(f"{target_dir.name}/env.yaml 变量 '{key}' 使用内联值格式（非结构体），Value 字段为空，变量不会注入子进程！正确格式：'{key}:' 后换行缩进写 'value: ...'")
 
 
 def validate_service(service_dir):

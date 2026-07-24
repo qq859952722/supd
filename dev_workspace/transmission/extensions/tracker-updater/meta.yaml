@@ -1,0 +1,21 @@
+name: tracker-updater
+version: "1.0.0"
+description: "定时通过 Transmission RPC 更新所有种子的 Tracker 列表（数据源：adysec/tracker）"
+runtime: tjs
+entry: run.js
+timeout_seconds: 120
+concurrency: serialize
+run_as: root
+ui:
+  show_logs: true
+  button_style: default
+  icon: globe
+actions:
+  - id: update-trackers
+    label: "更新 Tracker"
+    button_style: primary
+triggers:
+  on_demand: true
+  on_schedule:
+    - cron: "0 3 * * *"
+      action: update-trackers

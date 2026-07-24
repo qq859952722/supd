@@ -27,6 +27,31 @@ env:
     enabled: false       # 禁用该变量注入
 ```
 
+### ⚠️ 常见错误：简单键值对格式（变量不生效）
+
+```yaml
+# ❌ 错误写法 — Value 字段为空，变量不会注入子进程
+env:
+  TRANSMISSION_HOME: /path/to/config
+  API_KEY: sk-1234567890
+
+# ✅ 正确写法 — 必须使用结构体格式，值写在 value: 字段下
+env:
+  TRANSMISSION_HOME:
+    value: /path/to/config
+  API_KEY:
+    value: sk-1234567890
+```
+
+**原因**：supd 内部将每个变量解析为 `EnvVar` 结构体（含 `value`/`enabled`/`hint` 字段），简单键值对格式会导致 `value` 字段为空字符串，`ToInjectEnv` 返回空值或注入失败。此问题**无报错、静默失败**，极易踩坑。
+
+### 服务通过 env.yaml 配置运行时参数的最佳实践
+
+1. **服务环境变量放在 `env.yaml`，不要通过命令行传递**（如 `/usr/bin/env` 包装），这是 supd 的标准机制
+2. **修改 env.yaml 后需重启服务生效**（热重载不更新已运行进程的环境变量）
+3. **路径类环境变量使用绝对路径**：相对路径在不同用户（如 nobody）下可能解析失败
+4. **扩展进程不继承服务的 env.yaml 变量**：扩展有自己的 env.yaml 层（4 层合并中的第 4 层）
+
 ---
 
 ## 2. 3 层环境变量合并规则
