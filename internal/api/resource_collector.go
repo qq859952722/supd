@@ -203,6 +203,19 @@ func processToInfo(p *process.Process) (*ProcessInfo, error) {
 	username, _ := p.Username()
 	cpuPercent, _ := p.CPUPercent()
 
+	// 获取 UID/GID（Uids/Gids 返回 [real, effective, saved, fs]，取 real 即第一个）
+	uid := 0
+	if uids, err := p.Uids(); err == nil && len(uids) > 0 {
+		uid = int(uids[0])
+	}
+	gid := 0
+	if gids, err := p.Gids(); err == nil && len(gids) > 0 {
+		gid = int(gids[0])
+	}
+
+	// 获取组名：通过 UID 反查 /etc/passwd 获取 GID，再查 /etc/group
+	groupName := lookupGroupByGID(gid)
+
 	memMB := 0.0
 	if memInfo, err := p.MemoryInfo(); err == nil && memInfo != nil {
 		memMB = float64(memInfo.RSS) / 1024 / 1024
@@ -230,6 +243,9 @@ func processToInfo(p *process.Process) (*ProcessInfo, error) {
 		PID:         pid,
 		PPID:        ppid,
 		User:        username,
+		UID:         uid,
+		Group:       groupName,
+		GID:         gid,
 		CPUPercent:  cpuPercent,
 		MemoryMB:    memMB,
 		Status:      status,
@@ -331,9 +347,16 @@ func readProcessInfoFromProc(pid int) (*ProcessInfo, error) {
 		}
 	}
 
+	// 从 /proc/<pid>/status 获取 UID/GID 和用户名/组名
+	uid, gid, username, groupName := readProcessIdentityFromStatus(pid)
+
 	return &ProcessInfo{
 		PID:       pid,
 		PPID:      ppid,
+		User:      username,
+		UID:       uid,
+		Group:     groupName,
+		GID:       gid,
 		Status:    status,
 		Command:   strings.TrimSpace(cmdline),
 		StartedAt: startedAt,
@@ -354,6 +377,130 @@ func readBootTime() int64 {
 		}
 	}
 	return 0
+}
+
+// uidNameCache 缓存 UID→用户名 和 GID→组名 的映射
+// 容器环境中 /etc/passwd 和 /etc/group 不会运行时变化，读一次后终生有效
+var (
+	uidNameCache sync.Map // map[int]string
+	gidNameCache sync.Map // map[int]string
+)
+
+// lookupGroupByGID 通过 GID 查找组名
+// 读取 /etc/group 文件，格式: group_name:x:gid:members
+// 结果缓存于 gidNameCache，文件不会运行时变化
+func lookupGroupByGID(gid int) string {
+	if gid == 0 {
+		return "root"
+	}
+	if cached, ok := gidNameCache.Load(gid); ok {
+		return cached.(string)
+	}
+
+	name := readEtcGroupByGID(gid)
+	if name != "" {
+		gidNameCache.Store(gid, name)
+	}
+	return name
+}
+
+// readEtcGroupByGID 从 /etc/group 读取 GID→组名 映射
+func readEtcGroupByGID(gid int) string {
+	data, err := readFileWithTimeout("/etc/group")
+	if err != nil {
+		return ""
+	}
+	gidStr := strconv.Itoa(gid)
+	for _, line := range strings.Split(string(data), "\n") {
+		parts := strings.SplitN(line, ":", 4)
+		if len(parts) >= 3 && parts[2] == gidStr {
+			return parts[0]
+		}
+	}
+	return ""
+}
+
+// lookupUserByUID 通过 UID 查找用户名
+// 读取 /etc/passwd 文件，格式: username:x:uid:gid:gecos:home:shell
+// 结果缓存于 uidNameCache，文件不会运行时变化
+func lookupUserByUID(uid int) string {
+	if uid == 0 {
+		return "root"
+	}
+	if cached, ok := uidNameCache.Load(uid); ok {
+		return cached.(string)
+	}
+
+	name := readEtcPasswdByUID(uid)
+	if name != "" {
+		uidNameCache.Store(uid, name)
+	}
+	return name
+}
+
+// readEtcPasswdByUID 从 /etc/passwd 读取 UID→用户名 映射
+func readEtcPasswdByUID(uid int) string {
+	data, err := readFileWithTimeout("/etc/passwd")
+	if err != nil {
+		return ""
+	}
+	uidStr := strconv.Itoa(uid)
+	for _, line := range strings.Split(string(data), "\n") {
+		parts := strings.SplitN(line, ":", 7)
+		if len(parts) >= 3 && parts[2] == uidStr {
+			return parts[0]
+		}
+	}
+	return ""
+}
+
+// readUIDGIDFromStatus 从 /proc/<pid>/status 读取进程的 real UID 和 real GID
+// /proc/<pid>/status 不受 Yama ptrace_scope 限制
+// 返回 uid, gid，读取失败时返回 -1, -1
+func readUIDGIDFromStatus(pid int) (int, int) {
+	statusPath := filepath.Join("/proc", strconv.Itoa(pid), "status")
+	data, err := readFileWithTimeout(statusPath)
+	if err != nil {
+		return -1, -1
+	}
+
+	uid, gid := -1, -1
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "Uid:") {
+			fields := strings.Fields(strings.TrimPrefix(line, "Uid:"))
+			if len(fields) >= 1 {
+				if v, err := strconv.Atoi(fields[0]); err == nil {
+					uid = v
+				}
+			}
+		} else if strings.HasPrefix(line, "Gid:") {
+			fields := strings.Fields(strings.TrimPrefix(line, "Gid:"))
+			if len(fields) >= 1 {
+				if v, err := strconv.Atoi(fields[0]); err == nil {
+					gid = v
+				}
+			}
+		}
+	}
+
+	return uid, gid
+}
+
+// readProcessIdentityFromStatus 从 /proc/<pid>/status 读取进程完整身份信息
+// 返回 uid, gid, username, groupName
+func readProcessIdentityFromStatus(pid int) (int, int, string, string) {
+	uid, gid := readUIDGIDFromStatus(pid)
+	if uid < 0 {
+		uid = 0
+	}
+	if gid < 0 {
+		gid = 0
+	}
+
+	username := lookupUserByUID(uid)
+	groupName := lookupGroupByGID(gid)
+
+	return uid, gid, username, groupName
 }
 
 // collectProcessTreeByCommand 通过命令行匹配 /proc 查找进程（PID命名空间降级方案）

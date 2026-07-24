@@ -7,11 +7,15 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/Table'
 import { Button } from '@/components/ui/Button'
-import { RefreshCw, Cpu, MemoryStick, Clock } from 'lucide-react'
+import { RefreshCw, Cpu, MemoryStick, Clock, User } from 'lucide-react'
 
 interface ProcessInfo {
   pid: number
   ppid: number
+  user?: string
+  uid?: number
+  group?: string
+  gid?: number
   command: string
   cpu_percent: number
   memory_mb: number
@@ -65,6 +69,27 @@ function formatBytes(mb: number): string {
   return `${(mb / 1024).toFixed(2)}GB`
 }
 
+// 格式化进程用户/组信息
+// 显示格式：username(uid) group(gid)
+// 如：root(0) root(0)、nobody(65534) nobody(65534)
+function formatUserGroup(proc: ProcessInfo): string {
+  const userName = proc.user || ''
+  const uid = proc.uid != null ? proc.uid : ''
+  const groupName = proc.group || ''
+  const gid = proc.gid != null ? proc.gid : ''
+
+  if (!userName && uid === '' && !groupName && gid === '') return '-'
+
+  const parts: string[] = []
+  if (userName || uid !== '') {
+    parts.push(userName ? `${userName}(${uid})` : `${uid}`)
+  }
+  if (groupName || gid !== '') {
+    parts.push(groupName ? `${groupName}(${gid})` : `${gid}`)
+  }
+  return parts.join(' ')
+}
+
 export function ProcessTree({ serviceName }: { serviceName: string }) {
   const [isAutoRefresh, setIsAutoRefresh] = useState(true)
 
@@ -109,6 +134,7 @@ export function ProcessTree({ serviceName }: { serviceName: string }) {
               <TableRow>
                 <TableHead>PID</TableHead>
                 <TableHead>PPID</TableHead>
+                <TableHead><User className="h-3.5 w-3.5 inline" /> 用户</TableHead>
                 <TableHead>命令</TableHead>
                 <TableHead>状态</TableHead>
                 <TableHead><Cpu className="h-3.5 w-3.5 inline" /> CPU</TableHead>
@@ -122,10 +148,15 @@ export function ProcessTree({ serviceName }: { serviceName: string }) {
                 const statusInfo = translateStatus(stateVal)
                 // started_at 为毫秒时间戳（与 gopsutil CreateTime 一致）
                 const startTime = proc.started_at ? new Date(proc.started_at) : null
+                // 格式化用户/组信息：username(uid) group(gid)
+                const userDisplay = formatUserGroup(proc)
                 return (
                   <TableRow key={proc.pid}>
                     <TableCell className="font-mono text-sm">{proc.pid}</TableCell>
                     <TableCell className="font-mono text-sm text-[var(--color-text-tertiary)]">{proc.ppid}</TableCell>
+                    <TableCell className="text-sm" title={userDisplay}>
+                      {userDisplay}
+                    </TableCell>
                     <TableCell className="font-mono text-sm max-w-[200px] truncate" title={proc.command}>
                       {proc.command.split('/').pop() || proc.command}
                     </TableCell>

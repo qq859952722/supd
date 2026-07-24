@@ -10,7 +10,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：17 类审计评分 **97.44 / 100（⭐ 优秀）**；913+ 单元测试通过；零竞态；staticcheck/go vet 零警告
-- **当前版本**：v0.0.18（版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.0.19（版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -98,15 +98,14 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-21 | Docker/tjs/发布/清理 | tjs 集成、v0.0.1 发布、工作区清理、仓库重建、readiness bug、user 字段接入 | [notes/2026-07-21.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-21.md) |
 | 2026-07-22 | env/Dropbear/规格偏差 | tjs 默认配置、Dropbear SSH、env.yaml 加载 BUG、3 项规格偏差修复、前端 env 修复、v0.0.6 | [notes/2026-07-22.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-22.md) |
 | 2026-07-23 | 审计/env/仪表盘/retry/热重载/访问日志/tjs工作流/qbittorrent | 全面审计（97.44 分）、env 编辑器统一、仪表盘服务资源汇总、扩展 retry_on_failure 补全、热重载 RestartEngine 不更新 BUG 修复、HTTP 访问日志改用 slog + --log-level CLI BUG 修复、v0.0.9；晚：v0.0.12 镜像 tjs 集成验证全通过、action 字段名（action 非 action_id）、tjs fetch arrayBuffer 大文件卡死坑点（改流式读取）、qbittorrent 服务部署成功（ready）；更晚：扩展列表/删除 bug 修复（discovery 过滤 .bak + 前端 timeout 校验）、下载日志 formatBytes 优化、代码审计 + 运行状态测试、v0.0.14；编辑扩展保存后 Discovery 缓存不刷新修复、v0.0.15；时区设置 v0.0.16；服务/扩展执行身份 UID 模式（CredentialSpec + 互斥校验 + 前端模式切换）、v0.0.17；UID 模式代码审计 + 负数校验修复 + 9 项运行状态测试全通过、v0.0.18；CI 缓存 GHA→registry 修复（layer blob not_found）+ skill 文档 UID 模式更新 + v0.0.18 重发 | [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) |
+| 2026-07-24 | Transmission 服务/扩展开发 + Skill 文档更新 + 端口探测 BUG 修复 | transmission：直接二进制启动+user:nobody+两个tjs扩展；skill §8/§9更新；端口探测Yama LSM降级修复（UID匹配） | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-23 CI 缓存修复 + Skill 文档更新 + v0.0.18 重发）
+## 八、最近会话重点（2026-07-24 端口探测修复 + 进程 UID/GID 展示）
 
-**CI 缓存修复**：v0.0.18 发布时 Docker 构建 job 失败（`error writing layer blob: not_found`），根因为 GHA 缓存 10GB 限制 + `mode=max` 双架构写入。修复：`release.yml`/`build-push.yml` 缓存从 `type=gha` 改为 `type=registry`（存储到 GHCR `buildcache-<arch>` tag，无大小限制）。
+**端口探测 BUG 修复**：Transmission 服务（`user: nobody`，UID 65534）端口未显示，根因是 Linux Yama LSM `ptrace_scope=1` 阻止 root 进程 `readlink /proc/<pid>/fd/*` 读取非 root 进程的 fd symlink → inode 匹配方案全部 Permission denied → 返回空端口。修复：新增 UID 降级方案，当 `collectSocketInodes` 返回空时，自动从 `/proc/<pid>/status` 读取进程 UID，在 `/proc/net/{tcp,tcp6,udp,udp6}` 中按 `uid` 字段匹配端口。
 
-**Skill 文档更新**：根据 UID 模式全面更新 skill（01/02 规范文档补字段+身份配置说明+非 root 语义、03 矩阵补热重载规则、validate_dev.py 补互斥+负数校验、SKILL.md 需求阶段说明）。补充跟踪 04/05/scripts（此前因 `.trae/` 在 .gitignore 中未入 git）。
+**进程 UID/GID 展示**：`ProcessInfo` 新增 `uid`/`gid`/`group` 字段，`processToInfo` 通过 gopsutil `Uids()`/`Gids()` 获取，`readProcessInfoFromProc` 通过 `/proc/<pid>/status` 获取，前端 ProcessTree 新增「用户」列显示 `username(uid) group(gid)`。
 
-**v0.0.18 重发**：推送 CI 修复 + skill 更新两个提交，重打 v0.0.18 tag 触发 release workflow。详见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) 第十二节。
-
-> 上一轮（v0.0.18 首次）：UID 模式代码审计 + 负数校验修复 + 9 项运行状态测试。更早：v0.0.17 UID 模式、v0.0.16 时区、v0.0.15 缓存刷新、v0.0.14 扩展 bug、v0.0.12 tjs+qbittorrent、v0.0.9 全面审计+retry/热重载/访问日志。详情见 [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md)。
+> 上一轮（2026-07-24 早）：Transmission 服务/扩展开发 + Skill 文档更新。详情见 [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md)。

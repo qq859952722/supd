@@ -30,6 +30,9 @@ type ProcessInfo struct {
 	PID         int     `json:"pid"`
 	PPID        int     `json:"ppid"`
 	User        string  `json:"user"`
+	UID         int     `json:"uid"`
+	Group       string  `json:"group"`
+	GID         int     `json:"gid"`
 	CPUPercent  float64 `json:"cpu_percent"`
 	MemoryMB    float64 `json:"memory_mb"`
 	Status      string  `json:"status"`

@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -45,18 +46,37 @@ type PortInfo struct {
 }
 
 // collectProcessPorts 采集进程及其子进程监听的端口
-// 通过读取 /proc/net/{tcp,tcp6,udp,udp6} 和 /proc/<pid>/fd/* 匹配 socket inode
+// 主路径：通过 /proc/<pid>/fd/* 读取 socket inode 匹配 /proc/net/
+// 降级路径：当 Yama LSM ptrace_scope=1 等限制阻止 readlink fd 时，
+// 通过进程 UID 在 /proc/net/ 中匹配端口（服务通常只有唯一 UID 用户）
 func collectProcessPorts(pid int) []PortInfo {
-	// 1. 收集进程树所有 PID 的 socket inode
+	// 1. 尝试主路径：收集进程树所有 PID 的 socket inode
 	inodes := collectSocketInodes(pid)
-	if len(inodes) == 0 {
-		return nil
-	}
 
-	// 2. 读取 /proc/net/{tcp,tcp6,udp,udp6} 匹配 inode
 	var ports []PortInfo
-	for _, proto := range []string{"tcp", "tcp6", "udp", "udp6"} {
-		ports = append(ports, matchNetSockets(proto, inodes)...)
+	if len(inodes) > 0 {
+		// 主路径：inode 精确匹配
+		for _, proto := range []string{"tcp", "tcp6", "udp", "udp6"} {
+			ports = append(ports, matchNetSockets(proto, inodes)...)
+		}
+	} else {
+		// 降级路径：Yama LSM 或权限限制导致 readlink /proc/<pid>/fd 失败
+		// 通过进程 UID 在 /proc/net/ 中匹配端口
+		uid := getProcessUID(pid)
+		if uid < 0 {
+			return nil
+		}
+		slog.Debug("port collection: inode method failed, falling back to UID matching",
+			"pid", pid, "uid", uid)
+		// 同时收集子进程 UID（子进程可能以不同用户运行）
+		childUIDs := getChildProcessUIDs(pid)
+		allUIDs := map[int]bool{uid: true}
+		for _, cu := range childUIDs {
+			allUIDs[cu] = true
+		}
+		for _, proto := range []string{"tcp", "tcp6", "udp", "udp6"} {
+			ports = append(ports, matchNetSocketsByUID(proto, allUIDs)...)
+		}
 	}
 
 	// 3. 按 (protocol, port) 去重
@@ -91,7 +111,6 @@ func collectProcessPortsByCommand(cmdPattern string) []PortInfo {
 		return nil
 	}
 
-	var ports []PortInfo
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -110,11 +129,10 @@ func collectProcessPortsByCommand(cmdPattern string) []PortInfo {
 		if cmdline == "" || !strings.Contains(cmdline, cmdBase) {
 			continue
 		}
-		// 匹配成功，采集该 host PID 的端口
-		ports = append(ports, collectProcessPorts(hostPID)...)
-		break // 只取第一个匹配的主进程
+		// 匹配成功，采集该 host PID 的端口（collectProcessPorts 内含 UID 降级）
+		return collectProcessPorts(hostPID)
 	}
-	return ports
+	return nil
 }
 
 // collectSocketInodes 收集进程树中所有 PID 的 socket inode
@@ -174,6 +192,32 @@ func getProcessChildren(pid int) ([]int, error) {
 
 // matchNetSockets 解析 /proc/net/{proto} 文件，匹配属于目标进程的 socket
 func matchNetSockets(proto string, inodes map[uint64]bool) []PortInfo {
+	return readNetSockets(proto, func(fields []string) bool {
+		if len(fields) < 10 {
+			return false
+		}
+		inode, err := strconv.ParseUint(fields[9], 10, 64)
+		return err == nil && inodes[inode]
+	})
+}
+
+// matchNetSocketsByUID 在 /proc/net/{proto} 中按 UID 匹配端口
+// 降级方案：当 readlink /proc/<pid>/fd 因 Yama LSM 等限制失败时使用
+// 注意：UID 匹配精度低于 inode 匹配（同一 UID 的所有进程端口都会被匹配到），
+// 但对于服务进程（通常独占一个 UID）精度足够
+func matchNetSocketsByUID(proto string, uids map[int]bool) []PortInfo {
+	return readNetSockets(proto, func(fields []string) bool {
+		if len(fields) < 10 {
+			return false
+		}
+		socketUID, err := strconv.Atoi(fields[7])
+		return err == nil && uids[socketUID]
+	})
+}
+
+// readNetSockets 读取 /proc/net/{proto} 文件，对每行调用 matchFn 判断是否属于目标进程
+// 若匹配则解析为 PortInfo 返回
+func readNetSockets(proto string, matchFn func(fields []string) bool) []PortInfo {
 	path := "/proc/net/" + proto
 	data, err := readFileWithTimeout(path)
 	if err != nil {
@@ -189,61 +233,59 @@ func matchNetSockets(proto string, inodes map[uint64]bool) []PortInfo {
 	// 跳过第一行（表头）
 	for _, line := range lines[1:] {
 		fields := strings.Fields(line)
-		if len(fields) < 10 {
+		if !matchFn(fields) {
 			continue
 		}
 
-		// fields[1] = local_address:port (hex)
-		// fields[2] = remote_address:port (hex)
-		// fields[3] = state (hex, TCP only)
-		// fields[9] = inode
-		localAddr := fields[1]
-		state := fields[3]
-		inodeStr := fields[9]
-
-		inode, err := strconv.ParseUint(inodeStr, 10, 64)
-		if err != nil {
+		pi := parseNetSocketLine(fields, proto)
+		if pi == nil {
 			continue
 		}
-		if !inodes[inode] {
-			continue
-		}
-
-		// 解析本地地址和端口
-		colonIdx := strings.LastIndex(localAddr, ":")
-		if colonIdx < 0 {
-			continue
-		}
-		addrHex := localAddr[:colonIdx]
-		portHex := localAddr[colonIdx+1:]
-
-		port, err := strconv.ParseInt(portHex, 16, 32)
-		if err != nil {
-			continue
-		}
-
-		addr := parseHexIP(addrHex, proto)
-
-		// TCP: 只返回 LISTEN 状态 (0A)
-		// UDP: 无状态，全部返回
-		stateStr := ""
-		if strings.HasPrefix(proto, "tcp") {
-			if state != "0A" {
-				continue // 非 LISTEN 状态跳过
-			}
-			stateStr = "LISTEN"
-		}
-
-		ports = append(ports, PortInfo{
-			Protocol: proto,
-			Port:     int(port),
-			Address:  addr,
-			State:    stateStr,
-			IsHTTP:   false, // HTTP 判定由前端浏览器 fetch 探测完成
-		})
+		ports = append(ports, *pi)
 	}
 
 	return ports
+}
+
+// parseNetSocketLine 将 /proc/net/ 中的一行数据解析为 PortInfo
+// fields 为空格分隔的字段列表，proto 为 "tcp"/"tcp6"/"udp"/"udp6"
+// 非 LISTEN 状态的 TCP socket 返回 nil
+func parseNetSocketLine(fields []string, proto string) *PortInfo {
+	// fields[1] = local_address:port (hex)
+	localAddr := fields[1]
+	state := fields[3]
+
+	colonIdx := strings.LastIndex(localAddr, ":")
+	if colonIdx < 0 {
+		return nil
+	}
+	addrHex := localAddr[:colonIdx]
+	portHex := localAddr[colonIdx+1:]
+
+	port, err := strconv.ParseInt(portHex, 16, 32)
+	if err != nil {
+		return nil
+	}
+
+	addr := parseHexIP(addrHex, proto)
+
+	// TCP: 只返回 LISTEN 状态 (0A)
+	// UDP: 无状态，全部返回
+	stateStr := ""
+	if strings.HasPrefix(proto, "tcp") {
+		if state != "0A" {
+			return nil
+		}
+		stateStr = "LISTEN"
+	}
+
+	return &PortInfo{
+		Protocol: proto,
+		Port:     int(port),
+		Address:  addr,
+		State:    stateStr,
+		IsHTTP:   false,
+	}
 }
 
 // parseHexIP 将 /proc/net 中的十六进制 IP 地址转换为可读格式
@@ -284,4 +326,29 @@ func parseHexIP(hex, proto string) string {
 		}
 	}
 	return "::"
+}
+
+// getProcessUID 从 /proc/<pid>/status 读取进程的真实 UID
+// 复用 readUIDGIDFromStatus，只取 UID 部分
+// 返回 -1 表示读取失败
+func getProcessUID(pid int) int {
+	uid, _ := readUIDGIDFromStatus(pid)
+	return uid
+}
+
+// getChildProcessUIDs 收集子进程的 UID 列表
+// 用于 UID 降级方案中，确保子进程的端口也能被发现
+func getChildProcessUIDs(pid int) []int {
+	children, err := getProcessChildren(pid)
+	if err != nil {
+		return nil
+	}
+	var uids []int
+	for _, childPID := range children {
+		uid := getProcessUID(childPID)
+		if uid >= 0 {
+			uids = append(uids, uid)
+		}
+	}
+	return uids
 }
