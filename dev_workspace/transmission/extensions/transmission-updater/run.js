@@ -28,14 +28,15 @@ async function readStream(stream) {
 }
 
 /** 执行外部命令（tjs 无法内置替换的场景：tar/unzip/chown 等） */
+// 修复：并发读取 stdout/stderr，避免管道死锁（子进程写 stderr 超过缓冲时阻塞，
+// 而父进程还在等 stdout → 双方卡死。tar/unzip/chown 输出几乎都在 stderr）
 async function runCmd(args, options = {}) {
   const proc = await tjs.spawn(args, {
     stdout: 'pipe',
     stderr: 'pipe',
     ...options,
   });
-  const stdout = await readStream(proc.stdout);
-  const stderr = await readStream(proc.stderr);
+  const [stdout, stderr] = await Promise.all([readStream(proc.stdout), readStream(proc.stderr)]);
   const status = await proc.wait();
   return { stdout, stderr, exitCode: status.exitCode ?? 0 };
 }
@@ -62,20 +63,68 @@ async function downloadFile(url, destPath) {
   return received;
 }
 
-/** 递归查找文件（用 tjs.readDir 替代 find 命令） */
-async function findFile(dir, pattern) {
-  let entries;
+/** 列出目录条目，兼容 tjs 不同版本返回的目录形态：
+ *  - tjs 26.6.0: tjs.readDir 返回 DirHandle（需 for await 异步迭代，entry 含 .name / .isDirectory()）
+ *  - 旧文档版: 返回数组（元素为字符串或 {name,isDir/isDirectory}）
+ *  - 个别实现: 返回以文件名为 key 的对象
+ * 统一返回 [{name, isDir}]；非目录返回 null
+ * 修复：原代码假设 readDir 返回数组并直接 for...of，实际 DirHandle 不可同步迭代 → "value is not iterable" */
+async function listEntries(dir) {
+  let dh;
   try {
-    entries = await tjs.readDir(dir);
+    dh = await tjs.readDir(dir);
   } catch (e) {
     return null; // 非目录
   }
+  // tjs 26.6.0: DirHandle（异步可迭代）
+  if (dh && typeof dh[Symbol.asyncIterator] === 'function') {
+    const out = [];
+    for await (const ent of dh) {
+      const name = typeof ent === 'string' ? ent : ent.name;
+      let isDir;
+      if (typeof ent === 'string') {
+        isDir = false;
+      } else if (typeof ent.isDirectory === 'function') {
+        isDir = ent.isDirectory();
+      } else if (typeof ent.isFile === 'function') {
+        isDir = !ent.isFile(); // 某些实现 isDirectory 不可用，用 isFile 反推
+      } else {
+        // tjs 26.6.0: isDirectory/isFile 为布尔 getter 属性
+        isDir = !!ent.isDirectory;
+      }
+      out.push({ name, isDir });
+    }
+    if (typeof dh.close === 'function') { try { await dh.close(); } catch (e) {} }
+    return out;
+  }
+  // 旧版：数组
+  if (Array.isArray(dh)) {
+    return dh.map((ent) => {
+      const name = typeof ent === 'string' ? ent : ent.name;
+      const isDir = typeof ent === 'string' ? false : (typeof ent.isDirectory === 'function' ? ent.isDirectory() : !!ent.isDir);
+      return { name, isDir };
+    });
+  }
+  // 对象（key 为文件名）
+  if (dh && typeof dh === 'object') {
+    return Object.keys(dh).map((name) => ({ name, isDir: !!(dh[name] && dh[name].isDir) }));
+  }
+  return [];
+}
+
+/** 递归查找文件（用 tjs.readDir 替代 find 命令）
+ * matcher 可为 RegExp 或 (name)=>boolean 谓词，便于精确判定二进制（排除 .sig/.b2sum 等） */
+async function findFile(dir, matcher) {
+  const entries = await listEntries(dir);
+  if (!entries) return null; // 非目录
   for (const entry of entries) {
-    const name = typeof entry === 'string' ? entry : entry.name;
-    const fullPath = `${dir}/${name}`;
-    if (pattern.test(name)) return fullPath;
-    const found = await findFile(fullPath, pattern); // 递归子目录
-    if (found) return found;
+    const fullPath = `${dir}/${entry.name}`;
+    const ok = matcher instanceof RegExp ? matcher.test(entry.name) : matcher(entry.name);
+    if (ok) return fullPath;
+    if (entry.isDir) {
+      const found = await findFile(fullPath, matcher); // 递归子目录
+      if (found) return found;
+    }
   }
   return null;
 }
@@ -83,14 +132,12 @@ async function findFile(dir, pattern) {
 /** 递归复制目录（用 tjs.readDir + tjs.copyFile 替代 cp -r） */
 async function copyDir(src, dst) {
   await tjs.makeDir(dst);
-  const entries = await tjs.readDir(src);
+  const entries = await listEntries(src);
+  if (!entries) return;
   for (const entry of entries) {
-    const name = typeof entry === 'string' ? entry : entry.name;
-    const srcPath = `${src}/${name}`;
-    const dstPath = `${dst}/${name}`;
-    let isDir = false;
-    try { (await tjs.readDir(srcPath)); isDir = true; } catch (e) {}
-    if (isDir) {
+    const srcPath = `${src}/${entry.name}`;
+    const dstPath = `${dst}/${entry.name}`;
+    if (entry.isDir) {
       await copyDir(srcPath, dstPath);
     } else {
       await tjs.copyFile(srcPath, dstPath);
@@ -101,19 +148,24 @@ async function copyDir(src, dst) {
 // --- 业务函数 ---
 
 /** 获取当前已安装版本 */
+// 修复：transmission-daemon --version 输出到 stderr（stdout 为空），需合并 stdout+stderr 解析
 async function getCurrentVersion() {
   try { await tjs.stat(`${serviceDir}/transmission-daemon`); } catch (e) { return 'not-installed'; }
-  const { stdout } = await runCmd([`${serviceDir}/transmission-daemon`, '--version']);
-  const m = stdout.match(/(\d+\.\d+\.\d+)/);
+  const { stdout, stderr } = await runCmd([`${serviceDir}/transmission-daemon`, '--version']);
+  const m = (stdout + stderr).match(/(\d+\.\d+\.\d+)/);
   return m ? m[1] : 'unknown';
 }
 
 /** 查询 GitHub Releases 最新版本 */
+// 修复：版本号归一化 —— 使用与 getCurrentVersion 一致的 \d+\.\d+\.\d+ 正则提取核心版本号
+// 例：tag "v4.1.3" → "4.1.3"; "transmission-4.1.3" → "4.1.3"; "4.1.3.1" → "4.1.3"
 async function getLatestRelease(apiUrl) {
   const resp = await fetch(apiUrl, { headers: { 'User-Agent': 'supd-tjs-ext' } });
   if (!resp.ok) throw new Error(`GitHub API HTTP ${resp.status}`);
   const data = await resp.json();
-  const version = (data.tag_name || '').replace(/.*-/, '') || 'unknown';
+  const rawTag = (data.tag_name || '').replace(/^v/, '');
+  const m = rawTag.match(/(\d+\.\d+\.\d+)/);
+  const version = m ? m[1] : rawTag || 'unknown';
   return { version, assets: data.assets || [] };
 }
 
@@ -140,7 +192,12 @@ async function installBinary(latest, arch) {
   await runCmd(['tar', '-xf', tmpPath, '-C', extractDir]); // tar 是必要依赖
 
   // 用 tjs.readDir 递归查找二进制（替代 find 命令）
-  const binPath = await findFile(extractDir, /^transmission-daemon.*[^.]$/);
+  // 匹配 transmission-daemon 及其带版本/架构后缀形式（如 transmission-daemon-4.1.3-amd64），
+  // 并排除 .b2sum/.sig/.sha256 等校验/归档扩展名（原 /^transmission-daemon$/ 过严，.*[^.]$ 过宽）
+  const binPath = await findFile(extractDir, (name) => {
+    if (!name.startsWith('transmission-daemon')) return false;
+    return !/\.(b2sum|sig|sha256|sha512|txt|md|tar|xz|zip|json|asc|sha)$/.test(name);
+  });
   if (!binPath) throw new Error('压缩包中未找到 transmission-daemon 二进制');
 
   // 替换旧二进制
@@ -224,7 +281,11 @@ async function setupDirectories() {
     console.log('已创建默认 config/settings.json');
   }
   // chown -R 是必要依赖（tjs.chown 不支持递归）
-  await runCmd(['chown', '-R', 'nobody:nobody', serviceDir]);
+  // 修复：校验 chown 退出码 —— 若 supd 非 root 运行则 chown 失败，服务以 nobody 运行时无写权限
+  const chownResult = await runCmd(['chown', '-R', 'nobody:nobody', serviceDir]);
+  if (chownResult.exitCode !== 0) {
+    console.log(`::result:: warning "chown 失败 (exit ${chownResult.exitCode})，目录权限可能不正确。请确保 supd 以 root 运行，否则 nobody 用户可能无法写入配置/下载目录"`);
+  }
 }
 
 // --- Action: 检查更新 ---

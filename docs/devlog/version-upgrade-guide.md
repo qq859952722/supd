@@ -174,3 +174,4 @@ git push origin vX.Y.Z
 | 2026-07-22 | v0.0.3 | tjs 运行时接入默认配置 + Docker 工具集 + auto-create-users 扩展 + user 字段接入进程启动修复 |
 | 2026-07-21 | v0.0.2 | 端口迁移 7979、init 示例、script readiness 修复 |
 | 2026-07-21 | v0.0.1 | 首次发布 |
+| 2026-07-24 | v0.0.20 | transmission-updater run.js 7 项 bug 修复（含 3 项 tjs 运行时发现：readDir DirHandle / isDirectory getter / --version stderr）+ 新增代码审计与运行测试全通过 |

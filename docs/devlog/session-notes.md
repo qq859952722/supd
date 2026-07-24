@@ -10,7 +10,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：17 类审计评分 **97.44 / 100（⭐ 优秀）**；913+ 单元测试通过；零竞态；staticcheck/go vet 零警告
-- **当前版本**：v0.0.19（版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.0.20（版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -99,13 +99,18 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-22 | env/Dropbear/规格偏差 | tjs 默认配置、Dropbear SSH、env.yaml 加载 BUG、3 项规格偏差修复、前端 env 修复、v0.0.6 | [notes/2026-07-22.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-22.md) |
 | 2026-07-23 | 审计/env/仪表盘/retry/热重载/访问日志/tjs工作流/qbittorrent | 全面审计（97.44 分）、env 编辑器统一、仪表盘服务资源汇总、扩展 retry_on_failure 补全、热重载 RestartEngine 不更新 BUG 修复、HTTP 访问日志改用 slog + --log-level CLI BUG 修复、v0.0.9；晚：v0.0.12 镜像 tjs 集成验证全通过、action 字段名（action 非 action_id）、tjs fetch arrayBuffer 大文件卡死坑点（改流式读取）、qbittorrent 服务部署成功（ready）；更晚：扩展列表/删除 bug 修复（discovery 过滤 .bak + 前端 timeout 校验）、下载日志 formatBytes 优化、代码审计 + 运行状态测试、v0.0.14；编辑扩展保存后 Discovery 缓存不刷新修复、v0.0.15；时区设置 v0.0.16；服务/扩展执行身份 UID 模式（CredentialSpec + 互斥校验 + 前端模式切换）、v0.0.17；UID 模式代码审计 + 负数校验修复 + 9 项运行状态测试全通过、v0.0.18；CI 缓存 GHA→registry 修复（layer blob not_found）+ skill 文档 UID 模式更新 + v0.0.18 重发 | [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) |
 | 2026-07-24 | Transmission 服务/扩展开发 + Skill 文档更新 + 端口探测 BUG 修复 | transmission：直接二进制启动+user:nobody+两个tjs扩展；skill §8/§9更新；端口探测Yama LSM降级修复（UID匹配） | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
+| 2026-07-24 | 新增代码审计 + 运行测试 + v0.0.20 发布 | transmission-updater run.js 7 项 bug 修复（含 3 项运行时发现）、审计+测试全通过、版本升级 v0.0.20 | [notes/2026-07-24-audit.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24-audit.md) / [notes/2026-07-24-testplan.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24-testplan.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-24 端口探测修复 + 进程 UID/GID 展示）
+## 八、最近会话重点（2026-07-24 新增代码审计 + 运行测试 + v0.0.20 发布）
 
-**端口探测 BUG 修复**：Transmission 服务（`user: nobody`，UID 65534）端口未显示，根因是 Linux Yama LSM `ptrace_scope=1` 阻止 root 进程 `readlink /proc/<pid>/fd/*` 读取非 root 进程的 fd symlink → inode 匹配方案全部 Permission denied → 返回空端口。修复：新增 UID 降级方案，当 `collectSocketInodes` 返回空时，自动从 `/proc/<pid>/status` 读取进程 UID，在 `/proc/net/{tcp,tcp6,udp,udp6}` 中按 `uid` 字段匹配端口。
+**新增代码审计 + 运行测试**：对最近两个提交（transmission 服务/扩展 `8d55bbf` + 端口/资源采集 `17893f1`）做静态审计 + 真实运行测试。静态审计发现 4 项真实 bug（P0×2/P1×2），全部属实并修复；运行测试额外暴露 3 项静态审计无法覆盖的 tjs 运行时 bug（readDir 返回 DirHandle / isDirectory 为布尔 getter / --version 输出到 stderr），亦全部修复。完整报告见 [notes/2026-07-24-audit.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24-audit.md)，测试方案见 [notes/2026-07-24-testplan.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24-testplan.md)。
 
-**进程 UID/GID 展示**：`ProcessInfo` 新增 `uid`/`gid`/`group` 字段，`processToInfo` 通过 gopsutil `Uids()`/`Gids()` 获取，`readProcessInfoFromProc` 通过 `/proc/<pid>/status` 获取，前端 ProcessTree 新增「用户」列显示 `username(uid) group(gid)`。
+**修复汇总（transmission-updater/run.js 共 7 项）**：runCmd 并发读双流防死锁、版本号归一化（统一 `\d+\.\d+\.\d+` + 去 v 前缀）、findFile 精确谓词排除校验/归档扩展名、chown 校验 exitCode、listEntries 兼容 DirHandle（for await 迭代）、getCurrentVersion 合并 stdout+stderr。
 
-> 上一轮（2026-07-24 早）：Transmission 服务/扩展开发 + Skill 文档更新。详情见 [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md)。
+**测试结论**：A/B/C/D/E/F 全部通过，无新增崩溃/死锁；核心 P0/P1 修复经真实运行验证不回归。
+
+**版本升级 v0.0.20**：仅 bug 修复（PATCH 级），详见版本升级指南。
+
+> 同日早前会话：Transmission 服务/扩展开发 + Skill 文档更新 + 端口探测 Yama LSM 降级修复（UID 匹配）+ 进程 UID/GID 展示，详情见 [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md)。
