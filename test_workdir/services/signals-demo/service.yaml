@@ -1,6 +1,6 @@
 name: signals-demo
 version: "1.0.0"
-description: "信号处理演示服务（响应 HUP/USR1/USR2/TERM）"
+description: "Signal handling demo service"
 icon: zap
 autostart: false
 command:

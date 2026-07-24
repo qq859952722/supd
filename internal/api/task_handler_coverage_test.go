@@ -13,20 +13,19 @@ import (
 // fakeTaskProvider 嵌入接口以满足契约，覆盖 task_handler 测试所需方法。
 type fakeTaskProvider struct {
 	TaskProvider
-	runs     []*extension.RunResult
-	runByID  map[string]*extension.RunResult
+	runs      []*extension.RunResult
+	runByID   map[string]*extension.RunResult
 	cancelErr error
 	deleteErr error
-	clearErr  error
-	logs     []string
-	logPos   int64
-	logErr   error
-	cleared  int
+	logs      []string
+	logPos    int64
+	logErr    error
+	cleared   int
 }
 
 func (f *fakeTaskProvider) ListRuns(filter extension.RunFilter) []*extension.RunResult { return f.runs }
 func (f *fakeTaskProvider) GetRun(runID string) *extension.RunResult                   { return f.runByID[runID] }
-func (f *fakeTaskProvider) CancelRun(runID string) error                                { return f.cancelErr }
+func (f *fakeTaskProvider) CancelRun(runID string) error                               { return f.cancelErr }
 func (f *fakeTaskProvider) GetRunLogs(runID string, sincePos int64) ([]string, int64, error) {
 	return f.logs, f.logPos, f.logErr
 }

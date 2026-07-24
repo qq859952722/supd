@@ -165,7 +165,7 @@ func collectProcessTree(pid int) ([]ProcessInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// 一次扫描 /proc 构建 PPID→子进程映射，避免递归 findChildProcesses 的重复开销
+	// 一次扫描 /proc 构建 PPID→子进程映射，避免逐进程递归扫描的重复开销
 	ppidMap := buildPPIDMap()
 
 	var processes []ProcessInfo
@@ -314,52 +314,6 @@ func processToInfo(p *process.Process) (*ProcessInfo, error) {
 		Command:     cmdline,
 		StartedAt:   startedAt,
 	}, nil
-}
-
-// findChildProcesses 从 /proc 查找子进程
-func findChildProcesses(ppid int) []int {
-	var children []int
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return children
-	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		pid, err := strconv.Atoi(entry.Name())
-		if err != nil {
-			continue
-		}
-
-		statPath := filepath.Join("/proc", entry.Name(), "stat")
-		data, err := readFileWithTimeout(statPath)
-		if err != nil {
-			continue
-		}
-
-		// /proc/pid/stat 格式: pid (comm) state ppid ...
-		// 需要找到最后一个 ')' 后的字段
-		content := string(data)
-		idx := strings.LastIndex(content, ")")
-		if idx < 0 {
-			continue
-		}
-		fields := strings.Fields(content[idx+1:])
-		if len(fields) < 2 {
-			continue
-		}
-		parentPID, err := strconv.Atoi(fields[1])
-		if err != nil {
-			continue
-		}
-		if parentPID == ppid {
-			children = append(children, pid)
-		}
-	}
-
-	return children
 }
 
 // readProcessInfoFromProc 从 /proc 读取进程信息（降级方案）

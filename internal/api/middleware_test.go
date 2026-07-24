@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -324,5 +325,74 @@ func TestExtractClientIP(t *testing.T) {
 		if !strings.HasPrefix(got, tt.want) {
 			t.Errorf("extractClientIP(%s) = %s, want %s", tt.remoteAddr, got, tt.want)
 		}
+	}
+}
+
+// TestLongPollLimiter_AcquireRelease 直接测试 Acquire/Release 信号量与 Map 锁逻辑（L-02-001）
+func TestLongPollLimiter_AcquireRelease(t *testing.T) {
+	limiter := NewLongPollLimiter(3, 2) // 全局3，单客户端2
+
+	// 单客户端上限 2
+	if !limiter.Acquire("clientA") {
+		t.Fatal("clientA 第1次 Acquire 应成功")
+	}
+	if !limiter.Acquire("clientA") {
+		t.Fatal("clientA 第2次 Acquire 应成功")
+	}
+	if limiter.Acquire("clientA") {
+		t.Fatal("clientA 第3次 Acquire 应被拒（单客户端上限 2）")
+	}
+
+	// 释放一个后可再次获取
+	limiter.Release("clientA")
+	if !limiter.Acquire("clientA") {
+		t.Fatal("Release 后再次 Acquire 应成功")
+	}
+
+	// 不同客户端共享全局上限（clientA 占 2，clientB 1 = 全局 3）
+	if !limiter.Acquire("clientB") {
+		t.Fatal("clientB 第1次 Acquire 应成功（全局未满）")
+	}
+	if limiter.Acquire("clientC") {
+		t.Fatal("全局上限 3 已达，clientC 应被拒")
+	}
+
+	// 全部释放后计数归零，可重新获取
+	limiter.Release("clientA")
+	limiter.Release("clientA")
+	limiter.Release("clientB")
+	if !limiter.Acquire("clientA") {
+		t.Fatal("全部 Release 后应可重新 Acquire")
+	}
+	limiter.Release("clientA")
+}
+
+// TestLongPollLimiterGlobalLimit50 验证全局并发上限锁定为 50（N-05-001，规格 REQ-1.2）
+func TestLongPollLimiterGlobalLimit50(t *testing.T) {
+	limiter := NewLongPollLimiter(50, 5)
+
+	keys := make([]string, 50)
+	for i := 0; i < 50; i++ {
+		keys[i] = "g-" + strconv.Itoa(i)
+		if !limiter.Acquire(keys[i]) {
+			t.Fatalf("第 %d 次 Acquire 应成功（全局上限 50）", i)
+		}
+	}
+
+	// 第 51 个应被拒
+	if limiter.Acquire("overflow") {
+		t.Fatal("第 51 次 Acquire 应被拒（全局上限 50）")
+	}
+
+	// 释放一个后可再次获取
+	limiter.Release(keys[0])
+	if !limiter.Acquire("overflow") {
+		t.Fatal("Release 后再次 Acquire 应成功")
+	}
+
+	// 清理
+	limiter.Release("overflow")
+	for i := 1; i < 50; i++ {
+		limiter.Release(keys[i])
 	}
 }

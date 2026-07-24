@@ -491,10 +491,10 @@ func buildStopConfigs(result *core.BootstrapResult) map[string]core.StopConfig {
 		grace := svc.Config.Stop.GraceSeconds
 		timeout := svc.Config.Stop.TimeoutSeconds
 		if grace <= 0 {
-			grace = 10 // REQ-F-007: 默认10秒
+			grace = config.DefaultStopGraceSeconds // REQ-F-007: 默认10秒
 		}
 		if timeout <= 0 {
-			timeout = 60 // REQ-F-007: 默认60秒
+			timeout = config.DefaultStopTimeoutSeconds // REQ-F-007: 默认60秒
 		}
 		stopConfigs[name] = core.StopConfig{
 			GraceSeconds:   grace,

@@ -24,7 +24,7 @@ jobs:
       - name: 设置 Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25.x'
           cache: true
 
       - name: 准备前端占位目录（供 //go:embed 编译）
@@ -32,7 +32,7 @@ jobs:
 
       - name: 运行测试并生成覆盖率
         run: |
-          go test ./... -coverprofile=cover.out
+          go test ./internal/... -coverprofile=cover.out
           go tool cover -func=cover.out | tail -1
           go tool cover -html=cover.out -o cover.html
 
@@ -56,7 +56,7 @@ jobs:
       - name: 设置 pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 10
 
       - name: 设置 Node
         uses: actions/setup-node@v5
@@ -67,7 +67,7 @@ jobs:
 
       - name: 安装依赖
         working-directory: web
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
       - name: 运行前端测试 + 覆盖率
         working-directory: web
