@@ -33,9 +33,25 @@ function formatBytes(bytes) {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
-function getArch() {
-  // 通过 tjs.system 探测架构；回退到 x86_64
-  // qbittorrent-nox-static 的 x86_64 二进制是静态 musl 编译，兼容 alpine
+async function getArch() {
+  try {
+    const content = await tjs.readFile('/proc/cpuinfo');
+    const cpuinfo = typeof content === 'string' ? content : new TextDecoder().decode(content);
+    if (cpuinfo.includes('aarch64') || cpuinfo.includes('ARM') || cpuinfo.includes('Architecture: 8')) {
+      return 'aarch64';
+    }
+    if (cpuinfo.includes('armv7') || cpuinfo.includes('ARMv7')) {
+      return 'armv7l';
+    }
+  } catch (e) { }
+
+  try {
+    const model = tjs.system?.cpus?.[0]?.model || '';
+    if (model.includes('ARM') || model.includes('Cortex') || model.includes('aarch64')) {
+      return 'aarch64';
+    }
+  } catch (e) { }
+
   return 'x86_64';
 }
 
@@ -196,7 +212,7 @@ async function actionInstall(actionArgs) {
   console.log(`::progress:: 5 "安装指定版本: ${tag}"`);
 
   const release = await getReleaseByTag(tag);
-  const arch = getArch();
+  const arch = await getArch();
   const asset = findAssetUrl(release, arch);
 
   console.log(`\n=== 安装信息 ===`);
@@ -215,7 +231,7 @@ async function actionInstallLatest() {
   console.log('::progress:: 5 "查询最新版本"');
   const release = await getLatestRelease();
   const tag = release.tag_name;
-  const arch = getArch();
+  const arch = await getArch();
   const asset = findAssetUrl(release, arch);
 
   console.log(`\n=== 安装最新版 ===`);

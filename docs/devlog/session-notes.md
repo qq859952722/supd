@@ -9,7 +9,7 @@
 ## 一、项目状态
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
-- **质量水位**：17 类审计评分 **97.44 / 100（⭐ 优秀）**；913+ 单元测试通过；零竞态；staticcheck/go vet 零警告
+- **质量水位**：17 类审计评分 **97.84 / 100（⭐ 优秀）**；1000+ 单元测试通过（Go 948+ + 前端 60）；零竞态；staticcheck/go vet 零警告
 - **当前版本**：v0.0.21（版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
@@ -64,12 +64,12 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 
 ## 五、未闭合待办（详见 `blockers.md`）
 
-| 编号 | 扣分 | 内容 |
-|------|------|------|
-| L-01-001 | -0.150 | api 包覆盖率 41.9%（需大量测试代码） |
-| L-04-001 | -0.250 | 缺失端到端集成测试代码（N 类已手动验证） |
+| 编号 | 扣分 | 内容 | 状态 |
+|------|------|------|------|
+| L-01-001 | -0.150 | api 包覆盖率 | ✅ 已闭环：43.3%→68.0%（≥65% 达标） |
+| L-04-001 | -0.250 | 前端测试代码 | ✅ 已闭环：Vitest 框架 + 60 例（P2+P3）util/hook 单测，lib 纯逻辑 util 覆盖 100%/92.85%/90.16%/87.27% |
 
-技术债：无活债务（M-04-001/TD-003 已关闭）
+技术债：无活债务（M-04-001/TD-003 已关闭；L-01-001/L-04-001 覆盖率债已闭环）
 
 ---
 
@@ -101,14 +101,29 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-24 | M-04-001/TD-003 重构实施 | superviseService CC43+重复 → 抽取共享 supervisor.go（SupervisorCallbacks依赖注入）；修复3处ctx/error硬伤（OnFailure闭包内决定ctx/SpawnNextSupervisor返回ctx/RunReadiness返回error）；3处遗漏补全（RuntimeRegistry有意变更/Source字段/DecideRestart签名）；新增RestartActionAbort；bootstrap CC3 + service_operator CC6；T1-T6测试全通过 | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
 | 2026-07-24 | M-04-001/TD-003 审计+运行测试全通过 + v0.0.21 发布 | 审计（git show HEAD 逐行比对 + gocyclo + -race + T1-T6）通过；7 场景 A–G 真实运行测试全通过（无 panic/泄漏/回归）；fd_notify 重启重新就绪经 200ms 细粒度轮询确认；版本升级 v0.0.21 并推送 origin/main | [notes/2026-07-24-audit-supervisor.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24-audit-supervisor.md) / [notes/2026-07-24-testplan-supervisor.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24-testplan-supervisor.md) |
 | 2026-07-24 | DEV-010 修复 | 补充 EventNormalExit 及 up/ready/starting → down 转移规则（规则 11）；用 Transition(EventNormalExit) 替代 ResetTo(StateDown)；更新需求规格 v1.5 §2.1.1 与 deviations.md 标记已修复 | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
+| 2026-07-24 | 测试覆盖率提升计划执行（P0/P1/P2） | api 43.3%→68.0%、cli 50%→66.1%、前端 Vitest 框架+38 例 util 单测（lib 纯逻辑 util 全 100%/92%/67%）；L-01-001/L-04-001 闭环，质量水位 97.84；全部 hermetic，未改生产代码 | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
+| 2026-07-24 | 测试覆盖率提升计划（P3 收尾） | 前端主链路轻量集成：api-client 67%→90.16%（REST 封装+handleResponse 全分支）、http-probe 0%→87.27%（jsdom hook 测试）；前端 60 例全过、lib 总覆盖 91%；CI 接入 coverage.yml（上传 go/web artifact，非阻断）+ Makefile cover；修复 P2 遗留 tsconfig 将测试纳入生产构建致 build 失败 | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
+| 2026-07-24 | 测试覆盖率提升计划（P4 核心包攻坚） | state_machine/pidfile/cron_scheduler/trigger_cron/dispatcher/service_operator 补测，35 例 hermetic（全部未改生产代码）；后端总 73.6%→74.9%（+1.3pp），core/extension/api 包分别 +2.9/+3.9/+0.6pp；task_manager 已充分覆盖跳过 | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-24 DEV-010 修复）
+## 八、最近会话重点（2026-07-24 测试覆盖率提升计划执行）
 
-**DEV-010 偏差修复**：
-- **根因消除**：原代码在 `restart.policy=on-failure` + `exit 0` 场景下使用 `sm.ResetTo(StateDown)` 绕过状态机。
-- **状态机完备**：`internal/core/state_machine.go` 新增 `EventNormalExit` 及 `up/ready/starting` + `EventNormalExit` → `StateDown` 合法转移规则（规则 11）。
-- **流程规范**：`internal/core/supervisor.go` 将 `RestartActionDown` 分支重构为 `sm.Transition(EventNormalExit)`，保证状态转移封闭性与规范事件发布。
-- **文档与测试同步**：`docs/需求规格说明_v1.5.md` §2.1.1 补充规则 11 规格说明；`docs/devlog/deviations.md` DEV-010 标记为已修复；补全 `state_test.go` 规则 11 单元测试。
-- **全量验证**：`go build ./...` + `go vet ./...` + `go test ./... -count=1` + `cd web && pnpm build` 全部通过。
+**覆盖率提升（对应审计扣分 L-01-001 / L-04-001）**：
+- **P0 api**：43.3% → **68.0%**（目标 ≥65% 达成）。新增 4 个 hermetic 测试文件（extension/settings/task/service_ops handler 覆盖），全部 `NewServer(cfg)` + fake provider + httptest 驱动，未改生产代码。
+- **P1 cli**：50% → **66.1%**。新增 `run_coverage_test.go`（`validateLogDir`/`buildStopConfigs` 纯函数）+ `commands_coverage_test.go`（经 `getAPIClient` var 注入 httptest 服务端，覆盖各命令成功路径）。
+- **P2 前端**：绿地 → Vitest 4（node 环境）框架 + 38 例 util 单测。`error-utils/utils/i18n/query-client` 100%、`env-yaml` 92.85%、`api-client` 67.21%；`http-probe`(React hook) 留 P3 可选。
+- **P3 前端主链路轻量集成**：`api-client` **67.21% → 90.16%**（扩至 22 例，覆盖 `apiGet/Post/Put/Delete` 封装 + `handleResponse` 全部分支：204/4xx/5xx/非标准错误体/silent/网络错误/AbortError）；`http-probe` **0% → 87.27%**（新增 9 例，jsdom + `@testing-library/react` `renderHook` 覆盖 `useHTTPProbe` hook + `sortAndLimitPorts`/`invalidatePortCache`）。前端 lib 总覆盖率 **91.03%**。
+- **P3 CI 接入**：`.github/workflows/coverage.yml`（push/PR 触发，`go test -coverprofile` 上传 `go-coverage` + `vitest --coverage` 上传 `web-coverage` artifact，**非阻断、暂不设备阈值**）；`Makefile` 新增 `cover`/`cover-web`；`.gitignore` 补充 `cover.html`/`web/coverage/`。
+- **P3 构建修正**：修复 P2 遗留 `pnpm build` 实际失败——`web/tsconfig.json` 的 `tsc -b` 将 `*.test.ts` 纳入严格类型检查（`noUncheckedIndexedAccess` + `ApiError.code` 必填）致测试类型错误；修正为 `exclude` 测试文件出生产构建（标准做法，测试仍由 vitest 执行）。修正后 `pnpm build` 真通过。
+- **闭环**：L-01-001（-0.150）/ L-04-001（-0.250）回收 → 质量水位 **97.84 / 100**。`cmd/supd` 决策性不覆盖。
+- **验证全绿**：`go build/vet/test ./...` ✅；`pnpm test` **60 例** ✅；`pnpm build` ✅；`make cover` 后端总覆盖 **73.6%** ✅。
+- **风险记录**：`buildStopConfigs` 对 `result.Discovery==nil` 无保护，生产路径 Discovery 总由 bootstrap 赋值，非可达；按维护期约束未改生产代码。
+- **未提交**：本轮新增测试文件均为 untracked；v0.0.21（commit `5a82e07` + tag）仍本地未推送，按用户"暂不推送"决策保留。
+
+**P4（Go 核心包攻坚，2026-07-24 收尾）**：
+- 攻"可 hermetic 测 + 高价值"核心域：6 个新增测试文件共 **35 例**（`core/state_machine`、`core/pidfile`、`extension/cron_scheduler`、`extension/trigger_cron`、`extension/dispatcher`、`api/service_operator`）。
+- **真实增量**（移走 P4 测试文件测基线、再还原比对 statement coverage）：后端总 **73.6% → 74.9%**（+1.3pp）；包级 `core` 81.6→**84.6%**、`extension` 76.4→**80.4%**、`api` 68.0→**68.6%**；逐文件最高 `pidfile` +40.7pp（23.7→64.4）、`cron_scheduler` +26.4pp（40.2→66.7）、`state_machine` +19.1pp（74.5→93.6）。
+- `task_manager.go` 因 `task_manager_test.go` 已充分覆盖，按"已充分覆盖不 blanket uplift"护栏**跳过**；`state_test.go` 已极完备，P4 仅补 publisher 分支不重写。
+- 验证全绿：`go build/vet/test ./...` ✅（core 51.9s / extension 34.3s / api 4.7s 无 FAIL）；全部 hermetic，未改生产代码。
+- **未提交（P4）**：6 个新增 Go 测试文件均为 untracked；v0.0.21 仍本地未推送（用户"暂不推送"决策）。

@@ -1,0 +1,79 @@
+name: 覆盖率报告
+
+# 覆盖率观测：跑后端/前端测试并上传覆盖率报告为 artifact。
+# 设计原则（见 docs/devlog 覆盖率计划）：先不设备阈值门禁，避免噪声；
+# 观测 2~3 周后若稳定，再于本 workflow 加 `fail-on-threshold` 步骤。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend-coverage:
+    name: 后端覆盖率（Go）
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 设置 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: 运行测试并生成覆盖率
+        run: |
+          go test ./... -coverprofile=cover.out
+          go tool cover -func=cover.out | tail -1
+          go tool cover -html=cover.out -o cover.html
+
+      - name: 上传后端覆盖率报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage
+          path: |
+            cover.out
+            cover.html
+          retention-days: 14
+
+  frontend-coverage:
+    name: 前端覆盖率（Vitest）
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 设置 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: 设置 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: 安装依赖
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      - name: 运行前端测试 + 覆盖率
+        working-directory: web
+        run: pnpm test -- --coverage
+
+      - name: 上传前端覆盖率报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-coverage
+          path: web/coverage/
+          retention-days: 14

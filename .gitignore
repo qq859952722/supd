@@ -24,6 +24,10 @@ extension.test
 *.out
 *.test
 coverage.out
+cover.html
+
+# Frontend coverage report (Vitest)
+web/coverage/
 
 # Node / Frontend build & dependencies
 node_modules/

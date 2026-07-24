@@ -169,11 +169,102 @@ async function getLatestRelease(apiUrl) {
   return { version, assets: data.assets || [] };
 }
 
-/** 获取系统架构（uname -m 是必要外部依赖，tjs 无内置替代） */
+/** 查找 supd 工作区共享 runtimes/ 目录中的 WASM 解压模块 */
+async function findSharedWasmPath() {
+  const baseDir = tjs.env.SUPD_BASE_DIR || '';
+  const candidates = [
+    baseDir ? `${baseDir}/runtimes/archive-decompress.wasm` : '',
+    baseDir ? `${baseDir}/runtimes/archive.wasm` : '',
+    `${serviceDir}/../../runtimes/archive-decompress.wasm`,
+    `${serviceDir}/../../runtimes/archive.wasm`,
+    `/etc/supd/runtimes/archive-decompress.wasm`,
+    `/etc/supd/runtimes/archive.wasm`,
+    `${tjs.cwd}/runtimes/archive-decompress.wasm`,
+    `${tjs.cwd}/runtimes/archive.wasm`,
+  ].filter(Boolean);
+
+  for (const p of candidates) {
+    try {
+      await tjs.stat(p);
+      return p;
+    } catch (e) {}
+  }
+  return null;
+}
+
+/** 通用解压归档文件（优先使用 shared runtimes/ 下的 WASM 模块，未找到时平滑降级为系统 Shell 工具） */
+async function extractArchive(archivePath, extractDir, type) {
+  const wasmPath = await findSharedWasmPath();
+  if (wasmPath) {
+    try {
+      console.log(`[WASM] 检测到共享 WASM 解压模块: ${wasmPath}`);
+      const wasiModule = await import('tjs:wasi');
+      const WASI = wasiModule.WASI;
+      const wasi = new WASI({
+        version: 'wasi_snapshot_preview1',
+        args: ['archive-extract', archivePath, extractDir],
+        env: tjs.env,
+      });
+      const wasmBytes = await tjs.readFile(wasmPath);
+      const { instance } = await WebAssembly.instantiate(wasmBytes, wasi.getImportObject());
+      wasi.start(instance);
+      console.log('[WASM] 归档包解压成功');
+      return;
+    } catch (e) {
+      console.log(`[WASM Fallback] WASM 解压未成功: ${e.message}，降级使用外部工具`);
+    }
+  }
+
+  // 降级使用系统 CLI 解压
+  if (type === 'tar.xz') {
+    await runCmd(['tar', '-xf', archivePath, '-C', extractDir]);
+  } else if (type === 'zip') {
+    await runCmd(['unzip', '-o', archivePath, '-d', extractDir]);
+  }
+}
+
+/** 纯 JS 递归修改目录属主（替代外部命令 chown -R，降低对系统 Shell 工具的依赖） */
+async function chownRecursive(dirPath, uid, gid) {
+  try {
+    await tjs.chown(dirPath, uid, gid);
+  } catch (e) {}
+  const entries = await listEntries(dirPath);
+  if (!entries) return;
+
+  for (const ent of entries) {
+    const fullPath = `${dirPath}/${ent.name}`;
+    try {
+      await tjs.chown(fullPath, uid, gid);
+    } catch (e) {}
+    if (ent.isDir) {
+      await chownRecursive(fullPath, uid, gid);
+    }
+  }
+}
+
+/** 获取系统架构（优先使用纯 JS 读取 /proc/cpuinfo 与 tjs.system，降级使用 uname -m） */
 async function getArch() {
-  const { stdout } = await runCmd(['uname', '-m']);
-  const m = stdout.trim();
-  return (m === 'aarch64' || m === 'arm64') ? 'arm64' : 'amd64';
+  try {
+    const cpuinfo = new TextDecoder().decode(await tjs.readFile('/proc/cpuinfo'));
+    if (cpuinfo.includes('aarch64') || cpuinfo.includes('ARM') || cpuinfo.includes('Architecture: 8')) {
+      return 'arm64';
+    }
+  } catch (e) {}
+
+  try {
+    const model = tjs.system?.cpus?.[0]?.model || '';
+    if (model.includes('ARM') || model.includes('Cortex') || model.includes('aarch64')) {
+      return 'arm64';
+    }
+  } catch (e) {}
+
+  try {
+    const { stdout } = await runCmd(['uname', '-m']);
+    const m = stdout.trim();
+    return (m === 'aarch64' || m === 'arm64') ? 'arm64' : 'amd64';
+  } catch (e) {
+    return 'amd64';
+  }
 }
 
 /** 下载并安装 transmission-daemon 二进制 */
@@ -189,7 +280,7 @@ async function installBinary(latest, arch) {
   const extractDir = '/tmp/transmission-extract';
   try { await tjs.remove(extractDir); } catch (e) {}
   await tjs.makeDir(extractDir);
-  await runCmd(['tar', '-xf', tmpPath, '-C', extractDir]); // tar 是必要依赖
+  await extractArchive(tmpPath, extractDir, 'tar.xz');
 
   // 用 tjs.readDir 递归查找二进制（替代 find 命令）
   // 匹配 transmission-daemon 及其带版本/架构后缀形式（如 transmission-daemon-4.1.3-amd64），
@@ -225,7 +316,7 @@ async function installWebUI() {
   const extractDir = '/tmp/trwm-extract';
   try { await tjs.remove(extractDir); } catch (e) {}
   await tjs.makeDir(extractDir);
-  await runCmd(['unzip', '-o', tmpPath, '-d', extractDir]); // unzip 是必要依赖
+  await extractArchive(tmpPath, extractDir, 'zip');
 
   // 用 tjs.readDir 递归查找 index.html（替代 find 命令）
   const indexHtml = await findFile(extractDir, /^index\.html$/);
@@ -280,11 +371,15 @@ async function setupDirectories() {
     await tjs.writeFile(settingsPath, encoder.encode(JSON.stringify(defaultSettings, null, 2)));
     console.log('已创建默认 config/settings.json');
   }
-  // chown -R 是必要依赖（tjs.chown 不支持递归）
-  // 修复：校验 chown 退出码 —— 若 supd 非 root 运行则 chown 失败，服务以 nobody 运行时无写权限
-  const chownResult = await runCmd(['chown', '-R', 'nobody:nobody', serviceDir]);
-  if (chownResult.exitCode !== 0) {
-    console.log(`::result:: warning "chown 失败 (exit ${chownResult.exitCode})，目录权限可能不正确。请确保 supd 以 root 运行，否则 nobody 用户可能无法写入配置/下载目录"`);
+  
+  // 校验与递归改属主 (nobody:nobody -> uid 65534, gid 65534)
+  try {
+    await chownRecursive(serviceDir, 65534, 65534);
+  } catch (e) {
+    const chownResult = await runCmd(['chown', '-R', 'nobody:nobody', serviceDir]);
+    if (chownResult.exitCode !== 0) {
+      console.log(`::result:: warning "chown 失败 (exit ${chownResult.exitCode})，目录权限可能不正确。请确保 supd 以 root 运行，否则 nobody 用户可能无法写入配置/下载目录"`);
+    }
   }
 }
 

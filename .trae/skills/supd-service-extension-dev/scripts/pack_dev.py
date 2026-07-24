@@ -41,7 +41,19 @@ def pack_directory(source_dir, output_file=None):
         return tarinfo
 
     with tarfile.open(output_file, "w:gz") as tar:
-        tar.add(source_dir, arcname="", filter=filter_tar)
+        for root, dirs, files in os.walk(source_dir):
+            rel_root = os.path.relpath(root, source_dir)
+            if rel_root == ".":
+                rel_root = ""
+            # 过滤排除目录
+            dirs[:] = [d for d in dirs if d not in exclude_patterns]
+            for f in files:
+                filename = Path(f).name
+                if filename in exclude_patterns or any(filename.endswith(ext.lstrip("*")) for ext in exclude_patterns if ext.startswith("*")):
+                    continue
+                full_p = os.path.join(root, f)
+                arc_p = os.path.join(rel_root, f) if rel_root else f
+                tar.add(full_p, arcname=arc_p)
 
     print(f"打包成功! 产物保存至: {output_file}")
 

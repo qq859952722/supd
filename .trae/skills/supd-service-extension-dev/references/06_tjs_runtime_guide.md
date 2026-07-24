@@ -91,7 +91,7 @@ exit code 127
 | API | 类型 | 说明 |
 |---|---|---|
 | `tjs.version` | string | tjs 版本号（如 `"26.6.0"`） |
-| `tjs.engine` | object | 引擎信息 |
+| `tjs.engine` | object | 引擎信息（`engine.versions`/`engine.features`/`engine.gc`） |
 | `tjs.platform` | string | 平台标识 |
 | `tjs.pid` / `tjs.ppid` | number | 当前/父进程 PID |
 | `tjs.cwd` | string | 当前工作目录 |
@@ -101,7 +101,7 @@ exit code 127
 | `tjs.exePath` | string | tjs 可执行文件路径 |
 | `tjs.args` | string[] | 命令行参数数组 |
 | `tjs.env` | object | **环境变量对象**（如 `tjs.env.HOME`） |
-| `tjs.system` | object | 系统信息（`cpus`/`loadAvg`/`networkInterfaces`/`uptime`/`userInfo`） |
+| `tjs.system` | object | **系统信息属性对象**（`cpus`/`loadAvg`/`networkInterfaces`/`uptime`/`userInfo`）。⚠️ 均是 Getter **属性**，不是函数！ |
 
 #### 文件系统（异步，返回 Promise）
 | API | 说明 |
@@ -109,14 +109,14 @@ exit code 127
 | `await tjs.readFile(path)` | 读取文件，返回 `Uint8Array` |
 | `await tjs.writeFile(path, data)` | 写入文件，data 为 `Uint8Array` 或 `string` |
 | `await tjs.readDir(path)` | 列出目录，返回 `DirHandle`（v26.6.0 中需 `for await` 异步迭代，见 §8.3 `listEntries` 兼容函数） |
-| `await tjs.stat(path)` / `tjs.lstat(path)` | 文件状态，返回含 `mode`/`size`/`mtim` 等 |
+| `await tjs.stat(path)` / `tjs.lstat(path)` | 文件状态，返回对象（含 `mode`/`size`/`mtim`/`uid`/`gid` 及 `isFile`/`isDirectory` 布尔属性） |
 | `await tjs.makeDir(path)` | 创建目录 |
 | `await tjs.makeTempDir()` / `tjs.makeTempFile()` | 创建临时目录/文件 |
 | `await tjs.remove(path)` | 删除文件或目录 |
 | `await tjs.rename(old, new)` | 重命名/移动 |
 | `await tjs.copyFile(src, dst)` | 复制文件 |
 | `await tjs.chmod(path, mode)` | 修改权限（mode 为数字，如 `0o755`） |
-| `await tjs.chown(path, uid, gid)` / `tjs.lchown` | 修改属主 |
+| `await tjs.chown(path, uid, gid)` / `tjs.lchown` | 修改属主（不递归） |
 | `await tjs.realPath(path)` | 解析真实路径 |
 | `await tjs.readLink(path)` | 读取符号链接 |
 | `await tjs.symlink(target, path)` / `tjs.link` | 创建符号/硬链接 |
@@ -127,7 +127,7 @@ exit code 127
 #### 进程与执行
 | API | 说明 |
 |---|---|
-| `await tjs.spawn(args, options)` | 启动子进程，args 为数组，返回进程对象 |
+| `await tjs.spawn(args, options)` | 启动子进程，args 为数组，返回进程对象（需用 `Promise.all` 读取 stdout/stderr 避免死锁） |
 | `await tjs.exec(cmdline)` | 执行命令行字符串 |
 | `tjs.kill(pid, signal)` | 发送信号 |
 | `tjs.exit(code)` | 退出进程 |
@@ -145,27 +145,58 @@ exit code 127
 | API | 说明 |
 |---|---|
 | `tjs.stdin` / `tjs.stdout` / `tjs.stderr` | 标准流对象 |
-| `tjs.addSignalListener(sig, cb)` | 信号监听 |
+| `tjs.addSignalListener(sig, cb)` | 信号监听（如 `'SIGTERM'`） |
 | `tjs.removeSignalListener(sig, cb)` | 移除监听 |
 
 ### 3.2 ES 模块（通过 `import`）
 
-只有以下两个模块需要 `import`，其余 API 都在全局 `tjs` 对象上：
+tjs 提供以下 7 个内置 `tjs:` ES 模块：
 
 ```javascript
-// 路径处理（同 Node.js path 模块）
+// 1. 路径处理（tjs:path）
 import path from 'tjs:path';
-path.join('/a', 'b', 'c');     // '/a/b/c'
-path.dirname('/a/b/c.txt');     // '/a/b'
-path.basename('/a/b/c.txt');    // 'c.txt'
-path.extname('/a/b/c.txt');     // '.txt'
-path.resolve('/a', 'b');        // '/a/b'
+path.join('/a', 'b', 'c');       // '/a/b/c'
+path.dirname('/a/b/c.txt');       // '/a/b'
+path.basename('/a/b/c.txt');      // 'c.txt'
+path.extname('/a/b/c.txt');       // '.txt'
+path.resolve('/a', 'b');          // '/a/b'
 
-// 哈希
-import { createHash } from 'tjs:hashing';
+// 2. 哈希摘要（tjs:hashing）
+import { createHash, SUPPORTED_TYPES } from 'tjs:hashing';
+// SUPPORTED_TYPES: md5, sha1, sha224, sha256, sha384, sha512, sha3_256 等
 const hash = createHash('sha256');
-hash.update('data');
-const digest = hash.digest();  // Uint8Array
+hash.update('hello');
+const hexDigest = hash.digest();  // ⚠️ 返回 16 进制字符串（如 "2cf24dba..."），非 Uint8Array
+
+// 3. SQLite 数据库（tjs:sqlite）
+import { Database } from 'tjs:sqlite';
+const db = new Database(':memory:');
+db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)');
+const stmt = db.prepare('INSERT INTO users (name) VALUES (?)');
+stmt.run('Alice');
+stmt.finalize();
+const select = db.prepare('SELECT * FROM users');
+const rows = select.all();        // 返回行对象数组
+select.finalize();
+db.close();
+
+// 4. UUID 生成（tjs:uuid）
+import uuid from 'tjs:uuid';
+const id = uuid.v4();             // 亦可用全局 crypto.randomUUID()
+
+// 5. C 原生 FFI 绑定（tjs:ffi）
+import { dlopen, types, suffix } from 'tjs:ffi';
+const lib = dlopen(`libc.${suffix}`, {
+  getpid: { rtype: types.sint32, args: [] }
+});
+
+// 6. 交互式 Readline 命令行（tjs:readline）
+import readline from 'tjs:readline';
+const rl = readline.createInterface({ input: tjs.stdin, output: tjs.stdout });
+
+// 7. WASI 支持（tjs:wasi）
+import { WASI } from 'tjs:wasi';
+const wasi = new WASI({ version: 'wasi_snapshot_preview1' });
 ```
 
 ### 3.3 Web Platform APIs（全局，无需 import）
@@ -173,17 +204,18 @@ const digest = hash.digest();  // Uint8Array
 | 类别 | 可用 API |
 |---|---|
 | **HTTP** | `fetch`, `Request`, `Response`, `Headers`, `FormData` |
+| **加密 (Web Crypto)** | `crypto.randomUUID()`, `crypto.getRandomValues()`, `crypto.subtle` (`digest`, `encrypt`, `decrypt`, `sign`, `verify`, `importKey`, `exportKey`) |
 | **流** | `ReadableStream`, `WritableStream`, `TransformStream` |
-| **编码** | `TextEncoder`, `TextDecoder`, `atob`, `btoa` |
-| **压缩** | `CompressionStream`, `DecompressionStream` |
+| **编码** | `TextEncoder`, `TextDecoder`, `TextEncoderStream`, `TextDecoderStream`, `atob`, `btoa` |
+| **压缩** | `CompressionStream`, `DecompressionStream`（gzip / deflate） |
 | **URL** | `URL`, `URLSearchParams`, `URLPattern` |
-| **WebSocket** | `WebSocket`, `WebSocketStream` |
-| **Socket** | `TCPSocket`, `TCPServerSocket`, `TLSSocket`, `UDPSocket` |
-| **定时器** | `setTimeout`, `setInterval`, `clearTimeout`, `clearInterval` |
-| **二进制** | `Uint8Array`, `Blob`, `File`, `FileReader` |
-| **其他** | `console`, `crypto`, `performance`, `AbortController`, `localStorage`, `Worker`, `XMLHttpRequest` |
+| **WebSocket** | `WebSocket`, `WebSocketStream`, `WebSocketError` |
+| **Socket** | `TCPSocket`, `TCPServerSocket`, `TLSSocket`, `TLSServerSocket`, `UDPSocket`, `PipeSocket`, `PipeServerSocket` |
+| **定时器与微任务** | `setTimeout`, `setInterval`, `clearTimeout`, `clearInterval`, `queueMicrotask` |
+| **二进制与深拷贝** | `Uint8Array`, `Blob`, `File`, `FileReader`, `structuredClone()` |
+| **其他 Web API** | `console`, `performance` (`performance.now()`), `AbortController`, `localStorage`, `sessionStorage`, `Worker`, `XMLHttpRequest`, `WebAssembly` |
 
-> **注意**：tjs **没有** Node.js 的 `Buffer`、`require`、`process`、`__dirname`。使用 `TextEncoder`/`TextDecoder` 替代 Buffer。
+> **注意**：tjs **没有** Node.js 的 `Buffer`、`require`、`process`、`__dirname`。使用 `TextEncoder`/`TextDecoder` 替代 Buffer，使用 `tjs.env` 替代 `process.env`。
 
 ### 3.4 supd 注入的环境变量
 

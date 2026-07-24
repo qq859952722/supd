@@ -6,7 +6,7 @@ VERSION    ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "
 BUILD_TIME := $(shell date -u +%Y%m%d)
 LDFLAGS    := -ldflags "-X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME)"
 
-.PHONY: all build dev test vet lint clean web
+.PHONY: all build dev test vet lint clean web cover
 
 ## 生产构建：先编译前端，再 go build 嵌入
 all: web build
@@ -39,3 +39,16 @@ web:
 clean:
 	rm -f $(BINARY)
 	rm -rf web/dist
+
+## 覆盖率：生成 cover.out 与 HTML 报告（观测用，不设备阈值）
+cover:
+	go test ./... -coverprofile=cover.out
+	@echo "--- 总覆盖率 ---"
+	go tool cover -func=cover.out | tail -1
+	go tool cover -html=cover.out -o cover.html
+	@echo "HTML 报告已生成: cover.html"
+
+## 前端覆盖率（需要 pnpm install 完成）
+cover-web:
+	cd web && pnpm test -- --coverage
+
