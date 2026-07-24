@@ -91,7 +91,7 @@ func (e *Executor) buildExecContext(runID string, meta *config.ExtensionMeta, tc
 		return nil, fmt.Errorf("extension %s: resolve run_as: %w", meta.Name, rerr)
 	}
 	if warn != "" {
-		slog.Warn(warn, "extension", meta.Name)
+		slog.Warn(warn, "extension", meta.Name, "run_id", runID)
 	}
 	var credential *syscall.Credential
 	// 仅当目标用户不是当前用户时才设置 Credential（避免不必要的身份切换）
@@ -171,7 +171,7 @@ func (e *Executor) startOutputGoroutines(meta *config.ExtensionMeta, tc TriggerC
 			if extLogger != nil {
 				// C-01-006: 记录写入错误，不阻塞主流程
 				if _, werr := extLogger.Write([]byte(line)); werr != nil {
-					slog.Warn("extension log write failed", "extension", meta.Name, "stream", "stdout", "error", werr)
+					slog.Warn("extension log write failed", "extension", meta.Name, "run_id", runID, "log_dir", e.logDir, "stream", "stdout", "error", werr)
 				}
 			}
 		}
@@ -187,7 +187,7 @@ func (e *Executor) startOutputGoroutines(meta *config.ExtensionMeta, tc TriggerC
 			if extLogger != nil {
 				// C-01-006: 记录写入错误，不阻塞主流程
 				if _, werr := extLogger.Write(line); werr != nil {
-					slog.Warn("extension log write failed", "extension", meta.Name, "stream", "stderr", "error", werr)
+					slog.Warn("extension log write failed", "extension", meta.Name, "run_id", runID, "log_dir", e.logDir, "stream", "stderr", "error", werr)
 				}
 			} else {
 				// C-05-002 兜底：extLogger 创建失败时，stderr 透传到 slog 便于诊断
@@ -367,7 +367,7 @@ func (e *Executor) Execute(ctx context.Context, meta *config.ExtensionMeta, tc T
 			result.ExitCode = wr.exitCode
 		} else {
 			if err := process.SendSignal(syscall.SIGTERM); err != nil {
-				slog.Warn("failed to send SIGTERM on context cancel", "error", err)
+				slog.Warn("failed to send SIGTERM on context cancel", "extension", meta.Name, "run_id", ec.runID, "error", err)
 			}
 			select {
 			case wr = <-waitCh:
@@ -376,10 +376,10 @@ func (e *Executor) Execute(ctx context.Context, meta *config.ExtensionMeta, tc T
 				result.ExitCode = wr.exitCode
 			case <-time.After(5 * time.Second):
 				// 5s 后仍未退出 → SIGKILL 强杀 → killed
-				slog.Warn("process did not exit 5s after SIGTERM, sending SIGKILL")
+				slog.Warn("process did not exit 5s after SIGTERM, sending SIGKILL", "extension", meta.Name, "run_id", ec.runID)
 				// C-05-001: 记录 KillProcessGroup 错误，与 timeout.go 保持一致
 				if err := process.KillProcessGroup(); err != nil {
-					slog.Warn("failed to send SIGKILL after context cancel", "extension", meta.Name, "error", err)
+					slog.Warn("failed to send SIGKILL after context cancel", "extension", meta.Name, "run_id", ec.runID, "error", err)
 				}
 				wr = <-waitCh
 				result.State = TaskKilled
@@ -440,7 +440,7 @@ func (e *Executor) Execute(ctx context.Context, meta *config.ExtensionMeta, tc T
 	if extLogger != nil {
 		// C-01-006: 记录关闭错误，不影响任务结果
 		if cerr := extLogger.Close(); cerr != nil {
-			slog.Warn("extension log close failed", "extension", meta.Name, "error", cerr)
+			slog.Warn("extension log close failed", "extension", meta.Name, "run_id", ec.runID, "log_dir", e.logDir, "error", cerr)
 		}
 	}
 
