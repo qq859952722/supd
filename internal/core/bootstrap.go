@@ -670,191 +670,58 @@ func (b *Bootstrap) writeServiceLog(name string, level, message string) {
 // superviseService 监督单个服务的进程，处理退出后的自动重启
 // REQ-F-006: 每个服务一个专属 Wait goroutine（避免僵尸进程）
 // REQ-F-008: 进程意外退出时按 restart policy 自动重启
+// M-04-001/TD-003 修复：抽取共享 RunSupervisor，此处为薄包装
 func (b *Bootstrap) superviseService(ctx context.Context, name string, svcEntry *watch.ServiceEntry, sm *StateMachine, proc *Process, engine *RestartEngine) {
-	exitCode, signaled, sig := proc.Wait()
-
-	slog.Debug("process exited",
-		"service", name,
-		"exitCode", exitCode,
-		"signaled", signaled,
-		"signal", sig)
-
-	// 进程退出信息写入服务日志，用户可通过日志页面查看退出原因
-	if signaled {
-		b.writeServiceLog(name, "warn", fmt.Sprintf("process killed by signal: %s (exit code: %d)", sig, exitCode))
-	} else if exitCode != 0 {
-		b.writeServiceLog(name, "warn", fmt.Sprintf("process exited with code: %d", exitCode))
-	} else {
-		b.writeServiceLog(name, "warn", "process exited unexpectedly (exit code: 0)")
+	callbacks := SupervisorCallbacks{
+		WriteServiceLog: b.writeServiceLog,
+		PublishEvent:    b.cfg.EventPublisher,
+		OnFailure: func(fCtx context.Context, n string, exitCode, signal, restartCount, pid int) {
+			if b.cfg.OnServiceFailure != nil {
+				// 原行为：用 context.Background()，OnFailure 不受 supervisor ctx 影响
+				b.cfg.OnServiceFailure(context.Background(), n, exitCode, signal, restartCount, pid)
+			}
+		},
+		RuntimeRegistry: b.result.RuntimeRegistry,
+		BuildEnv: func(n string) []string {
+			return BuildServiceProcessEnv(b.cfg.BaseDir, n, b.result.Config.EnvFiles)
+		},
+		RegisterProcess: func(n string, p *Process) {
+			b.result.ProcessMgr.Register(n, p)
+		},
+		RebuildLogger:        b.rebuildLogger,
+		RecordRestartHistory: nil, // bootstrap 不记录历史
+		SpawnNextSupervisor: func(n string, entry *watch.ServiceEntry, s *StateMachine,
+			p *Process, e *RestartEngine) context.Context {
+			newCtx, newCancel := context.WithCancel(context.Background())
+			b.cancelFuncsMu.Lock()
+			b.result.CancelFuncs[n] = newCancel
+			b.cancelFuncsMu.Unlock()
+			go b.superviseService(newCtx, n, entry, s, p, e)
+			// 返回旧 ctx：bootstrap 的 readiness 用 supervisor 自己的 ctx（与原行为一致）
+			return ctx
+		},
+		RunReadiness: func(rCtx context.Context, n string, entry *watch.ServiceEntry,
+			s *StateMachine, p *Process, pre ReadinessChecker) error {
+			workdir := entry.Config.Workdir
+			if workdir == "" {
+				workdir = filepath.Dir(entry.ConfigPath)
+			}
+			env := BuildServiceProcessEnv(b.cfg.BaseDir, n, b.result.Config.EnvFiles)
+			// 返回 error，供 RunSupervisor 区分进程退出 vs 超时
+			return b.checkReadiness(rCtx, n, entry.Config.Readiness, s, p, pre, workdir, env)
+		},
+		Source: "cli",
 	}
 
-	// REQ-2.9.7: 进程退出时发布service_died/service_exited事件
-	if b.cfg.EventPublisher != nil {
-		eventType := "service_exited"
-		if signaled {
-			eventType = "service_died"
-		}
-		b.cfg.EventPublisher.Publish(eventType, map[string]any{
-			"service":   name,
-			"exit_code": exitCode,
-			"signaled":  signaled,
-			"signal":    int(sig),
-		})
-	}
+	RunSupervisor(ctx, name, svcEntry, sm, proc, engine, callbacks)
+}
 
-	// A-02-001 修复：区分手动停止与意外崩溃，手动停止不算 failure（规格 §2.1.4）
-	// - StateStopping/StateDown：手动停止流程触发，不调用 on_failure
-	// - StateUp/StateReady/StateStarting：意外崩溃，触发 on_failure
-	currentState := sm.Current()
-	if b.cfg.OnServiceFailure != nil && currentState != StateStopping && currentState != StateDown {
-		sigInt := 0
-		if signaled {
-			sigInt = int(sig)
-		}
-		if exitCode != 0 || signaled {
-			// A-05-001 修复：传递 engine.Retries()，使 SUPD_SERVICE_RESTART_COUNT 反映实际重启次数
-			// 规格 §2.2.5: 传递 proc.PID()（进程退出前的 PID），使 SUPD_SERVICE_PID 可用
-			b.cfg.OnServiceFailure(context.Background(), name, exitCode, sigInt, engine.Retries(), proc.PID())
-		}
-	}
-
-	// 如果服务已不在运行状态（手动停止、已失败等），不重启
-	if currentState != StateUp && currentState != StateReady && currentState != StateStarting {
-		return
-	}
-
-	// REQ-F-008: 检查重启策略
-	engine.ResetIfNeeded()
-	if !engine.ShouldRestart(exitCode, signaled, sig) {
-		// A-02-001 修复：区分 failed vs down
-		// 规格: failed = 永久失败（达到 max_retries 或 policy=never）
-		// - never 策略：进程退出 → failed（规格明确定义）
-		// - on-failure 策略 + 正常退出(exit 0)：不算失败 → down
-		// - on-failure 策略 + 异常退出但不应重启（已被 ShouldRestart 过滤）：→ down
-		// 状态机不允许 up/ready→down 转移（10条规则固定），使用 ResetTo
-		// 详见 docs/devlog/deviations.md DEV-010（规格漏洞变通方案）
-		if engine.Policy() == RestartNever {
-			sm.Transition(EventMaxRetries) // → failed
-		} else {
-			// on-failure + 正常退出：进入 down（用户可手动重启）
-			sm.ResetTo(StateDown)
-		}
-		return
-	}
-
-	if engine.MaxRetriesReached() {
-		sm.Transition(EventMaxRetries)
-		return
-	}
-
-	// 重启允许
-	engine.IncrementRetries()
-	if _, ok := sm.Transition(EventRestartAllowed); !ok {
-		// 状态转移失败（例如状态已变更），不再重启
-		return
-	}
-
-	delay := engine.BackoffDuration()
-	slog.Info("restarting service after unexpected exit",
-		"service", name,
-		"attempt", engine.Retries(),
-		"delay", delay)
-
-	// 退避等待：可被停止请求中断
-	select {
-	case <-time.After(delay):
-		// 正常等待结束，继续重启
-	case <-ctx.Done():
-		// 被停止请求中断，直接转 down
-		slog.Info("restart backoff aborted by stop request", "service", name)
-		// 状态转换可能已由 StopService 执行，此处幂等处理
-		if sm.Current() == StateStarting {
-			sm.Transition(EventStopRequested) // starting → stopping
-			sm.Transition(EventBackoffAbort)  // stopping → down
-		}
-		return
-	}
-
-	// 退避等待结束后重新检查状态，防止等待期间状态已被外部改变（如手动停止）
-	if sm.Current() != StateStarting {
-		slog.Info("service state changed during backoff, skip restart", "service", name, "state", sm.Current())
-		return
-	}
-
-	// 构建命令（runtime 解析）
-	command := svcEntry.Config.Command
-	if svcEntry.Config.Runtime != "" && b.result.RuntimeRegistry != nil {
-		if rt, err := config.Resolve(b.result.RuntimeRegistry, svcEntry.Config.Runtime); err == nil && rt.Available {
-			command = append([]string{rt.AbsPath}, command...)
-		}
-	}
-
-	// 构建环境变量
-	// 规格 §2.2.4: 服务进程合并 3 层 env（与 startService 一致，重启时也需重新加载 env.yaml）
-	env := BuildServiceProcessEnv(b.cfg.BaseDir, name, b.result.Config.EnvFiles)
-	workdir := svcEntry.Config.Workdir
-	if workdir == "" {
-		workdir = filepath.Dir(svcEntry.ConfigPath)
-	}
-
-	// A-03-002 修复：fd_notify readiness 需在 StartProcess 前创建 checker
-	var preChecker ReadinessChecker
-	var extraFiles []*os.File
-	if svcEntry.Config.Readiness != nil && svcEntry.Config.Readiness.Type == "fd_notify" {
-		nc, cerr := NewNotifyChecker(svcEntry.Config.Readiness)
-		if cerr != nil {
-			slog.Error("readiness fd_notify for restart", "service", name, "error", cerr)
-			sm.Transition(EventMaxRetries)
-			return
-		}
-		preChecker = nc
-		extraFiles = []*os.File{nc.WriterFd()}
-	}
-
-	// 启动新进程
-	// REQ-F-023, §2.2.13: 通过 StartServiceProcess 解析身份配置（user 或 uid 模式），
-	// 身份解析失败或非 root 切换其他用户时返回 *ServiceError 拒绝启动
-	newProc, err := StartServiceProcess(name, command, env, workdir, svcEntry.Config.ToCredentialSpec(), svcEntry.ConfigPath, extraFiles...)
-	if err != nil {
-		if preChecker != nil {
-			preChecker.Close()
-		}
-		slog.Error("failed to restart service",
-			"service", name,
-			"user", svcEntry.Config.User,
-			"config_path", svcEntry.ConfigPath,
-			"error", err)
-		// 启动失败原因写入服务日志
-		b.writeServiceLog(name, "error", fmt.Sprintf("restart failed: %s", err))
-		sm.Transition(EventMaxRetries)
-		return
-	}
-
-	// A-03-002 修复：StartProcess 成功后关闭 supd 侧的管道写端
-	// C-01-001 修复：CloseWriter 错误记录日志，便于诊断管道异常
-	if nc, ok := preChecker.(*NotifyChecker); ok {
-		if err := nc.CloseWriter(); err != nil {
-			slog.Warn("close notify pipe writer failed", "service", name, "error", err)
-		}
-	}
-
-	// 状态转移: starting → up
-	sm.Transition(EventProcessStarted)
-	engine.RecordStart()
-
-	// 更新进程管理器
-	b.result.ProcessMgr.Register(name, newProc)
-
-	// 创建新日志器
-	// C-04-001 修复：重启服务时先关闭旧 logger 的文件句柄，避免每次重启泄漏一个 fd
-	// B-01-RACE 修复：读写 Loggers map 时加锁，防止与 startAutostartServices 或其他 supervisor 竞态
-	// N-G-01 修复：传入 logging 配置使轮转生效
+// rebuildLogger 关闭旧日志器，创建并启动新日志器
+// M-04-001 修复：从 superviseService 中提取为独立方法
+func (b *Bootstrap) rebuildLogger(name string, newProc *Process, maxSizeMB, maxFiles int) {
 	logBaseDir := filepath.Join(b.cfg.LogDir, "services")
-	maxSizeMB, maxFiles := 0, 0
-	if cfg := svcEntry.Config.Logging; cfg != nil {
-		maxSizeMB, maxFiles = cfg.MaxSizeMB, cfg.MaxFiles
-	}
 	b.loggersMu.Lock()
+	defer b.loggersMu.Unlock()
 	if oldLogger, ok := b.result.Loggers[name]; ok && oldLogger != nil {
 		if closeErr := oldLogger.Close(); closeErr != nil {
 			slog.Warn("close old service logger failed on restart",
@@ -868,27 +735,5 @@ func (b *Bootstrap) superviseService(ctx context.Context, name string, svcEntry 
 	} else {
 		newLogger.Start(newProc.StdoutPipe(), newProc.StderrPipe())
 		b.result.Loggers[name] = newLogger
-	}
-	b.loggersMu.Unlock()
-
-	// 为新进程启动 supervisor goroutine（使用新的 cancel context）
-	// B-01-RACE 修复：写 CancelFuncs map 时加锁
-	newCtx, newCancel := context.WithCancel(context.Background())
-	b.cancelFuncsMu.Lock()
-	b.result.CancelFuncs[name] = newCancel
-	b.cancelFuncsMu.Unlock()
-	go b.superviseService(newCtx, name, svcEntry, sm, newProc, engine)
-
-	// 重启后执行 readiness 检查
-	if svcEntry.Config.Readiness != nil {
-		if err := b.checkReadiness(ctx, name, svcEntry.Config.Readiness, sm, newProc, preChecker, workdir, env); err != nil {
-			// 检查是否是进程退出导致的错误
-			select {
-			case <-newProc.Done():
-				// 进程在 readiness 检查期间退出，新的 supervisor goroutine 会处理重启
-			default:
-				// readiness 超时，checkReadiness 已转移状态到 failed
-			}
-		}
 	}
 }

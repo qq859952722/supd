@@ -175,3 +175,4 @@ git push origin vX.Y.Z
 | 2026-07-21 | v0.0.2 | 端口迁移 7979、init 示例、script readiness 修复 |
 | 2026-07-21 | v0.0.1 | 首次发布 |
 | 2026-07-24 | v0.0.20 | transmission-updater run.js 7 项 bug 修复（含 3 项 tjs 运行时发现：readDir DirHandle / isDirectory getter / --version stderr）+ 新增代码审计与运行测试全通过 |
+| 2026-07-24 | v0.0.21 | M-04-001/TD-003 supervisor 重构闭环：抽取共享 `internal/core/supervisor.go`（SupervisorCallbacks 依赖注入）+ 审计（圈复杂度最高单函数 43→19）+ 7 场景真实运行测试全通过；修复 3 处 ctx/error 硬伤与 P1（EventRestartAllowed→Abort 静默返回）；无新增 bug |

@@ -10,7 +10,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：17 类审计评分 **97.44 / 100（⭐ 优秀）**；913+ 单元测试通过；零竞态；staticcheck/go vet 零警告
-- **当前版本**：v0.0.20（版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.0.21（版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -68,9 +68,8 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 |------|------|------|
 | L-01-001 | -0.150 | api 包覆盖率 41.9%（需大量测试代码） |
 | L-04-001 | -0.250 | 缺失端到端集成测试代码（N 类已手动验证） |
-| M-04-001 | -0.160 | superviseService 圈复杂度 43（修复需重构） |
 
-技术债：🟡 TD-003（superviseService 重复，部分修复）
+技术债：无活债务（M-04-001/TD-003 已关闭）
 
 ---
 
@@ -99,19 +98,17 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-24 | Transmission 服务/扩展开发 + Skill 文档更新 + 端口探测 BUG 修复 | transmission：直接二进制启动+user:nobody+两个tjs扩展；skill §8/§9更新；端口探测Yama LSM降级修复（UID匹配） | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
 | 2026-07-24 | 新增代码审计 + 运行测试 + v0.0.20 发布 | transmission-updater run.js 7 项 bug 修复（含 3 项运行时发现）、审计+测试全通过、版本升级 v0.0.20 | [notes/2026-07-24-audit.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24-audit.md) / [notes/2026-07-24-testplan.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24-testplan.md) |
 | 2026-07-24 | 待办梳理 + 三项优化 | 文档待办全面核实（retry_on_failure已实现、args格式规格禁止）；DEV-007/011/012 撤销偏差并转为规格内容（history直接路径、triggers map、actions 无 icon/enabled）；tracker-updater全局Tracker+动态rpc-port；进程树DFS递归；CPU首次采样200ms补偿；运行状态测试（Go+node mock RPC）全通过 | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
+| 2026-07-24 | M-04-001/TD-003 重构实施 | superviseService CC43+重复 → 抽取共享 supervisor.go（SupervisorCallbacks依赖注入）；修复3处ctx/error硬伤（OnFailure闭包内决定ctx/SpawnNextSupervisor返回ctx/RunReadiness返回error）；3处遗漏补全（RuntimeRegistry有意变更/Source字段/DecideRestart签名）；新增RestartActionAbort；bootstrap CC3 + service_operator CC6；T1-T6测试全通过 | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
+| 2026-07-24 | M-04-001/TD-003 审计+运行测试全通过 + v0.0.21 发布 | 审计（git show HEAD 逐行比对 + gocyclo + -race + T1-T6）通过；7 场景 A–G 真实运行测试全通过（无 panic/泄漏/回归）；fd_notify 重启重新就绪经 200ms 细粒度轮询确认；版本升级 v0.0.21 并推送 origin/main | [notes/2026-07-24-audit-supervisor.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24-audit-supervisor.md) / [notes/2026-07-24-testplan-supervisor.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24-testplan-supervisor.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-24 待办梳理 + 三项优化实现）
+## 八、最近会话重点（2026-07-24 M-04-001/TD-003 审计 + 运行测试 + v0.0.21 发布）
 
-**文档/代码待办全面梳理**：grep 全仓扫描发现代码侧无 TODO/FIXME/未实现注释，所有"未实现"声明集中在 docs/devlog。逐项核实后：
-- `retry_on_failure` 实际已实现（failure_handler.go/cron_scheduler.go/trigger_cron.go + 测试）→ 已更正文档（DEV-011 偏差记录已移除，triggers 格式现为规格内容）
-- `actions[].args` 对象格式：规格 §2.2.3 明确禁止，qbittorrent meta.yaml 的"暂不支持"注释有误导 → 已改为"按规格禁止"
-- DEV-007/011/012 偏差记录已撤销：直接更新规格 v1.5 使规格与实现一致（history 直接路径、triggers map 格式、actions 无 icon/enabled），deviations.md 对应条目已删除
+**审计通过**：逐行比对 `git show HEAD` 两份原始 superviseService，确认重构在 3 处 ctx/error 硬伤、P1（EventRestartAllowed→Abort 静默返回）、Source 字段、RuntimeRegistry 有意变更上行为一致；gocyclo 实测 bootstrap.superviseService 43→3、service_operator.superviseService 32→6、最高单函数 19；`go test -race` 通过；T1-T6 全过。详见 `notes/2026-07-24-audit-supervisor.md`。
 
-**三项优化实现**：
-1. **tracker-updater 全局 Tracker 接口**：从逐 torrent `torrent-set` 改为 `session-set` + `default_trackers`（Transmission 4.0+ RPC），新种子自动获得；从 `settings.json` 动态读取 `rpc-port`（不再硬编码 9091），`SUPD_SERVICE_DIR` 环境变量定位配置文件
-2. **进程树递归**：从"主+子两层"改为 DFS 递归遍历（`buildPPIDMap` 一次 /proc 扫描 + `collectTreeDFS` 深度遍历，最大深度 10），降级路径 `collectProcessTreeByCommand` 同步改为递归
-3. **CPU 首次采样补偿**：`procCache` 改为存储 `procEntry`（含 `baselineSet` 时间戳），`collectProcessResources` 对新基线(<1s) 进程等待 200ms 后重采样，首次 API 请求也返回真实 CPU 值
+**运行测试全通过（7 场景 A–G）**：真实 supd 实例 + 真实服务 + 真实扩展验证 restart/failed/down/ready/on_failure/手动停止不触发 on_failure/fd_notify 重启重新就绪/退避中断全部正确；无 panic、无 goroutine/进程泄漏、无由重构引入的行为回归。**未引入任何新 bug**。详见 `notes/2026-07-24-testplan-supervisor.md`。
 
-**验证**：go build/vet/test 全通过（925+），前端 pnpm build 待验证。
+**版本发布 v0.0.21**：PATCH 级（技术债清理/重构）。README 版本占位更新（v0.0.19→v0.0.21），tag v0.0.21 已推送 origin/main，CI 将构建双架构二进制与 Docker 镜像。
+
+**M-04-001/TD-003 已关闭，不再为活债务**。

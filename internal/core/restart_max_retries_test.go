@@ -217,3 +217,77 @@ restart:
 		t.Errorf("retries count = %d, want 3 (max_retries)", retries)
 	}
 }
+
+// TestSupervisorCallbacks_OnFailureInvoked 验证 SupervisorCallbacks.OnFailure 在服务崩溃后被调用。
+// T6 端到端测试 — 使用 Bootstrap.Run 框架（false 命令，always+max_retries=1），
+// 注入 OnServiceFailure 回调，统计调用次数，等待 StateFailed，验证回调被调用 ≥1 次。
+func TestSupervisorCallbacks_OnFailureInvoked(t *testing.T) {
+	if _, err := exec.LookPath("false"); err != nil {
+		t.Skipf("false command not available: %v", err)
+	}
+
+	baseDir, logDir := setupTestDir(t)
+
+	var onFailureCalls int
+	var onFailureCtx context.Context
+
+	writeService(t, baseDir, "on-failure-test", `name: on-failure-test
+version: "1.0"
+command:
+  - "false"
+restart:
+  policy: always
+  backoff_ms: 10
+  max_backoff_ms: 100
+  multiplier: 2
+  max_retries: 1
+  reset_after_seconds: 300
+`)
+
+	cfg := BootstrapConfig{
+		ConfigPath: filepath.Join(baseDir, "config.yaml"),
+		BaseDir:    baseDir,
+		LogDir:     logDir,
+		OnServiceFailure: func(ctx context.Context, serviceName string, exitCode, signal, restartCount, servicePID int) {
+			onFailureCalls++
+			onFailureCtx = ctx
+		},
+	}
+
+	b := NewBootstrap(cfg)
+	result, err := b.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Bootstrap.Run() error = %v", err)
+	}
+	defer cleanupBootstrap(t, result)
+
+	sm, ok := result.StateMachines["on-failure-test"]
+	if !ok {
+		t.Fatal("on-failure-test state machine not found")
+	}
+
+	// 轮询等待状态到达 failed
+	deadline := time.Now().Add(10 * time.Second)
+	var finalState ServiceState
+	for time.Now().Before(deadline) {
+		finalState = sm.Current()
+		if finalState == StateFailed {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if finalState != StateFailed {
+		t.Errorf("on-failure-test should reach failed after 1 retry, got state = %s", finalState)
+	}
+
+	if onFailureCalls < 1 {
+		t.Errorf("OnFailure callback should be called at least once, got %d calls", onFailureCalls)
+	}
+
+	// 验证 ctx 语义：bootstrap 的 OnFailure 闭包使用 context.Background()
+	// 所以 onFailureCtx 不应为 nil
+	if onFailureCtx == nil {
+		t.Error("OnFailure ctx should not be nil")
+	}
+}
