@@ -108,7 +108,7 @@ exit code 127
 |---|---|
 | `await tjs.readFile(path)` | 读取文件，返回 `Uint8Array` |
 | `await tjs.writeFile(path, data)` | 写入文件，data 为 `Uint8Array` 或 `string` |
-| `await tjs.readDir(path)` | 列出目录，返回数组 |
+| `await tjs.readDir(path)` | 列出目录，返回 `DirHandle`（v26.6.0 中需 `for await` 异步迭代，见 §8.3 `listEntries` 兼容函数） |
 | `await tjs.stat(path)` / `tjs.lstat(path)` | 文件状态，返回含 `mode`/`size`/`mtim` 等 |
 | `await tjs.makeDir(path)` | 创建目录 |
 | `await tjs.makeTempDir()` / `tjs.makeTempFile()` | 创建临时目录/文件 |
@@ -317,17 +317,21 @@ async function downloadFile(url, destPath) {
 > 完整可复用的 `runCmd()` / `readStream()` 辅助函数见 §8.3「通用辅助函数」。以下为简要说明：
 
 ```javascript
-// tjs.spawn 启动子进程，stdout/stderr 为 ReadableStream，需流式读取
+// tjs.spawn 启动子进程，stdout/stderr 为 ReadableStream
+// ⚠️ 关键：必须使用 Promise.all 并发读取 stdout 和 stderr，避免管道死锁！
 const proc = await tjs.spawn(['tar', '-xf', path, '-C', dir], {
   stdout: 'pipe',
   stderr: 'pipe',
 });
-// 读取输出：用 readStream() 辅助函数（见 §8.3）流式接收
-const stdout = await readStream(proc.stdout);
+// 并发读取 stdout/stderr（避免子进程写 stderr 超过 64KB 缓冲区阻塞导致死锁）
+const [stdout, stderr] = await Promise.all([
+  readStream(proc.stdout),
+  readStream(proc.stderr),
+]);
 const status = await proc.wait();  // 等待退出，返回 {exitCode}
 ```
 
-> **注意**：`tjs.spawn` 的 `stdout`/`stderr` 是 `ReadableStream` 对象，**不能直接当字符串用**，必须通过 `getReader()` 流式读取（见 §8.3 `readStream()`）。
+> **⚠️ 管道死锁警告**：`tjs.spawn` 的 `stdout`/`stderr` 是 `ReadableStream`。如果串行 `await readStream(proc.stdout)` 再 `await readStream(proc.stderr)`，当子进程大量向 stderr 输出（如 `tar -v`/`unzip`）填满 OS 缓冲区时，子进程会被卡住等待 stderr 消费，而父进程卡在等待 stdout 结束，导致**永久死锁挂起**直至超时。必须使用 `Promise.all` 并发读取。
 
 ### 5.4 读取 action 参数
 
@@ -447,6 +451,37 @@ for (const chunk of chunks) { buffer.set(chunk, pos); pos += chunk.length; }
 
 **注意**：小响应（JSON API、几 KB 文本）用 `await resp.json()` / `await resp.text()` / `await resp.arrayBuffer()` 均正常，问题仅出现在大响应体（>10MB 量级）。
 
+### 7.6 `tjs.readDir` 返回 `DirHandle` 导致 `value is not iterable` 或 `isDirectory is not a function`
+
+**症状**：`TypeError: value is not iterable` 或 `TypeError: ent.isDirectory is not a function`。
+
+**原因**：
+1. 在 txiki.js v26.6.0 中，`tjs.readDir(path)` 返回的是 **`DirHandle`**（异步可迭代对象），直接使用 `for...of` 同步循环会报错。
+2. 迭代出的 `ent` 对象的 `isDirectory` 和 `isFile` 在 v26.6.0 中是**布尔 Getter 属性**（如 `ent.isDirectory`），而不是 Node.js 式的方法（`ent.isDirectory()`）。
+
+**解决**：使用 `listEntries()` 兼容封装函数（见 §8.3），使用 `for await (const ent of dh)` 并兼容属性与方法判断。
+
+### 7.7 子进程管道死锁（stdout 与 stderr 串行读取）
+
+**症状**：扩展运行到子进程执行（如 `tar`/`unzip`/`chown`）时无限挂起至超时。
+
+**原因**：串行 `await readStream(proc.stdout)` 再 `await readStream(proc.stderr)`，若子进程向 stderr 输出大量日志填满 OS pipe buffer (64KB)，子进程阻塞在写 stderr，父进程阻塞在读 stdout，形成死锁。
+
+**解决**：在 `runCmd()` 中使用 `Promise.all([readStream(proc.stdout), readStream(proc.stderr)])` 并发读取（见 §8.3）。
+
+### 7.8 二进制工具 `--version` 输出在 stderr
+
+**症状**：通过子进程获取版本号（如 `daemon --version`）时返回空字符串或匹配失败。
+
+**原因**：部分 C/C++ 工具（如 `transmission-daemon --version`）会将版本帮助信息打印到 `stderr` 而非 `stdout`。
+
+**解决**：合并 `stdout` 与 `stderr` 字符串后再执行正则提取：
+```javascript
+const { stdout, stderr } = await runCmd([binPath, '--version']);
+const m = (stdout + stderr).match(/(\d+\.\d+\.\d+)/);
+const version = m ? m[1] : 'unknown';
+```
+
 ---
 
 ## 8. 外部命令依赖管理（减少外部依赖）
@@ -465,8 +500,8 @@ tjs 扩展应优先使用内置 API，仅在「无等价替代」时才调用外
 | `mv` | `await tjs.rename(old, new)` | 重命名/移动 |
 | `chmod` | `await tjs.chmod(path, 0o755)` | mode 为数字 |
 | `test -f` / `test -d` | `await tjs.stat(path)` try/catch | 抛错即不存在 |
-| `find <dir> -name <pat>` | `findFile()` 见 §8.3 | 递归 `tjs.readDir` |
-| `cp -r` | `copyDir()` 见 §8.3 | 递归 `tjs.readDir` + `tjs.copyFile` |
+| `find <dir> -name <pat>` | `findFile()` 见 §8.3 | 递归 `tjs.readDir` / `listEntries` |
+| `cp -r` | `copyDir()` 见 §8.3 | 递归 `listEntries` + `tjs.copyFile` |
 | `echo > file` | `await tjs.writeFile(path, data)` | data 为 string 或 Uint8Array |
 
 ### 8.2 无 tjs 等价替代、必须保留的外部工具
@@ -497,49 +532,86 @@ async function readStream(stream) {
   return result;
 }
 
-// --- 2. 执行外部命令（tjs 无法替代的场景：tar/unzip/chown 等） ---
+// --- 2. 执行外部命令（带并发读取防止管道死锁） ---
 async function runCmd(args, options = {}) {
   const proc = await tjs.spawn(args, {
     stdout: 'pipe',
     stderr: 'pipe',
     ...options,
   });
-  const stdout = await readStream(proc.stdout);
-  const stderr = await readStream(proc.stderr);
+  // 必须 Promise.all 并发读取，防止 stderr 溢出导致 OS 管道死锁
+  const [stdout, stderr] = await Promise.all([
+    readStream(proc.stdout),
+    readStream(proc.stderr),
+  ]);
   const status = await proc.wait();
   return { stdout, stderr, exitCode: status.exitCode ?? 0 };
 }
 
-// --- 3. 递归查找文件（替代 find 命令） ---
-// pattern 为 RegExp，返回首个匹配的完整路径，未找到返回 null
-async function findFile(dir, pattern) {
-  let entries;
+// --- 3. 目录文件列表兼容读取函数（处理 v26.6.0 DirHandle 异步迭代及属性差异） ---
+async function listEntries(dir) {
+  let dh;
   try {
-    entries = await tjs.readDir(dir);
+    dh = await tjs.readDir(dir);
   } catch (e) {
     return null; // 非目录或不存在
   }
+  // txiki.js v26.6.0: DirHandle (Symbol.asyncIterator)
+  if (dh && typeof dh[Symbol.asyncIterator] === 'function') {
+    const out = [];
+    for await (const ent of dh) {
+      const name = typeof ent === 'string' ? ent : ent.name;
+      let isDir = false;
+      if (typeof ent === 'string') {
+        isDir = false;
+      } else if (typeof ent.isDirectory === 'function') {
+        isDir = ent.isDirectory();
+      } else if (typeof ent.isFile === 'function') {
+        isDir = !ent.isFile();
+      } else {
+        isDir = !!ent.isDirectory; // v26.6.0 布尔 getter 属性
+      }
+      out.push({ name, isDir });
+    }
+    if (typeof dh.close === 'function') { try { await dh.close(); } catch (e) {} }
+    return out;
+  }
+  // 数组兼容格式
+  if (Array.isArray(dh)) {
+    return dh.map((ent) => {
+      const name = typeof ent === 'string' ? ent : ent.name;
+      const isDir = typeof ent === 'string' ? false : (typeof ent.isDirectory === 'function' ? ent.isDirectory() : !!ent.isDir);
+      return { name, isDir };
+    });
+  }
+  return [];
+}
+
+// --- 4. 递归查找文件（支持 RegExp 或 (name)=>boolean 谓词） ---
+async function findFile(dir, matcher) {
+  const entries = await listEntries(dir);
+  if (!entries) return null;
   for (const entry of entries) {
-    const name = typeof entry === 'string' ? entry : entry.name;
-    const fullPath = `${dir}/${name}`;
-    if (pattern.test(name)) return fullPath;
-    const found = await findFile(fullPath, pattern); // 递归子目录
-    if (found) return found;
+    const fullPath = `${dir}/${entry.name}`;
+    const ok = matcher instanceof RegExp ? matcher.test(entry.name) : matcher(entry.name);
+    if (ok) return fullPath;
+    if (entry.isDir) {
+      const found = await findFile(fullPath, matcher);
+      if (found) return found;
+    }
   }
   return null;
 }
 
-// --- 4. 递归复制目录（替代 cp -r） ---
+// --- 5. 递归复制目录（替代 cp -r） ---
 async function copyDir(src, dst) {
   await tjs.makeDir(dst);
-  const entries = await tjs.readDir(src);
+  const entries = await listEntries(src);
+  if (!entries) return;
   for (const entry of entries) {
-    const name = typeof entry === 'string' ? entry : entry.name;
-    const srcPath = `${src}/${name}`;
-    const dstPath = `${dst}/${name}`;
-    let isDir = false;
-    try { (await tjs.readDir(srcPath)); isDir = true; } catch (e) {}
-    if (isDir) {
+    const srcPath = `${src}/${entry.name}`;
+    const dstPath = `${dst}/${entry.name}`;
+    if (entry.isDir) {
       await copyDir(srcPath, dstPath);
     } else {
       await tjs.copyFile(srcPath, dstPath);
@@ -547,7 +619,7 @@ async function copyDir(src, dst) {
   }
 }
 
-// --- 5. 流式下载文件（避免 arrayBuffer 卡死，>10MB 必须用此方式） ---
+// --- 6. 流式下载文件（避免 arrayBuffer 卡死，>10MB 必须用此方式） ---
 async function downloadFile(url, destPath) {
   const resp = await fetch(url, { headers: { 'User-Agent': 'supd-tjs-ext' } });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);

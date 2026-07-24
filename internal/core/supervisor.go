@@ -116,7 +116,7 @@ func RunSupervisor(
 		sm.Transition(EventMaxRetries)
 		return
 	case RestartActionDown:
-		sm.ResetTo(StateDown)
+		sm.Transition(EventNormalExit)
 		return
 	case RestartActionAbort:
 		// P1 修复：EventRestartAllowed 状态转移失败（外部已改变状态），静默退出，不再二次触发 EventMaxRetries

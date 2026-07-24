@@ -17,6 +17,7 @@ const (
 	EventProcessExited    StateEvent = "process_exited"     // 进程正常退出（停止后）
 	EventManualStart      StateEvent = "manual_start"       // 用户手动启动
 	EventBackoffAbort     StateEvent = "backoff_abort"      // 退避等待被停止中断
+	EventNormalExit       StateEvent = "normal_exit"        // 进程正常退出（on-failure + exit 0，不重启转 down）
 )
 
 // StateTransition 记录一次状态转移
@@ -33,7 +34,7 @@ type transitionKey struct {
 }
 
 // validTransitions 合法转移表：key=(fromState, event), value=toState
-// REQ-F-004: 10条转移规则
+// REQ-F-004: 11条转移规则
 var validTransitions = map[transitionKey]ServiceState{
 	// 规则1: pending → starting：所有depends_on服务进入ready后
 	{StatePending, EventDependsReady}: StateStarting,
@@ -74,6 +75,11 @@ var validTransitions = map[transitionKey]ServiceState{
 	// 规则10: down/failed → starting：用户手动启动
 	{StateDown, EventManualStart}:   StateStarting,
 	{StateFailed, EventManualStart}: StateStarting,
+
+	// 规则11: up/ready/starting → down：on-failure 策略下进程正常退出（exit 0）时不自动重启，转 down
+	{StateUp, EventNormalExit}:       StateDown,
+	{StateReady, EventNormalExit}:    StateDown,
+	{StateStarting, EventNormalExit}: StateDown,
 }
 
 type requestKind int
@@ -96,7 +102,7 @@ type transitionResp struct {
 }
 
 // StateMachine 服务状态机
-// REQ-F-004: 7种状态+10条转移规则，channel驱动
+// REQ-F-004: 7种状态+11条转移规则，channel驱动
 // REQ-C-003: goroutine间通过channel通信，禁止共享状态+mutex
 type StateMachine struct {
 	stateVal  atomic.Value   // 当前状态，atomic访问
@@ -149,7 +155,7 @@ func (sm *StateMachine) ResetTo(state ServiceState) {
 }
 
 // Transition 尝试状态转移，返回新状态和是否成功
-// REQ-F-004: 严格按照10条转移规则判定合法性
+// REQ-F-004: 严格按照11条转移规则判定合法性
 func (sm *StateMachine) Transition(event StateEvent) (ServiceState, bool) {
 	result := make(chan transitionResp, 1)
 	select {

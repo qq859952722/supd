@@ -225,6 +225,36 @@ func TestStateMachine_Rule10_FailedToStarting(t *testing.T) {
 	}
 }
 
+// 规则11: up → down：on-failure 策略下进程正常退出 (exit 0)
+func TestStateMachine_Rule11_UpToDown_NormalExit(t *testing.T) {
+	sm := reachState(t, StateUp)
+
+	newState, ok := sm.Transition(EventNormalExit)
+	if !ok || newState != StateDown {
+		t.Errorf("up + normal_exit = (%s, %v), want (down, true)", newState, ok)
+	}
+}
+
+// 规则11: ready → down：on-failure 策略下进程正常退出 (exit 0)
+func TestStateMachine_Rule11_ReadyToDown_NormalExit(t *testing.T) {
+	sm := reachState(t, StateReady)
+
+	newState, ok := sm.Transition(EventNormalExit)
+	if !ok || newState != StateDown {
+		t.Errorf("ready + normal_exit = (%s, %v), want (down, true)", newState, ok)
+	}
+}
+
+// 规则11: starting → down：on-failure 策略下进程正常退出 (exit 0)
+func TestStateMachine_Rule11_StartingToDown_NormalExit(t *testing.T) {
+	sm := reachState(t, StateStarting)
+
+	newState, ok := sm.Transition(EventNormalExit)
+	if !ok || newState != StateDown {
+		t.Errorf("starting + normal_exit = (%s, %v), want (down, true)", newState, ok)
+	}
+}
+
 // 测试关键非法转移
 func TestStateMachine_IllegalTransitions_FromPending(t *testing.T) {
 	illegalEvents := []StateEvent{

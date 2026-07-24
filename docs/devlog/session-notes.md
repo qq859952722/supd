@@ -100,15 +100,15 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-24 | 待办梳理 + 三项优化 | 文档待办全面核实（retry_on_failure已实现、args格式规格禁止）；DEV-007/011/012 撤销偏差并转为规格内容（history直接路径、triggers map、actions 无 icon/enabled）；tracker-updater全局Tracker+动态rpc-port；进程树DFS递归；CPU首次采样200ms补偿；运行状态测试（Go+node mock RPC）全通过 | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
 | 2026-07-24 | M-04-001/TD-003 重构实施 | superviseService CC43+重复 → 抽取共享 supervisor.go（SupervisorCallbacks依赖注入）；修复3处ctx/error硬伤（OnFailure闭包内决定ctx/SpawnNextSupervisor返回ctx/RunReadiness返回error）；3处遗漏补全（RuntimeRegistry有意变更/Source字段/DecideRestart签名）；新增RestartActionAbort；bootstrap CC3 + service_operator CC6；T1-T6测试全通过 | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
 | 2026-07-24 | M-04-001/TD-003 审计+运行测试全通过 + v0.0.21 发布 | 审计（git show HEAD 逐行比对 + gocyclo + -race + T1-T6）通过；7 场景 A–G 真实运行测试全通过（无 panic/泄漏/回归）；fd_notify 重启重新就绪经 200ms 细粒度轮询确认；版本升级 v0.0.21 并推送 origin/main | [notes/2026-07-24-audit-supervisor.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24-audit-supervisor.md) / [notes/2026-07-24-testplan-supervisor.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24-testplan-supervisor.md) |
+| 2026-07-24 | DEV-010 修复 | 补充 EventNormalExit 及 up/ready/starting → down 转移规则（规则 11）；用 Transition(EventNormalExit) 替代 ResetTo(StateDown)；更新需求规格 v1.5 §2.1.1 与 deviations.md 标记已修复 | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-24 M-04-001/TD-003 审计 + 运行测试 + v0.0.21 发布）
+## 八、最近会话重点（2026-07-24 DEV-010 修复）
 
-**审计通过**：逐行比对 `git show HEAD` 两份原始 superviseService，确认重构在 3 处 ctx/error 硬伤、P1（EventRestartAllowed→Abort 静默返回）、Source 字段、RuntimeRegistry 有意变更上行为一致；gocyclo 实测 bootstrap.superviseService 43→3、service_operator.superviseService 32→6、最高单函数 19；`go test -race` 通过；T1-T6 全过。详见 `notes/2026-07-24-audit-supervisor.md`。
-
-**运行测试全通过（7 场景 A–G）**：真实 supd 实例 + 真实服务 + 真实扩展验证 restart/failed/down/ready/on_failure/手动停止不触发 on_failure/fd_notify 重启重新就绪/退避中断全部正确；无 panic、无 goroutine/进程泄漏、无由重构引入的行为回归。**未引入任何新 bug**。详见 `notes/2026-07-24-testplan-supervisor.md`。
-
-**版本发布 v0.0.21**：PATCH 级（技术债清理/重构）。README 版本占位更新（v0.0.19→v0.0.21），tag v0.0.21 已推送 origin/main，CI 将构建双架构二进制与 Docker 镜像。
-
-**M-04-001/TD-003 已关闭，不再为活债务**。
+**DEV-010 偏差修复**：
+- **根因消除**：原代码在 `restart.policy=on-failure` + `exit 0` 场景下使用 `sm.ResetTo(StateDown)` 绕过状态机。
+- **状态机完备**：`internal/core/state_machine.go` 新增 `EventNormalExit` 及 `up/ready/starting` + `EventNormalExit` → `StateDown` 合法转移规则（规则 11）。
+- **流程规范**：`internal/core/supervisor.go` 将 `RestartActionDown` 分支重构为 `sm.Transition(EventNormalExit)`，保证状态转移封闭性与规范事件发布。
+- **文档与测试同步**：`docs/需求规格说明_v1.5.md` §2.1.1 补充规则 11 规格说明；`docs/devlog/deviations.md` DEV-010 标记为已修复；补全 `state_test.go` 规则 11 单元测试。
+- **全量验证**：`go build ./...` + `go vet ./...` + `go test ./... -count=1` + `cd web && pnpm build` 全部通过。

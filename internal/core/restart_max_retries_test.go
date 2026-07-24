@@ -87,7 +87,7 @@ restart:
 // 验证进程退出后不触发重启，状态进入 down（规格 DEV-010：on-failure+exit 0 → down）。
 //
 // 规格 §2.1.5：on-failure 触发条件：退出码非 0 或被信号杀死（非 SIGTERM/SIGINT）
-// 规格 §2.1.1 状态机：up + 正常退出（不应重启）→ ResetTo(StateDown)（DEV-010 变通方案）
+// 规格 §2.1.1 状态机：up/ready/starting + 正常退出（不应重启）→ EventNormalExit → down（规则11）
 func TestRestartOnFailure_ExitCodeZero_NoRestart(t *testing.T) {
 	// 确保 `true` 命令可用（Linux coreutils 标准命令，退出码 0）
 	if _, err := exec.LookPath("true"); err != nil {
