@@ -47,8 +47,7 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | DEV-005 | 服务级扩展 run_as 继承 | ✅ 已完全修复 |
 | DEV-008 | API 端点 77 vs 规格 65 | 已确认保留 |
 | DEV-009 | `SUPD_SERVICE_DIR` 规格外变量 | 已确认 |
-| DEV-011 | triggers 格式 map vs 规格 list | 实现一致 |
-| DEV-012 | `actions[].icon`/`enabled` 字段未实现 | 待定 |
+
 
 ---
 
@@ -56,7 +55,7 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 
 - 不引入数据库、不引入 SSE/WebSocket（长轮询是规格要求）
 - 不引入 tini/dumb-init（supd 自带 PID 1 能力）
-- triggers 格式用 map（DEV-011，所有 meta.yaml 与代码一致）
+- triggers 格式用 map（所有 meta.yaml 与代码一致，规格 v1.5 §2.2.3 已采用 map 写法）
 - meta.yaml 中 `service:` 字段冗余（YAML 解析器静默忽略，服务关联由目录结构决定）
 - dropbear-ssh 是 supd 管理的普通服务（非 entrypoint 脚本），autostart: false
 - 接受 97.44 分作为审计最终结果，剩余扣分项为合理偏差
@@ -69,10 +68,9 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 |------|------|------|
 | L-01-001 | -0.150 | api 包覆盖率 41.9%（需大量测试代码） |
 | L-04-001 | -0.250 | 缺失端到端集成测试代码（N 类已手动验证） |
-| M-03-001 | -0.160 | yaml v4 rc 预发布版（等社区稳定版） |
 | M-04-001 | -0.160 | superviseService 圈复杂度 43（修复需重构） |
 
-技术债：🟡 TD-003（superviseService 重复，部分修复）、❌ TD-005（useLongPolling hook 未修复）
+技术债：🟡 TD-003（superviseService 重复，部分修复）
 
 ---
 
@@ -100,17 +98,20 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-23 | 审计/env/仪表盘/retry/热重载/访问日志/tjs工作流/qbittorrent | 全面审计（97.44 分）、env 编辑器统一、仪表盘服务资源汇总、扩展 retry_on_failure 补全、热重载 RestartEngine 不更新 BUG 修复、HTTP 访问日志改用 slog + --log-level CLI BUG 修复、v0.0.9；晚：v0.0.12 镜像 tjs 集成验证全通过、action 字段名（action 非 action_id）、tjs fetch arrayBuffer 大文件卡死坑点（改流式读取）、qbittorrent 服务部署成功（ready）；更晚：扩展列表/删除 bug 修复（discovery 过滤 .bak + 前端 timeout 校验）、下载日志 formatBytes 优化、代码审计 + 运行状态测试、v0.0.14；编辑扩展保存后 Discovery 缓存不刷新修复、v0.0.15；时区设置 v0.0.16；服务/扩展执行身份 UID 模式（CredentialSpec + 互斥校验 + 前端模式切换）、v0.0.17；UID 模式代码审计 + 负数校验修复 + 9 项运行状态测试全通过、v0.0.18；CI 缓存 GHA→registry 修复（layer blob not_found）+ skill 文档 UID 模式更新 + v0.0.18 重发 | [notes/2026-07-23.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-23.md) |
 | 2026-07-24 | Transmission 服务/扩展开发 + Skill 文档更新 + 端口探测 BUG 修复 | transmission：直接二进制启动+user:nobody+两个tjs扩展；skill §8/§9更新；端口探测Yama LSM降级修复（UID匹配） | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
 | 2026-07-24 | 新增代码审计 + 运行测试 + v0.0.20 发布 | transmission-updater run.js 7 项 bug 修复（含 3 项运行时发现）、审计+测试全通过、版本升级 v0.0.20 | [notes/2026-07-24-audit.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24-audit.md) / [notes/2026-07-24-testplan.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24-testplan.md) |
+| 2026-07-24 | 待办梳理 + 三项优化 | 文档待办全面核实（retry_on_failure已实现、args格式规格禁止）；DEV-007/011/012 撤销偏差并转为规格内容（history直接路径、triggers map、actions 无 icon/enabled）；tracker-updater全局Tracker+动态rpc-port；进程树DFS递归；CPU首次采样200ms补偿；运行状态测试（Go+node mock RPC）全通过 | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-24 新增代码审计 + 运行测试 + v0.0.20 发布）
+## 八、最近会话重点（2026-07-24 待办梳理 + 三项优化实现）
 
-**新增代码审计 + 运行测试**：对最近两个提交（transmission 服务/扩展 `8d55bbf` + 端口/资源采集 `17893f1`）做静态审计 + 真实运行测试。静态审计发现 4 项真实 bug（P0×2/P1×2），全部属实并修复；运行测试额外暴露 3 项静态审计无法覆盖的 tjs 运行时 bug（readDir 返回 DirHandle / isDirectory 为布尔 getter / --version 输出到 stderr），亦全部修复。完整报告见 [notes/2026-07-24-audit.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24-audit.md)，测试方案见 [notes/2026-07-24-testplan.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24-testplan.md)。
+**文档/代码待办全面梳理**：grep 全仓扫描发现代码侧无 TODO/FIXME/未实现注释，所有"未实现"声明集中在 docs/devlog。逐项核实后：
+- `retry_on_failure` 实际已实现（failure_handler.go/cron_scheduler.go/trigger_cron.go + 测试）→ 已更正文档（DEV-011 偏差记录已移除，triggers 格式现为规格内容）
+- `actions[].args` 对象格式：规格 §2.2.3 明确禁止，qbittorrent meta.yaml 的"暂不支持"注释有误导 → 已改为"按规格禁止"
+- DEV-007/011/012 偏差记录已撤销：直接更新规格 v1.5 使规格与实现一致（history 直接路径、triggers map 格式、actions 无 icon/enabled），deviations.md 对应条目已删除
 
-**修复汇总（transmission-updater/run.js 共 7 项）**：runCmd 并发读双流防死锁、版本号归一化（统一 `\d+\.\d+\.\d+` + 去 v 前缀）、findFile 精确谓词排除校验/归档扩展名、chown 校验 exitCode、listEntries 兼容 DirHandle（for await 迭代）、getCurrentVersion 合并 stdout+stderr。
+**三项优化实现**：
+1. **tracker-updater 全局 Tracker 接口**：从逐 torrent `torrent-set` 改为 `session-set` + `default_trackers`（Transmission 4.0+ RPC），新种子自动获得；从 `settings.json` 动态读取 `rpc-port`（不再硬编码 9091），`SUPD_SERVICE_DIR` 环境变量定位配置文件
+2. **进程树递归**：从"主+子两层"改为 DFS 递归遍历（`buildPPIDMap` 一次 /proc 扫描 + `collectTreeDFS` 深度遍历，最大深度 10），降级路径 `collectProcessTreeByCommand` 同步改为递归
+3. **CPU 首次采样补偿**：`procCache` 改为存储 `procEntry`（含 `baselineSet` 时间戳），`collectProcessResources` 对新基线(<1s) 进程等待 200ms 后重采样，首次 API 请求也返回真实 CPU 值
 
-**测试结论**：A/B/C/D/E/F 全部通过，无新增崩溃/死锁；核心 P0/P1 修复经真实运行验证不回归。
-
-**版本升级 v0.0.20**：仅 bug 修复（PATCH 级），详见版本升级指南。
-
-> 同日早前会话：Transmission 服务/扩展开发 + Skill 文档更新 + 端口探测 Yama LSM 降级修复（UID 匹配）+ 进程 UID/GID 展示，详情见 [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md)。
+**验证**：go build/vet/test 全通过（925+），前端 pnpm build 待验证。

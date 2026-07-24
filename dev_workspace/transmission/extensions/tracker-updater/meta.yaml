@@ -1,6 +1,6 @@
 name: tracker-updater
 version: "1.0.0"
-description: "定时通过 Transmission RPC 更新所有种子的 Tracker 列表（数据源：adysec/tracker）"
+description: "通过 Transmission RPC 更新全局默认 Tracker 列表（session-set + default_trackers，数据源：adysec/tracker，新种子自动获得）"
 runtime: tjs
 entry: run.js
 timeout_seconds: 120

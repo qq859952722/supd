@@ -14,9 +14,14 @@ import (
 	"github.com/shirou/gopsutil/v4/process"
 )
 
-// procCache 缓存 gopsutil Process 对象，使 CPUPercent 能建立基线
-// 第一次调用 CPUPercent 返回 0（建立基线），第二次起返回真实值
-var procCache sync.Map // map[int32]*process.Process
+// procEntry 缓存条目：Process 对象 + CPUPercent 基线建立时间
+// 用于识别"首次采样返回 ~0"的情况并做二次采样补偿
+type procEntry struct {
+	proc        *process.Process
+	baselineSet time.Time // CPUPercent() 第一次调用（建立基线）的时间
+}
+
+var procCache sync.Map // map[int32]*procEntry
 
 // G-06-001 修复：cleanupProcCache 限流，避免每次 API 调用都全量扫描
 // 30 秒清理一次失效条目，高频 API 下显著减少 /proc 读 syscall
@@ -29,12 +34,12 @@ var (
 // getProcess 从缓存获取或创建 Process 对象
 func getProcess(pid int32) (*process.Process, error) {
 	if cached, ok := procCache.Load(pid); ok {
-		p := cached.(*process.Process)
+		pe := cached.(*procEntry)
 		// 验证进程是否仍存在
-		if _, err := p.Status(); err != nil {
+		if _, err := pe.proc.Status(); err != nil {
 			procCache.Delete(pid)
 		} else {
-			return p, nil
+			return pe.proc, nil
 		}
 	}
 	p, err := process.NewProcess(pid)
@@ -43,8 +48,30 @@ func getProcess(pid int32) (*process.Process, error) {
 	}
 	// 预热：建立 CPU 基线
 	_, _ = p.CPUPercent()
-	procCache.Store(pid, p)
+	now := time.Now()
+	procCache.Store(pid, &procEntry{proc: p, baselineSet: now})
 	return p, nil
+}
+
+// getProcessWithBaseline 从缓存获取或创建 Process 对象，同时返回基线建立时间
+// 用于 collectProcessResources 的 CPU 首次采样补偿
+func getProcessWithBaseline(pid int32) (*process.Process, time.Time, error) {
+	if cached, ok := procCache.Load(pid); ok {
+		pe := cached.(*procEntry)
+		if _, err := pe.proc.Status(); err != nil {
+			procCache.Delete(pid)
+		} else {
+			return pe.proc, pe.baselineSet, nil
+		}
+	}
+	p, err := process.NewProcess(pid)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	_, _ = p.CPUPercent()
+	now := time.Now()
+	procCache.Store(pid, &procEntry{proc: p, baselineSet: now})
+	return p, now, nil
 }
 
 // cleanupProcCache 清理已失效的进程缓存条目
@@ -65,8 +92,8 @@ func cleanupProcCache() {
 	}
 
 	procCache.Range(func(key, value any) bool {
-		p := value.(*process.Process)
-		if _, err := p.Status(); err != nil {
+		pe := value.(*procEntry)
+		if _, err := pe.proc.Status(); err != nil {
 			procCache.Delete(key)
 		}
 		return true
@@ -77,6 +104,7 @@ func cleanupProcCache() {
 // REQ-I-006: 使用gopsutil采集数据
 // G-06-003 修复：添加 5 秒 context 超时保护，避免 /proc 读取阻塞
 // G-06-001 修复：调用前清理失效缓存条目，防止 PID 复用数据混淆
+// CPU 首次采样补偿：新建立的基线后立即采样值接近 0，等待 200ms 后重采以获得真实值
 func collectProcessResources(pid int) (*ResourceResponse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -84,12 +112,19 @@ func collectProcessResources(pid int) (*ResourceResponse, error) {
 	// G-06-001: 清理已失效的进程缓存，防止 PID 复用导致数据混淆
 	cleanupProcCache()
 
-	p, err := getProcess(int32(pid))
+	p, baselineTime, err := getProcessWithBaseline(int32(pid))
 	if err != nil {
 		return nil, fmt.Errorf("process %d not found: %w", pid, err)
 	}
 
 	cpuPercent, _ := p.CPUPercent()
+	// CPU 首次采样补偿：基线刚建立 (<1s) 时首次 CPUPercent 返回接近 0
+	// 等待 200ms 后重新采样，使首次 API 请求也能返回真实 CPU 值
+	if time.Since(baselineTime) < 1*time.Second {
+		time.Sleep(200 * time.Millisecond)
+		cpuPercent, _ = p.CPUPercent()
+	}
+
 	memInfo, _ := p.MemoryInfo()
 	memPercent, _ := p.MemoryPercent()
 
@@ -122,74 +157,100 @@ func collectProcessResources(pid int) (*ResourceResponse, error) {
 	}, nil
 }
 
-// collectProcessTree 获取进程及其子进程信息
+// collectProcessTree 获取服务进程及其所有子孙进程信息（深度递归）
 // REQ-I-006: 使用gopsutil采集进程树
 // G-06-003 修复：添加 5 秒 context 超时保护，避免 /proc 读取阻塞
+// 优化：从原来的"主进程+直接子进程"改为"一次扫描 /proc 建立 PPID 映射 + DFS 递归遍历"
 func collectProcessTree(pid int) ([]ProcessInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	p, err := getProcess(int32(pid))
-	if err != nil {
-		return nil, fmt.Errorf("process %d not found: %w", pid, err)
-	}
+	// 一次扫描 /proc 构建 PPID→子进程映射，避免递归 findChildProcesses 的重复开销
+	ppidMap := buildPPIDMap()
 
 	var processes []ProcessInfo
-
-	// 主进程信息
-	mainInfo, err := processToInfo(p)
-	if err == nil {
-		processes = append(processes, *mainInfo)
-	}
-
-	// G-06-003: 检查超时
-	if ctx.Err() != nil {
-		return processes, fmt.Errorf("collect process tree timeout: %w", ctx.Err())
-	}
-
-	// 子进程信息
-	children, err := p.Children()
-	if err == nil {
-		for _, child := range children {
-			info, err := processToInfo(child)
-			if err == nil {
-				processes = append(processes, *info)
-			}
-		}
-	}
-
-	// G-06-003: 检查超时，超时则跳过 /proc 降级读取
-	if ctx.Err() != nil {
-		if processes == nil {
-			processes = []ProcessInfo{}
-		}
-		return processes, nil
-	}
-
-	// 同时从 /proc 读取子进程（补充 gopsutil 未获取的）
-	procChildren := findChildProcesses(pid)
-	for _, childPID := range procChildren {
-		// 跳过已通过 gopsutil 获取的
-		found := false
-		for _, p := range processes {
-			if p.PID == childPID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			info, err := readProcessInfoFromProc(childPID)
-			if err == nil {
-				processes = append(processes, *info)
-			}
-		}
-	}
+	collectTreeDFS(pid, &processes, ppidMap, ctx, 0)
 
 	if processes == nil {
 		processes = []ProcessInfo{}
 	}
-
 	return processes, nil
+}
+
+// buildPPIDMap 一次扫描 /proc 构建所有进程的父子关系映射
+// 返回 map[ppid] → []childPID，用于递归遍历进程树
+func buildPPIDMap() map[int][]int {
+	result := make(map[int][]int)
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return result
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil {
+			continue
+		}
+
+		statPath := filepath.Join("/proc", entry.Name(), "stat")
+		data, err := readFileWithTimeout(statPath)
+		if err != nil {
+			continue
+		}
+
+		content := string(data)
+		idx := strings.LastIndex(content, ")")
+		if idx < 0 {
+			continue
+		}
+		fields := strings.Fields(content[idx+1:])
+		if len(fields) < 2 {
+			continue
+		}
+		ppid, err := strconv.Atoi(fields[1])
+		if err != nil {
+			continue
+		}
+		result[ppid] = append(result[ppid], pid)
+	}
+
+	return result
+}
+
+// collectTreeDFS 深度优先遍历收集进程树信息
+// 优先使用 gopsutil 获取丰富数据（CPU、内存），降级时从 /proc 读取基本信息
+// depth 限制最大递归深度为 10，防止极端情况下的无限递归
+func collectTreeDFS(pid int, processes *[]ProcessInfo, ppidMap map[int][]int, ctx context.Context, depth int) {
+	// 深度限制防止极端情况
+	if depth > 10 {
+		return
+	}
+	if ctx.Err() != nil {
+		return
+	}
+
+	// 优先使用 gopsutil 获取丰富数据（CPU、内存等）
+	p, err := getProcess(int32(pid))
+	if err == nil {
+		info, err := processToInfo(p)
+		if err == nil {
+			*processes = append(*processes, *info)
+		}
+	} else {
+		// 降级：从 /proc 读取基本信息
+		info, err := readProcessInfoFromProc(pid)
+		if err == nil {
+			*processes = append(*processes, *info)
+		}
+	}
+
+	// 递归遍历子进程
+	for _, childPID := range ppidMap[pid] {
+		collectTreeDFS(childPID, processes, ppidMap, ctx, depth+1)
+	}
 }
 
 // processToInfo 将 gopsutil Process 转换为 ProcessInfo
@@ -505,16 +566,20 @@ func readProcessIdentityFromStatus(pid int) (int, int, string, string) {
 
 // collectProcessTreeByCommand 通过命令行匹配 /proc 查找进程（PID命名空间降级方案）
 // 当 gopsutil 因 PID 命名空间不一致无法找到进程时使用
+// 优化：从原来的"主进程+直接子进程"改为"一次 /proc 扫描 + DFS 递归遍历所有子孙"
 func collectProcessTreeByCommand(namespacePID int, cmdPattern string) []ProcessInfo {
-	var processes []ProcessInfo
-
 	// 提取命令的基础名（如 ./bin/qbittorrent-nox → qbittorrent-nox）
 	cmdBase := filepath.Base(cmdPattern)
 	if cmdBase == "." || cmdBase == "/" || cmdBase == "" {
 		cmdBase = cmdPattern
 	}
 
-	// 扫描 /proc 查找匹配的进程
+	// 一次扫描 /proc 构建父子关系映射（用于递归遍历）
+	ppidMap := buildPPIDMap()
+
+	// 扫描 /proc 查找匹配的主进程（host PID）
+	var mainHostPID int
+	var mainCmdline string
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return []ProcessInfo{}
@@ -545,65 +610,83 @@ func collectProcessTreeByCommand(namespacePID int, cmdPattern string) []ProcessI
 			continue
 		}
 
-		// 读取 /proc/{pid}/stat
-		info, err := readProcessInfoFromProc(hostPID)
-		if err != nil {
-			continue
-		}
-		// 用 namespace PID 替换 host PID（主进程）
-		if processes == nil {
-			info.PID = namespacePID
-		}
-		// 覆盖命令行为完整命令行
-		info.Command = strings.TrimSpace(cmdline)
+		mainHostPID = hostPID
+		mainCmdline = strings.TrimSpace(cmdline)
+		break // 只取第一个匹配的主进程
+	}
+
+	if mainHostPID == 0 {
+		return []ProcessInfo{}
+	}
+
+	// 读取主进程信息
+	var processes []ProcessInfo
+	mainInfo, err := readProcessInfoFromProc(mainHostPID)
+	if err == nil {
+		mainInfo.PID = namespacePID // 用 namespace PID 替换 host PID（主进程）
+		mainInfo.Command = mainCmdline
 
 		// 尝试读取内存信息
-		statmPath := filepath.Join("/proc", entry.Name(), "statm")
+		statmPath := filepath.Join("/proc", strconv.Itoa(mainHostPID), "statm")
 		if statmData, err := readFileWithTimeout(statmPath); err == nil {
 			fields := strings.Fields(string(statmData))
 			if len(fields) >= 2 {
 				rssPages, _ := strconv.ParseInt(fields[1], 10, 64)
-				info.MemoryMB = float64(rssPages) * 4096 / 1024 / 1024
+				mainInfo.MemoryMB = float64(rssPages) * 4096 / 1024 / 1024
 			}
 		}
 
 		// 尝试读取线程数
-		taskDir := filepath.Join("/proc", entry.Name(), "task")
+		taskDir := filepath.Join("/proc", strconv.Itoa(mainHostPID), "task")
 		if taskEntries, err := os.ReadDir(taskDir); err == nil {
-			info.ThreadCount = len(taskEntries)
+			mainInfo.ThreadCount = len(taskEntries)
 		}
 
-		processes = append(processes, *info)
-
-		// 查找子进程
-		children := findChildProcesses(hostPID)
-		for _, childPID := range children {
-			childInfo, err := readProcessInfoFromProc(childPID)
-			if err != nil {
-				continue
-			}
-			// 读取子进程 cmdline
-			childCmdPath := filepath.Join("/proc", strconv.Itoa(childPID), "cmdline")
-			if childCmdData, err := readFileWithTimeout(childCmdPath); err == nil {
-				childInfo.Command = strings.TrimSpace(strings.ReplaceAll(string(childCmdData), "\x00", " "))
-			}
-			// 读取子进程内存
-			childStatmPath := filepath.Join("/proc", strconv.Itoa(childPID), "statm")
-			if statmData, err := readFileWithTimeout(childStatmPath); err == nil {
-				fields := strings.Fields(string(statmData))
-				if len(fields) >= 2 {
-					rssPages, _ := strconv.ParseInt(fields[1], 10, 64)
-					childInfo.MemoryMB = float64(rssPages) * 4096 / 1024 / 1024
-				}
-			}
-			processes = append(processes, *childInfo)
-		}
-
-		break // 只取第一个匹配的主进程
+		processes = append(processes, *mainInfo)
 	}
+
+	// 递归遍历所有子孙进程（DFS，深度限制 10）
+	collectTreeDFSByCommand(mainHostPID, &processes, ppidMap, 0)
 
 	if processes == nil {
 		processes = []ProcessInfo{}
 	}
 	return processes
+}
+
+// collectTreeDFSByCommand 递归收集进程树信息（命令行匹配降级方案的 DFS）
+// 从 ppidMap 中查找子进程，从 /proc 读取信息（含 statm 内存、task 线程数）
+func collectTreeDFSByCommand(parentHostPID int, processes *[]ProcessInfo, ppidMap map[int][]int, depth int) {
+	if depth > 10 {
+		return
+	}
+
+	children := ppidMap[parentHostPID]
+	for _, childPID := range children {
+		childInfo, err := readProcessInfoFromProc(childPID)
+		if err != nil {
+			continue
+		}
+
+		// 读取子进程 cmdline
+		childCmdPath := filepath.Join("/proc", strconv.Itoa(childPID), "cmdline")
+		if childCmdData, err := readFileWithTimeout(childCmdPath); err == nil {
+			childInfo.Command = strings.TrimSpace(strings.ReplaceAll(string(childCmdData), "\x00", " "))
+		}
+
+		// 读取子进程内存（statm）
+		childStatmPath := filepath.Join("/proc", strconv.Itoa(childPID), "statm")
+		if statmData, err := readFileWithTimeout(childStatmPath); err == nil {
+			fields := strings.Fields(string(statmData))
+			if len(fields) >= 2 {
+				rssPages, _ := strconv.ParseInt(fields[1], 10, 64)
+				childInfo.MemoryMB = float64(rssPages) * 4096 / 1024 / 1024
+			}
+		}
+
+		*processes = append(*processes, *childInfo)
+
+		// 递归遍历孙进程
+		collectTreeDFSByCommand(childPID, processes, ppidMap, depth+1)
+	}
 }

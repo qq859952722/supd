@@ -14,7 +14,7 @@ ui:
   icon: refresh
 
 # 三个 action：仅检查 / 仅安装（用默认版本，run.js 回退到 CURRENT_TAG） / 检查并安装最新版
-# 注意：supd 的 actions[].args 暂不支持对象格式（id/label/type/default），仅支持简单字符串列表
+# 注意：按规格 §2.2.3，actions[].args 仅支持字符串数组，且明确禁止对象格式（id/label/type/default）；参数由扩展脚本自行解析，非暂不支持
 actions:
   - id: check-update
     label: 检查更新
