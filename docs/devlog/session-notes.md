@@ -40,13 +40,7 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 
 ## 三、已知偏差（详见 `deviations.md`）
 
-| 编号 | 内容 | 状态 |
-|------|------|------|
-| DEV-003 | ProcessManager 等用 sync.Mutex | 合理例外 |
-| DEV-004 | api/interfaces.go 定义 13 个接口 | Go 惯用法 |
-| DEV-005 | 服务级扩展 run_as 继承 | ✅ 已完全修复 |
-| DEV-008 | API 端点 77 vs 规格 65 | 已确认保留 |
-| DEV-009 | `SUPD_SERVICE_DIR` 规格外变量 | 已确认 |
+> **当前状态**：无活动偏差（所有已确认接受的偏差项 DEV-001/002/003/004/006/008/009 已全部同步补充至 `docs/需求规格说明_v1.5.md`，修复项 DEV-005/010 已闭环）。
 
 
 ---
@@ -104,26 +98,19 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-24 | 测试覆盖率提升计划执行（P0/P1/P2） | api 43.3%→68.0%、cli 50%→66.1%、前端 Vitest 框架+38 例 util 单测（lib 纯逻辑 util 全 100%/92%/67%）；L-01-001/L-04-001 闭环，质量水位 97.84；全部 hermetic，未改生产代码 | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
 | 2026-07-24 | 测试覆盖率提升计划（P3 收尾） | 前端主链路轻量集成：api-client 67%→90.16%（REST 封装+handleResponse 全分支）、http-probe 0%→87.27%（jsdom hook 测试）；前端 60 例全过、lib 总覆盖 91%；CI 接入 coverage.yml（上传 go/web artifact，非阻断）+ Makefile cover；修复 P2 遗留 tsconfig 将测试纳入生产构建致 build 失败 | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
 | 2026-07-24 | 测试覆盖率提升计划（P4 核心包攻坚） | state_machine/pidfile/cron_scheduler/trigger_cron/dispatcher/service_operator 补测，35 例 hermetic（全部未改生产代码）；后端总 73.6%→74.9%（+1.3pp），core/extension/api 包分别 +2.9/+3.9/+0.6pp；task_manager 已充分覆盖跳过 | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
+| 2026-07-24 | tjs 指南深化 + 服务扩展 WASM 优化 + 188 实时部署验证 + 阻断清理 | DEV-010 修复；06_tjs_runtime_guide.md 全量官方文档+实机 API/WASM/WASI 探查补全；transmission/qbittorrent-updater shared WASM/纯 JS 优化；pack_dev.py 相对路径修复；192.168.31.188:7979 在线导入/1.8MB 7zz.wasm 上传/API 全量触发成功；blockers.md 已处理条目逐项核实删除 | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-24 测试覆盖率提升计划执行）
+## 八、最近会话重点（2026-07-24 tjs 指南深化 + WASM 扩展优化 + 188 部署与阻断清理）
 
-**覆盖率提升（对应审计扣分 L-01-001 / L-04-001）**：
-- **P0 api**：43.3% → **68.0%**（目标 ≥65% 达成）。新增 4 个 hermetic 测试文件（extension/settings/task/service_ops handler 覆盖），全部 `NewServer(cfg)` + fake provider + httptest 驱动，未改生产代码。
-- **P1 cli**：50% → **66.1%**。新增 `run_coverage_test.go`（`validateLogDir`/`buildStopConfigs` 纯函数）+ `commands_coverage_test.go`（经 `getAPIClient` var 注入 httptest 服务端，覆盖各命令成功路径）。
-- **P2 前端**：绿地 → Vitest 4（node 环境）框架 + 38 例 util 单测。`error-utils/utils/i18n/query-client` 100%、`env-yaml` 92.85%、`api-client` 67.21%；`http-probe`(React hook) 留 P3 可选。
-- **P3 前端主链路轻量集成**：`api-client` **67.21% → 90.16%**（扩至 22 例，覆盖 `apiGet/Post/Put/Delete` 封装 + `handleResponse` 全部分支：204/4xx/5xx/非标准错误体/silent/网络错误/AbortError）；`http-probe` **0% → 87.27%**（新增 9 例，jsdom + `@testing-library/react` `renderHook` 覆盖 `useHTTPProbe` hook + `sortAndLimitPorts`/`invalidatePortCache`）。前端 lib 总覆盖率 **91.03%**。
-- **P3 CI 接入**：`.github/workflows/coverage.yml`（push/PR 触发，`go test -coverprofile` 上传 `go-coverage` + `vitest --coverage` 上传 `web-coverage` artifact，**非阻断、暂不设备阈值**）；`Makefile` 新增 `cover`/`cover-web`；`.gitignore` 补充 `cover.html`/`web/coverage/`。
-- **P3 构建修正**：修复 P2 遗留 `pnpm build` 实际失败——`web/tsconfig.json` 的 `tsc -b` 将 `*.test.ts` 纳入严格类型检查（`noUncheckedIndexedAccess` + `ApiError.code` 必填）致测试类型错误；修正为 `exclude` 测试文件出生产构建（标准做法，测试仍由 vitest 执行）。修正后 `pnpm build` 真通过。
-- **闭环**：L-01-001（-0.150）/ L-04-001（-0.250）回收 → 质量水位 **97.84 / 100**。`cmd/supd` 决策性不覆盖。
-- **验证全绿**：`go build/vet/test ./...` ✅；`pnpm test` **60 例** ✅；`pnpm build` ✅；`make cover` 后端总覆盖 **73.6%** ✅。
-- **风险记录**：`buildStopConfigs` 对 `result.Discovery==nil` 无保护，生产路径 Discovery 总由 bootstrap 赋值，非可达；按维护期约束未改生产代码。
-- **未提交**：本轮新增测试文件均为 untracked；v0.0.21（commit `5a82e07` + tag）仍本地未推送，按用户"暂不推送"决策保留。
-
-**P4（Go 核心包攻坚，2026-07-24 收尾）**：
-- 攻"可 hermetic 测 + 高价值"核心域：6 个新增测试文件共 **35 例**（`core/state_machine`、`core/pidfile`、`extension/cron_scheduler`、`extension/trigger_cron`、`extension/dispatcher`、`api/service_operator`）。
-- **真实增量**（移走 P4 测试文件测基线、再还原比对 statement coverage）：后端总 **73.6% → 74.9%**（+1.3pp）；包级 `core` 81.6→**84.6%**、`extension` 76.4→**80.4%**、`api` 68.0→**68.6%**；逐文件最高 `pidfile` +40.7pp（23.7→64.4）、`cron_scheduler` +26.4pp（40.2→66.7）、`state_machine` +19.1pp（74.5→93.6）。
-- `task_manager.go` 因 `task_manager_test.go` 已充分覆盖，按"已充分覆盖不 blanket uplift"护栏**跳过**；`state_test.go` 已极完备，P4 仅补 publisher 分支不重写。
-- 验证全绿：`go build/vet/test ./...` ✅（core 51.9s / extension 34.3s / api 4.7s 无 FAIL）；全部 hermetic，未改生产代码。
-- **未提交（P4）**：6 个新增 Go 测试文件均为 untracked；v0.0.21 仍本地未推送（用户"暂不推送"决策）。
+- **DEV-010 偏差修复**：在 `internal/core/state_machine.go` 引入 `EventNormalExit` 与规则 11（`up/ready/starting` → `down`），更新规格 v1.5 §2.1.1 与 `deviations.md`。
+- **tjs 运行时指南 (06_tjs_runtime_guide.md) 全量深化**：
+  - 基于实机 `tjs-bin` v26.6.0 与官方文档（txikijs.org）全量补全 7 个内置 `tjs:` ES 模块、136 个全局 Web APIs (`crypto.subtle`, `structuredClone`, `performance.now`, `localStorage`)。
+  - 核心坑点矫正：`hashing.digest()` 返回 **16 进制字符串**；`tjs.system` 与 `stat.isFile`/`isDirectory` 全部为 **Getter 属性**；`DirHandle` 异步迭代与 `tjs.spawn` `Promise.all` 并发流读取防死锁。
+- **扩展优化与 188 运行实例部署**：
+  - `transmission-updater` / `qbittorrent-updater`：设计 `findSharedWasmPath()` 优先使用 `<baseDir>/runtimes/` 共享 WASM 解压模块；通过纯 JS `chownRecursive()` 与 `getArch()` 彻底摆脱 `chown -R` 和 `uname -m` 外部 Shell 命令依赖。
+  - `pack_dev.py` 归档根相对路径优化，解决两阶段导入的路径穿越误判。
+  - `192.168.31.188:7979` 在线部署：将 1.8MB `archive-decompress.wasm` 上传至 `/etc/supd/runtimes/`；通过两阶段 API 在线热重载更新 3 个扩展，接口触发运行全量通过 (`last_status: "success"`)。
+- **阻断日志 blockers.md 清理**：逐项核实并清理 `blockers.md` 已解决条目，移除历史冗余。
+- **构建与测试**：`go build ./... && go vet ./... && go test ./... -count=1` ✅，`cd web && pnpm build` ✅。
