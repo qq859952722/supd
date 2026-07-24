@@ -19,7 +19,7 @@ export default defineConfig({
       // L-04-001: 仅统计被纳入单测的纯逻辑 util，避免拉低整体未被测 UI 比例
       include: ['src/lib/**/*.ts'],
       exclude: ['src/lib/**/*.test.ts'],
-      reporter: ['text', 'text-summary'],
+      reporter: ['text', 'text-summary', 'html', 'json'],
     },
   },
 })
