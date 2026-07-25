@@ -10,7 +10,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：17 类审计评分 **97.84 / 100（⭐ 优秀）**；1000+ 单元测试通过（Go 948+ + 前端 60）；零竞态；staticcheck/go vet 零警告
-- **当前版本**：v0.0.21（版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.0.22（版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -100,20 +100,19 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-24 | 测试覆盖率提升计划（P4 核心包攻坚） | state_machine/pidfile/cron_scheduler/trigger_cron/dispatcher/service_operator 补测，35 例 hermetic（全部未改生产代码）；后端总 73.6%→74.9%（+1.3pp），core/extension/api 包分别 +2.9/+3.9/+0.6pp；task_manager 已充分覆盖跳过 | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
 | 2026-07-24 | tjs 指南深化 + 服务扩展 WASM 优化 + 188 实时部署验证 + 阻断清理 | DEV-010 修复；06_tjs_runtime_guide.md 全量官方文档+实机 API/WASM/WASI 探查补全；transmission/qbittorrent-updater shared WASM/纯 JS 优化；pack_dev.py 相对路径修复；192.168.31.188:7979 在线导入/1.8MB 7zz.wasm 上传/API 全量触发成功；blockers.md 已处理条目逐项核实删除 | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
 | 2026-07-24 | 项目全面代码审计（98.37 分 ⭐ 优秀） + O-03-001 日志规范化 | 对照 audit_plan.md 执行 A–Q 17 类审计；生成 tmp/审计报告.md + 13 份子报告；规范 executor.go 中 slog key-value (run_id/log_dir) | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
+| 2026-07-25 | 测试方案实施 + E2E 验证全通过 + v0.0.22 发布 | 修复 API 调用状态取值键名 (`state` -> `status`) 与配置反序列化字段名不匹配导致的问题，完成 Resource Collector、Normal Exit State Machine、Executor Logging、Extension Updater Fallback 的 4 个 E2E 场景测试，全部通过；版本升级 v0.0.22 并推送。 | [notes/2026-07-25.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-25.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-24 项目全面代码审计 + O-03-001 日志规范化）
+## 八、最近会话重点（2026-07-25 E2E 测试全通过 + v0.0.22 发布）
 
-- **项目全面代码审计完成**：
-  - 对照 `tmp/audit_plan.md` 规定的 64 项细分审计任务 + M–Q 类通用工具扫描与系统级审计方案，开展全量逐行源码分析与测试验证。
-  - 项目整体得分 **98.37 / 100（⭐ 优秀）**，发现 0 严重、0 重要、6 改进、10 建议缺陷。
-  - 在 `tmp/` 目录下输出 13 份子报告与主报告 [审计报告.md](file:///home/qq/Documents/trae_projects/supd/tmp/%E5%AE%A1%E8%AE%A1%E6%8A%A5%E5%91%8A.md)。
-- **O-03-001 改进项接受与实施**：
-  - 用户接受 `[O-03-001]` 扩展日志结构化规范建议。
-  - 在 `internal/extension/executor.go` 中规范 `slog` 日志输出，为全量扩展执行/异常日志补齐统一的 `"run_id"` 与 `"log_dir"` 字段。
-- **构建与测试验证**：
-  - `go build ./... && go vet ./... && go test ./... -count=1` ✅（100% 通过）。
+- **端到端运行状态测试通过**：
+  - 基于上一阶段的全面代码审计（资源收集重构、NormalExit状态机更新、扩展执行器日志上下文注入、传输扩展JS Fallback机制补全），实施了四个场景的 E2E 测试。
+  - 测试期间修复了部分 YAML 配置序列化字段不一致问题（`restart_policy` -> `restart.policy`）和前端测试脚本 JSON 解析取值问题（`state` -> `status`）。
+  - 四个测试场景（Resource Collector，Normal Exit State Machine，Executor Logging，Extension Updater Fallback）全部成功通过验证。
+- **发布 v0.0.22**：
+  - 更新版本注入参数为 `v0.0.22`。
+  - 完成本地 `go build`, `go vet`, `go test` 以及 `build -ldflags` 的全部验证。
+  - 成功推送 Github，触发 CI 工作流构建最新 Docker Image 和 Binary。
   - `go test -race ./... -count=1` ✅（0 race warnings）。
   - `cd web && pnpm build` ✅。
-
