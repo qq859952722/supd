@@ -8,10 +8,10 @@
         "profession": "代码审查专家",
         "avatarUrl": "https://acc-1258344699.cos.accelerate.myqcloud.com/workbuddy/experts/avatars/02-Engineering/CodeReviewExpert/CodeReviewExpert.png",
         "promptUrl": "https://acc-1258344699.cos.accelerate.myqcloud.com/workbuddy/experts/experts/02-Engineering/CodeReviewExpert/CodeReviewExpert_zh.md",
-        "usedAt": 1784932337783,
+        "usedAt": 1784932337779,
         "industryId": "all"
       }
     ]
   },
-  "lastUpdated": 1784932337784
+  "lastUpdated": 1784958121920
 }
