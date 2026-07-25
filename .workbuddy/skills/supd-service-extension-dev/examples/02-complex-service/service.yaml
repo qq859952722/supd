@@ -1,0 +1,25 @@
+# 示例：复杂服务（tcp_check readiness）
+# 将目录名与 name 字段改为你的服务名称（格式：^[a-z][a-z0-9-]*$）
+name: tcp-app
+version: "1.0.0"
+description: "A generic TCP application with tcp_check readiness"
+icon: server
+autostart: true
+command:
+  - ./bin/myapp
+  - --port=8080
+workdir: ""
+tags:
+  - backend
+readiness:
+  type: tcp_check
+  port: 8080
+  interval_seconds: 1
+  timeout_seconds: 10
+stop:
+  grace_seconds: 10
+  timeout_seconds: 60
+logging:
+  enabled: true
+  max_size_mb: 10
+  max_files: 5

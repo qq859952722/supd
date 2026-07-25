@@ -1,0 +1,17 @@
+name: scheduled-ping
+version: "1.0.0"
+description: "Scheduled ping extension (cron every minute)"
+enabled: true
+runtime: bash
+entry: ./run.sh
+timeout_seconds: 10
+ui:
+  show_logs: true
+  button_style: default
+triggers:
+  on_schedule:
+    - cron: "*/1 * * * *"
+      action: ping
+actions:
+  - id: ping
+    label: "Ping"

@@ -1,0 +1,21 @@
+name: supd-startup-hook
+version: "1.0.0"
+description: supd 生命周期钩子扩展，启动时通知与关闭时清理
+enabled: true
+runtime: bash
+entry: ./run.sh
+timeout_seconds: 60
+concurrency: parallel
+triggers:
+  supd_lifecycle:
+    - event: post_ready
+      action: notify
+    - event: pre_shutdown
+      action: cleanup
+actions:
+  - id: notify
+    label: 启动通知
+    button_style: primary
+  - id: cleanup
+    label: 关闭清理
+    button_style: default
