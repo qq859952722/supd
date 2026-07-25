@@ -27,6 +27,10 @@ services:
     container_name: supd
     network_mode: host          # 直接使用宿主机网络（家庭 NAS 场景，无需端口映射）
     user: "0:0"                 # 以 root 运行（dropbear 需 root 写 host key + 用户切换；非 root 时 dropbear-ssh 服务启动失败）
+    cap_add:
+      - SYS_PTRACE               # 允许精确读取非 root 服务的 socket inode，用于端口探测
+    environment:
+      ALLID: "abc,claw"
     restart: unless-stopped
     volumes:
       - ./etc:/etc/supd

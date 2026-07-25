@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -452,6 +453,107 @@ func TestGenerateAuthToken_Uniqueness(t *testing.T) {
 	}
 	if len(tokens) != count {
 		t.Errorf("生成 %d 个 token，去重后 %d 个", count, len(tokens))
+	}
+}
+
+func TestAutoCreateUsersDefaultMeta(t *testing.T) {
+	if !strings.Contains(autoCreateUsersMetaYAML, "enabled: true") {
+		t.Error("auto-create-users 默认 meta 应启用扩展")
+	}
+	if !strings.Contains(autoCreateUsersMetaYAML, "event: pre_start") {
+		t.Error("auto-create-users 默认 meta 应在 pre_start 触发")
+	}
+	if strings.Contains(autoCreateUsersMetaYAML, "event: post_ready") {
+		t.Error("auto-create-users 默认 meta 不应在 post_ready 触发")
+	}
+}
+
+func TestAutoCreateUsersScriptBehavior(t *testing.T) {
+	tests := []struct {
+		name        string
+		allID       string
+		initial     []string
+		wantCreated []string
+		wantResult  string
+	}{
+		{
+			name:        "跳过已有用户并创建新用户",
+			allID:       "existing,abc,claw",
+			initial:     []string{"existing"},
+			wantCreated: []string{"abc", "claw"},
+			wantResult:  "创建: 2 | 跳过: 1 | 失败: 0",
+		},
+		{
+			name:        "重复用户名只创建一次",
+			allID:       "repeat,repeat",
+			wantCreated: []string{"repeat"},
+			wantResult:  "创建: 1 | 跳过: 1 | 失败: 0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			binDir := filepath.Join(tmpDir, "bin")
+			if err := os.Mkdir(binDir, 0755); err != nil {
+				t.Fatalf("创建 mock bin 目录失败: %v", err)
+			}
+
+			statePath := filepath.Join(tmpDir, "users")
+			if err := os.WriteFile(statePath, []byte(strings.Join(tt.initial, "\n")+"\n"), 0644); err != nil {
+				t.Fatalf("写入 mock 用户状态失败: %v", err)
+			}
+			createdPath := filepath.Join(tmpDir, "created")
+
+			mockID := `#!/bin/bash
+if [ "$1" = "-u" ]; then
+    echo 0
+    exit 0
+fi
+/usr/bin/grep -Fxq -- "$1" "$MOCK_USER_STATE"
+`
+			mockUseradd := `#!/bin/bash
+username="${!#}"
+if ! /usr/bin/grep -Fxq -- "$username" "$MOCK_USER_STATE"; then
+    printf '%s\n' "$username" >> "$MOCK_USER_STATE"
+    printf '%s\n' "$username" >> "$MOCK_CREATED_USERS"
+fi
+`
+			for name, content := range map[string]string{"id": mockID, "useradd": mockUseradd} {
+				if err := os.WriteFile(filepath.Join(binDir, name), []byte(content), 0755); err != nil {
+					t.Fatalf("写入 mock %s 失败: %v", name, err)
+				}
+			}
+
+			runPath := filepath.Join(tmpDir, "run.sh")
+			if err := os.WriteFile(runPath, []byte(autoCreateUsersRunSH), 0755); err != nil {
+				t.Fatalf("写入 auto-create-users run.sh 失败: %v", err)
+			}
+
+			cmd := exec.Command("/bin/bash", runPath)
+			cmd.Env = append(os.Environ(),
+				"ALLID="+tt.allID,
+				"MOCK_USER_STATE="+statePath,
+				"MOCK_CREATED_USERS="+createdPath,
+				"PATH="+binDir+":/usr/bin:/bin",
+			)
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("auto-create-users 脚本执行失败: %v\n%s", err, output)
+			}
+			if !strings.Contains(string(output), tt.wantResult) {
+				t.Errorf("脚本结果缺少 %q，输出:\n%s", tt.wantResult, output)
+			}
+
+			created, err := os.ReadFile(createdPath)
+			if err != nil {
+				t.Fatalf("读取创建记录失败: %v", err)
+			}
+			gotCreated := strings.Fields(string(created))
+			if strings.Join(gotCreated, ",") != strings.Join(tt.wantCreated, ",") {
+				t.Errorf("创建用户 = %v, want %v", gotCreated, tt.wantCreated)
+			}
+		})
 	}
 }
 

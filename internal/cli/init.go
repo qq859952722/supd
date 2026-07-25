@@ -391,7 +391,7 @@ func createExampleServices(dir string) error {
 // createExampleExtensions 创建 4 个全局扩展（3 个示例 + 1 个实用扩展）
 // 示例扩展覆盖 3 种全局触发器（on_demand/on_schedule/supd_lifecycle）
 // + 3 种并发策略（replace/serialize/parallel）
-// 实用扩展 auto-create-users 默认禁用，按需启用（run_as: root，ALLID 环境变量驱动）
+// 实用扩展 auto-create-users 默认启用，在自启动服务前创建 ALLID 指定用户（run_as: root）
 // 第 4 种触发器（service_lifecycle）与并发策略（debounce:Ns）由 web-demo 的服务级扩展 demo-lifecycle 演示
 // 注：SSH 公钥配置已移至 dropbear-ssh 服务的 env.yaml + run.sh，不再需要独立扩展
 func createExampleExtensions(dir string) error {

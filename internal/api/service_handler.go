@@ -68,17 +68,17 @@ type ServiceSummary struct {
 // ServiceDetail GET /api/services/{name} 响应
 // REQ-I-006: 含完整service.yaml解析结果+运行时状态+待生效变更标记
 type ServiceDetail struct {
-	Name           string                `json:"name"`
-	Status         string                `json:"status"`
-	PID            int                   `json:"pid,omitempty"`
-	Uptime         int64                 `json:"uptime,omitempty"` // 秒
-	RestartCount   int                   `json:"restart_count"`
-	Config         *ServiceConfigDetail  `json:"config"`
-	ConfigPath     string                `json:"config_path,omitempty"`
-	PendingChanges []string              `json:"pending_changes,omitempty"`
-	CPUPercent     float64               `json:"cpu_percent"`
-	MemoryMB       float64               `json:"memory_mb"`
-	Ports          []PortInfo            `json:"ports,omitempty"` // 服务监听端口
+	Name           string               `json:"name"`
+	Status         string               `json:"status"`
+	PID            int                  `json:"pid,omitempty"`
+	Uptime         int64                `json:"uptime,omitempty"` // 秒
+	RestartCount   int                  `json:"restart_count"`
+	Config         *ServiceConfigDetail `json:"config"`
+	ConfigPath     string               `json:"config_path,omitempty"`
+	PendingChanges []string             `json:"pending_changes,omitempty"`
+	CPUPercent     float64              `json:"cpu_percent"`
+	MemoryMB       float64              `json:"memory_mb"`
+	Ports          []PortInfo           `json:"ports,omitempty"` // 服务监听端口
 }
 
 // ServiceConfigDetail 服务配置详情（用于API响应）
@@ -191,7 +191,6 @@ func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {
 			if res, err := collectProcessResources(info.PID); err == nil {
 				summary.CPUPercent = res.CPUPercent
 				summary.MemoryMB = res.MemoryMB
-				summary.Ports = collectProcessPorts(info.PID, cmdPatternFromConfig(info.Config))
 			} else {
 				// 降级方案：PID命名空间不一致时，通过命令行匹配 /proc
 				cmdPattern := ""
@@ -202,8 +201,8 @@ func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {
 				for _, p := range procs {
 					summary.MemoryMB += p.MemoryMB
 				}
-				summary.Ports = collectProcessPortsByCommand(cmdPattern)
 			}
+			summary.Ports = collectProcessPorts(info.PID)
 		}
 
 		services = append(services, summary)
@@ -271,14 +270,8 @@ func (s *Server) handleGetService(w http.ResponseWriter, r *http.Request) {
 		if res, err := collectProcessResources(info.PID); err == nil {
 			detail.CPUPercent = res.CPUPercent
 			detail.MemoryMB = res.MemoryMB
-			detail.Ports = collectProcessPorts(info.PID, cmdPatternFromConfig(info.Config))
-		} else {
-			cmdPattern := ""
-			if info.Config != nil && len(info.Config.Command) > 0 {
-				cmdPattern = info.Config.Command[0]
-			}
-			detail.Ports = collectProcessPortsByCommand(cmdPattern)
 		}
+		detail.Ports = collectProcessPorts(info.PID)
 	}
 
 	respondJSON(w, http.StatusOK, detail)

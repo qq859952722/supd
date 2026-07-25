@@ -322,6 +322,7 @@ fi
 // 认证模式由 env.yaml 中的 SSH_PUBLIC_KEY 控制：
 //   - 非空 → 公钥认证（dropbear -s 禁用密码登录）
 //   - 空   → 空白密码免认证（dropbear -B 允许空白密码，仅内网可信场景）
+//
 // host key 由 -R 参数在首次启动时动态生成（每容器独立，避免镜像硬编码）
 const dropbearSshServiceYAML = `name: dropbear-ssh
 version: "1.0.0"
@@ -784,19 +785,19 @@ esac
 `
 
 // =============================================================================
-// 实用扩展（全局，默认禁用，按需启用）
+// 实用扩展（全局，默认启用）
 // =============================================================================
 
-// --- auto-create-users：supd_lifecycle post_ready + run_as root + 环境变量驱动 ---
-// 功能：supd 启动就绪后，根据 ALLID 环境变量（逗号分隔）自动创建系统用户
-// 默认禁用（enabled: false），需手动改为 true 启用
+// --- auto-create-users：supd_lifecycle pre_start + run_as root + 环境变量驱动 ---
+// 功能：supd 启动时，在自启动服务之前根据 ALLID 环境变量（逗号分隔）自动创建系统用户
+// 默认启用（enabled: true）；ALLID 未设置时幂等跳过
 // 需要 root 权限（run_as: root），非 root 环境下需以 root 启动 supd
 const autoCreateUsersMetaYAML = `name: auto-create-users
 version: "1.0.0"
-description: "supd 启动时根据 ALLID 环境变量自动创建系统用户（默认禁用，需 root）"
-# 默认禁用：将 enabled 改为 true 后生效
+description: "supd 启动时在自启动服务之前根据 ALLID 环境变量自动创建系统用户（默认启用，需 root）"
+# 默认启用；ALLID 未设置时不创建用户
 # 启用前提：supd 需以 root 运行（创建用户需要 root 权限）
-enabled: false
+enabled: true
 runtime: bash
 entry: run.sh
 timeout_seconds: 30
@@ -804,10 +805,10 @@ timeout_seconds: 30
 run_as: root
 concurrency: replace
 triggers:
-  # supd_lifecycle: supd 启动就绪后自动触发
-  # post_ready: supd 完成初始化、服务全部启动后触发
+  # supd_lifecycle: supd 启动过程中自动触发
+  # pre_start: 在自启动服务启动前创建账户
   supd_lifecycle:
-    - event: post_ready
+    - event: pre_start
       action: create
 actions:
   - id: create
@@ -818,7 +819,7 @@ actions:
 const autoCreateUsersRunSH = `#!/bin/bash
 # auto-create-users: 根据 ALLID 环境变量自动创建系统用户
 #
-# 触发时机：supd_lifecycle post_ready（supd 启动就绪后）
+# 触发时机：supd_lifecycle pre_start（自启动服务启动前）
 # 环境变量：
 #   ALLID — 逗号分隔的用户名列表，如 "user1,user2,user3"
 #           支持空格分隔（自动 trim），空值跳过

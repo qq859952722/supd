@@ -15,13 +15,13 @@ import (
 
 // ResourceResponse 资源使用响应
 type ResourceResponse struct {
-	CPUPercent    float64   `json:"cpu_percent"`
-	MemoryMB      float64   `json:"memory_mb"`
-	MemoryPercent float64   `json:"memory_percent"`
-	ProcessCount  int       `json:"process_count"`
-	FDCount       int       `json:"fd_count"`
-	DiskTotalMB   float64   `json:"disk_total_mb,omitempty"`
-	DiskUsedMB    float64   `json:"disk_used_mb,omitempty"`
+	CPUPercent    float64    `json:"cpu_percent"`
+	MemoryMB      float64    `json:"memory_mb"`
+	MemoryPercent float64    `json:"memory_percent"`
+	ProcessCount  int        `json:"process_count"`
+	FDCount       int        `json:"fd_count"`
+	DiskTotalMB   float64    `json:"disk_total_mb,omitempty"`
+	DiskUsedMB    float64    `json:"disk_used_mb,omitempty"`
 	Ports         []PortInfo `json:"ports,omitempty"`
 }
 
@@ -82,12 +82,8 @@ func (s *Server) handleServiceResources(w http.ResponseWriter, r *http.Request) 
 			resources.MemoryMB += p.MemoryMB
 			resources.ProcessCount++
 		}
-		// 端口采集也走降级方案：通过命令行匹配 host PID
-		resources.Ports = collectProcessPortsByCommand(cmdPattern)
-	} else {
-		// 正常路径：直接用 namespace PID 采集端口
-		resources.Ports = collectProcessPorts(info.PID, cmdPatternFromConfig(info.Config))
 	}
+	resources.Ports = collectProcessPorts(info.PID)
 
 	// 计算服务所在文件夹的磁盘分区占用
 	workdir := ""

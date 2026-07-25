@@ -102,24 +102,17 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-24 | 项目全面代码审计（98.37 分 ⭐ 优秀） + O-03-001 日志规范化 | 对照 audit_plan.md 执行 A–Q 17 类审计；生成 tmp/审计报告.md + 13 份子报告；规范 executor.go 中 slog key-value (run_id/log_dir) | [notes/2026-07-24.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-24.md) |
 | 2026-07-25 | 测试方案实施 + E2E 验证全通过 + v0.0.22 发布 | 修复 API 调用状态取值键名 (`state` -> `status`) 与配置反序列化字段名不匹配导致的问题，完成 Resource Collector、Normal Exit State Machine、Executor Logging、Extension Updater Fallback 的 4 个 E2E 场景测试，全部通过；版本升级 v0.0.22 并推送。 | [notes/2026-07-25.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-25.md) |
 | 2026-07-25 | 新增代码审计 + 运行测试 + v0.0.23 发布 | 审计 v0.0.22 新增代码（7 文件）：无安全漏洞；12 场景运行测试全通过：5 服务 ready、EventNormalExit(exit 0→down 不重启)验证、executor 日志 run_id 注入确认、JS 降依赖审计；无 bug 需修复。版本升级 v0.0.23 并推送。 | [notes/2026-07-25.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-25.md) |
+| 2026-07-25 | Docker SYS_PTRACE 验证与端口探测降级清理 | Docker `cap_add: SYS_PTRACE` 已验证生效；删除 UID/cmdline/ss/netstat/命令扫描降级，仅保留受管 PID 进程树 fd socket inode 精确匹配；后端构建、vet、API 测试及全量测试均通过；部署必须配置 SYS_PTRACE。 | [notes/2026-07-25.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-25.md) |
+| 2026-07-25 | auto-create-users 默认启用与生命周期前移 | docker-compose 增加 `ALLID="abc,claw"`；扩展默认启用并由 post_ready 前移至 pre_start；保留 `id` 存在判断，新增隔离 mock 幂等测试；专项构建、vet、cli/extension 测试通过；已有初始化目录需手动同步或重新初始化；版本保持 v0.0.27。 | [notes/2026-07-25.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-25.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-25 审计+测试全通过 + v0.0.23 发布）
+## 八、最近会话重点（2026-07-25 端口探测简化与 auto-create-users 调整）
 
-- **新增代码审计完成**：
-  - 审计 v0.0.22 新增代码（7 个生产文件）：`state_machine.go`（EventNormalExit 事件+3 转移规则）、`supervisor.go`（ResetTo→Transition 修复）、`cli/run.go`（魔数→常量）、`resource_collector.go`（删除死代码）、`executor.go`（日志增强 run_id/log_dir）、`qbittorrent-updater/run.js`（getArch 纯 JS）、`transmission-updater/run.js`（WASM 解压+chown 纯 JS+getArch 多层检测）
-  - 安全扫描结果：无可利用安全漏洞（无 SQL 注入/命令注入/路径穿越/密钥泄露）
-- **12 场景运行测试全通过**：
-  - 服务状态：5 服务 ready（tcp-echo、web-demo、fd-notify-demo、script-ready-demo、signals-demo）
-  - EventNormalExit 验证：on-failure exit 0 → down 不重启（Transition 代替 ResetTo 正确）
-  - 手动重启：down→starting→ready（EventManualStart 规则 10 正确）
-  - 停止中断退避：crash-loop stopping→down 正确
-  - 扩展：supd-startup-hook (post_ready) ✅、demo-lifecycle (on_ready) ✅、env-test-ext ✅、on-demand-tool ✅、retry-test-ext 重试正确
-  - executor 日志：run_id 上下文注入确认（slog key-value 格式正确）
-  - tjs-test-ext 失败原因：环境缺 tjs 运行时（非代码 bug）
-- **发布 v0.0.23**：
-  - 版本注入验证：`supd v0.0.23`
-  - `go test -race ./... -count=1` ✅（0 race warnings）
-  - `cd web && pnpm build` ✅
-  - 推送 main + tag v0.0.23 到 origin，触发 CI 工作流
+- **端口探测简化**：Docker `cap_add: SYS_PTRACE` 已验证生效；删除 UID、cmdline、`ss`、`netstat` 及命令扫描降级，仅保留受管 PID 进程树 fd socket inode 精确匹配。容器必须配置 `SYS_PTRACE`，否则端口列表可能为空。
+- **auto-create-users 配置**：`docker-compose.yml` 增加 `ALLID="abc,claw"`；扩展默认改为 `enabled: true`，生命周期由 `post_ready` 改为 `pre_start`，保证自启动服务前建用户。
+- **幂等逻辑与测试**：保留 `id` 用户存在判断；新增隔离 mock 测试，验证 `existing` 跳过、`abc`/`claw` 创建、重复用户只创建一次。
+- **auto-create-users 修改文件**：`docker-compose.yml`、`internal/cli/init_examples.go`、`internal/cli/init_test.go`。
+- **本次专项验证**：`go build ./...`、`go vet ./...`、`go test ./internal/cli -run AutoCreateUsers -count=1`、`go test ./internal/extension -count=1` 均通过。
+- **初始化目录说明**：已有初始化目录不会被模板自动覆盖，需手动同步相关配置与脚本，或重新初始化。
+- **版本**：保持 `v0.0.27`。
