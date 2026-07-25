@@ -72,7 +72,7 @@ export function FileTree({
   }
 
   return (
-    <div className="text-sm" onContextMenu={handleContainerContextMenu}>
+    <div className="text-sm min-w-max" onContextMenu={handleContainerContextMenu}>
       {nodes.map((node) => (
         <FileTreeNode
           key={node.path}
@@ -245,12 +245,13 @@ function FileTreeNode({
     <div>
       <div
         className={cn(
-          'flex items-center gap-1 cursor-pointer rounded px-2 py-1 hover:bg-[var(--color-surface-hover)] transition-colors',
+          'flex items-center gap-1 cursor-pointer rounded px-2 py-1 hover:bg-[var(--color-surface-hover)] transition-colors whitespace-nowrap w-max min-w-full',
           isSelected && 'bg-[var(--color-surface-hover)] text-[var(--color-brand-primary)]',
         )}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
         onClick={handleClick}
         onContextMenu={(e) => onContextMenu(e, node)}
+        title={node.path ? `${node.name}\n${node.path}` : node.name}
       >
         {node.is_dir ? (
           <>
@@ -259,11 +260,11 @@ function FileTreeNode({
           </>
         ) : (
           <>
-            <span className="w-3.5" />
+            <span className="w-3.5 shrink-0" />
             <File className="h-4 w-4 shrink-0 text-[var(--color-text-secondary)]" />
           </>
         )}
-        <span className="truncate ml-1">{node.name}</span>
+        <span className="ml-1">{node.name}</span>
       </div>
       {node.is_dir && expanded && node.children && (
         <div>

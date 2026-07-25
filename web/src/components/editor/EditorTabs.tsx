@@ -181,6 +181,7 @@ export function EditorTabs() {
                 e.preventDefault()
                 setContextMenu({ x: e.clientX, y: e.clientY, tab })
               }}
+              title={tab.path || tab.name}
               className={`group flex shrink-0 items-center gap-1.5 border-r border-[var(--color-border-primary)] px-3 py-1.5 text-xs transition-colors ${
                 tab.id === activeTabId
                   ? 'bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]'
