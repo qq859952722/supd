@@ -191,7 +191,7 @@ func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {
 			if res, err := collectProcessResources(info.PID); err == nil {
 				summary.CPUPercent = res.CPUPercent
 				summary.MemoryMB = res.MemoryMB
-				summary.Ports = collectProcessPorts(info.PID)
+				summary.Ports = collectProcessPorts(info.PID, cmdPatternFromConfig(info.Config))
 			} else {
 				// 降级方案：PID命名空间不一致时，通过命令行匹配 /proc
 				cmdPattern := ""
@@ -271,7 +271,7 @@ func (s *Server) handleGetService(w http.ResponseWriter, r *http.Request) {
 		if res, err := collectProcessResources(info.PID); err == nil {
 			detail.CPUPercent = res.CPUPercent
 			detail.MemoryMB = res.MemoryMB
-			detail.Ports = collectProcessPorts(info.PID)
+			detail.Ports = collectProcessPorts(info.PID, cmdPatternFromConfig(info.Config))
 		} else {
 			cmdPattern := ""
 			if info.Config != nil && len(info.Config.Command) > 0 {

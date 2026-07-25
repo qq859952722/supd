@@ -86,7 +86,7 @@ func (s *Server) handleServiceResources(w http.ResponseWriter, r *http.Request) 
 		resources.Ports = collectProcessPortsByCommand(cmdPattern)
 	} else {
 		// 正常路径：直接用 namespace PID 采集端口
-		resources.Ports = collectProcessPorts(info.PID)
+		resources.Ports = collectProcessPorts(info.PID, cmdPatternFromConfig(info.Config))
 	}
 
 	// 计算服务所在文件夹的磁盘分区占用

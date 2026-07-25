@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/supdorg/supd/internal/config"
 )
 
 // TestParseHexIP_IPv4 测试 IPv4 十六进制小端序解析
@@ -371,4 +373,48 @@ func getProcessUIDFromStatusFile(path string) int {
 		}
 	}
 	return -1
+}
+
+// TestCmdPatternFromConfig 测试 cmdPatternFromConfig 辅助函数
+func TestCmdPatternFromConfig(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  *config.ServiceConfig
+		want string
+	}{
+		{"nil config", nil, ""},
+		{"empty command", &config.ServiceConfig{}, ""},
+		{"single command", &config.ServiceConfig{Command: []string{"./bin/transmission-daemon"}}, "./bin/transmission-daemon"},
+		{"multiple args", &config.ServiceConfig{Command: []string{"qbittorrent-nox", "--webui-port=8080"}}, "qbittorrent-nox"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := cmdPatternFromConfig(c.cfg)
+			if got != c.want {
+				t.Errorf("cmdPatternFromConfig() = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// TestCollectInodesByCmdlineUID_Basic 测试 collectInodesByCmdlineUID 的边界条件
+// 注意：此函数依赖 /proc 文件系统，边界条件测试不需要真实的 /proc 数据
+func TestCollectInodesByCmdlineUID_Basic(t *testing.T) {
+	// 空 UID map + 空 cmdPattern → 应返回 nil
+	result := collectInodesByCmdlineUID(nil, "")
+	if result != nil {
+		t.Errorf("expected nil for empty uids and cmdPattern, got %v", result)
+	}
+
+	// 空 UID map → 应返回 nil
+	result = collectInodesByCmdlineUID(map[int]bool{}, "qbittorrent-nox")
+	if result != nil {
+		t.Errorf("expected nil for empty uids, got %v", result)
+	}
+
+	// 空 cmdPattern → 应返回 nil
+	result = collectInodesByCmdlineUID(map[int]bool{65534: true}, "")
+	if result != nil {
+		t.Errorf("expected nil for empty cmdPattern, got %v", result)
+	}
 }

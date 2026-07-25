@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/supdorg/supd/internal/config"
 )
 
 // readFileWithTimeout reads a file with a 2-second timeout.
@@ -47,35 +49,57 @@ type PortInfo struct {
 
 // collectProcessPorts 采集进程及其子进程监听的端口
 // 主路径：通过 /proc/<pid>/fd/* 读取 socket inode 匹配 /proc/net/
-// 降级路径：当 Yama LSM ptrace_scope=1 等限制阻止 readlink fd 时，
-// 通过进程 UID 在 /proc/net/ 中匹配端口（服务通常只有唯一 UID 用户）
-func collectProcessPorts(pid int) []PortInfo {
+// 降级路径1：当 Yama LSM ptrace_scope=1 等限制阻止 readlink fd 时，
+//   通过进程 UID + cmdline 交叉验证在 /proc/net/ 中精确匹配端口
+//   先扫描 /proc 下所有同 UID 且 cmdline 匹合的进程 PID，再次尝试 inode 收集；
+//   如果 inode 仍然全部失败，退回到纯 UID 匹配（但会记录日志警告可能串扰）
+// 降级路径2（最终兜底）：纯 UID 匹配，同一 UID 的所有进程端口会被归到该服务，
+//   可能导致多服务端口列表重叠
+func collectProcessPorts(pid int, cmdPattern string) []PortInfo {
 	// 1. 尝试主路径：收集进程树所有 PID 的 socket inode
 	inodes := collectSocketInodes(pid)
 
 	var ports []PortInfo
 	if len(inodes) > 0 {
-		// 主路径：inode 精确匹配
+		// 主路径：inode 粟确匹配
 		for _, proto := range []string{"tcp", "tcp6", "udp", "udp6"} {
 			ports = append(ports, matchNetSockets(proto, inodes)...)
 		}
 	} else {
 		// 降级路径：Yama LSM 或权限限制导致 readlink /proc/<pid>/fd 失败
-		// 通过进程 UID 在 /proc/net/ 中匹配端口
 		uid := getProcessUID(pid)
 		if uid < 0 {
 			return nil
 		}
-		slog.Debug("port collection: inode method failed, falling back to UID matching",
+		slog.Debug("port collection: inode method failed, falling back to UID+cmdline matching",
 			"pid", pid, "uid", uid)
+
 		// 同时收集子进程 UID（子进程可能以不同用户运行）
 		childUIDs := getChildProcessUIDs(pid)
 		allUIDs := map[int]bool{uid: true}
 		for _, cu := range childUIDs {
 			allUIDs[cu] = true
 		}
-		for _, proto := range []string{"tcp", "tcp6", "udp", "udp6"} {
-			ports = append(ports, matchNetSocketsByUID(proto, allUIDs)...)
+
+		// 降级路径1：UID + cmdline 交叉验证
+		// 扫描 /proc 找到所有同 UID 且 cmdline 包含目标服务 command 的进程 PID，
+		// 对这些 PID 再次尝试 inode 收集，缩小归属范围
+		cmdVerifiedInodes := collectInodesByCmdlineUID(allUIDs, cmdPattern)
+		if len(cmdVerifiedInodes) > 0 {
+			slog.Debug("port collection: cmdline-verified inode matching succeeded",
+				"pid", pid, "uid", uid, "cmdPattern", cmdPattern,
+				"inodeCount", len(cmdVerifiedInodes))
+			for _, proto := range []string{"tcp", "tcp6", "udp", "udp6"} {
+				ports = append(ports, matchNetSockets(proto, cmdVerifiedInodes)...)
+			}
+		} else {
+			// 降级路径2：cmdline 过滤后 inode 也无法收集（所有同 UID 进程都被 ptrace_scope 阻止）
+			// 退回到纯 UID 匹配，记录警告日志
+			slog.Warn("port collection: cmdline-verified inode also failed, using pure UID matching (ports may overlap across same-UID services)",
+				"pid", pid, "uid", uid, "cmdPattern", cmdPattern)
+			for _, proto := range []string{"tcp", "tcp6", "udp", "udp6"} {
+				ports = append(ports, matchNetSocketsByUID(proto, allUIDs)...)
+			}
 		}
 	}
 
@@ -130,7 +154,7 @@ func collectProcessPortsByCommand(cmdPattern string) []PortInfo {
 			continue
 		}
 		// 匹配成功，采集该 host PID 的端口（collectProcessPorts 内含 UID 降级）
-		return collectProcessPorts(hostPID)
+		return collectProcessPorts(hostPID, cmdBase)
 	}
 	return nil
 }
@@ -351,4 +375,71 @@ func getChildProcessUIDs(pid int) []int {
 		}
 	}
 	return uids
+}
+
+// collectInodesByCmdlineUID 通过 UID + cmdline 交叉验证收集 socket inode
+// 扫描 /proc 下所有 UID 匹合且 cmdline 包含 cmdPattern 基础名的进程，
+// 对这些进程尝试 readlink /proc/<pid>/fd/* 收集 inode
+// 返回收集到的 inode map；如果所有 readlink 都失败（如 yama ptrace_scope=1）返回空 map
+func collectInodesByCmdlineUID(uids map[int]bool, cmdPattern string) map[uint64]bool {
+	if len(uids) == 0 || cmdPattern == "" {
+		return nil
+	}
+
+	// 提取命令基础名（如 ./bin/qbittorrent-nox → qbittorrent-nox）
+	cmdBase := filepath.Base(cmdPattern)
+	if cmdBase == "." || cmdBase == "/" || cmdBase == "" {
+		cmdBase = cmdPattern
+	}
+
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil
+	}
+
+	inodes := make(map[uint64]bool)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil {
+			continue
+		}
+
+		// 1. 检查进程 UID 是否在目标 UID 集合中
+		procUID := getProcessUID(pid)
+		if procUID < 0 || !uids[procUID] {
+			continue
+		}
+
+		// 2. 检查 cmdline 是否包含目标服务的命令基础名
+		cmdlinePath := filepath.Join("/proc", entry.Name(), "cmdline")
+		cmdData, err := readFileWithTimeout(cmdlinePath)
+		if err != nil {
+			continue
+		}
+		cmdline := strings.ReplaceAll(string(cmdData), "\x00", " ")
+		if cmdline == "" || !strings.Contains(cmdline, cmdBase) {
+			continue
+		}
+
+		// 3. 对匹配的进程尝试 collectSocketInodes
+		pidInodes := collectSocketInodes(pid)
+		for inode := range pidInodes {
+			inodes[inode] = true
+		}
+	}
+
+	return inodes
+}
+
+// cmdPatternFromConfig 从服务配置中提取命令模式字符串
+// 用于 collectProcessPorts 的 cmdline 交叉验证
+// 返回 Command[0]（如果存在）或空字符串
+func cmdPatternFromConfig(cfg *config.ServiceConfig) string {
+	if cfg != nil && len(cfg.Command) > 0 {
+		return cfg.Command[0]
+	}
+	return ""
 }

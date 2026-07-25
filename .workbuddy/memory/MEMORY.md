@@ -29,5 +29,16 @@
 - 资源端点返回 `process_count`/`fd_count`（无 `threads` 字段）。
 - zip-slip 导入返回 `200 entries=null` 未越界（建议改 400）。
 
-## 环境注意（重要，勿误伤）
-- 本机常驻**无关 supd 实例**：`:7979`（workdir `/tmp/test-workdir`）、`/tmp/supd-rt`（workdir `/tmp/supd-rt`），父进程均为 user-systemd(pid 218)。e2e 仅用仓库内 `test_workdir`，切勿 SIGTERM 或清理这两个实例及其子进程。
+## 环境注意（重要）
+- **`:7979` 实例真实拓扑（2026-07-25 更正）**：`192.168.31.188:7979` 是**独立局域网主机/盒子**（开发机自身是 `192.168.31.184`）。其上 supd 以 **PID1** 运行，`--workdir /etc/supd`。**不是**本机 `/tmp/test-workdir`（`/tmp/test-workdir` 等只是本机开发/e2e 沙盒，与该实例无关，切勿混淆）。
+- **访问方式**：SSH `root@192.168.31.188 -p 2222`（该实例自身的 dropbear-ssh 服务，**从开发机可免密登录**）。登录后直接改 `/etc/supd` 下的服务/扩展文件，远程 supd 的 fsnotify 会实时生效——`/etc/supd` 才是 `:7979` 真正读取的工作目录。
+- **Transmission RPC 认证**：`settings.json` 中 `rpc-authentication-required:false`、`rpc-whitelist:127.0.0.1,::1`。tracker-updater 脚本走 **CSRF `X-Transmission-Session-Id`**（409 重试）认证，**无账号密码**；因白名单仅限本机，脚本用 `127.0.0.1` 连接（从开发机直连会 403）。
+- **下载目录持久化坑（重要）**：transmission `settings.json` 与 qBittorrent `qBittorrent.conf` 都会在该进程**优雅退出时重写**并丢弃外部手改的未知段落。改 download-dir / SavePath 必须：先 stop（让它用旧值重写一次）→ 编辑配置文件 → 再 start（新进程加载正确值）；直接 restart 会被退出重写覆盖回旧值。
+- `/tmp/supd-rt` 等本机实例仍为本机常驻沙盒，e2e 仅用仓库内 `test_workdir`，勿误伤。
+
+## 端口归属修复（2026-07-25）
+- **根因**：188 容器 yama ptrace_scope=1 → readlink /proc/<pid>/fd 对 nobody 进程 Permission denied → inode 精确匹配完全失败 → UID 降级把同 UID 的 qbittorrent/transmission 端口全部混在一起
+- **修复**：UID 降级路径添加 cmdline 交叉验证（`collectInodesByCmdlineUID`）：扫描 /proc 找 UID+cmdline 匹合进程 → 重试 inode → 有结果走精确匹配，无结果退回纯 UID 匹配 + Warn 日志
+- **签名变更**：`collectProcessPorts(pid int)` → `collectProcessPorts(pid int, cmdPattern string)`
+- **新增辅助**：`cmdPatternFromConfig(cfg)` 提取 `ServiceConfig.Command[0]`
+- **影响文件**：port_collector.go / service_handler.go / resource_handler.go
