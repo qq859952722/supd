@@ -61,7 +61,7 @@ func collectProcessPorts(pid int, cmdPattern string) []PortInfo {
 
 	var ports []PortInfo
 	if len(inodes) > 0 {
-		// 主路径：inode 粟确匹配
+		// 主路径：inode 精确匹配
 		for _, proto := range []string{"tcp", "tcp6", "udp", "udp6"} {
 			ports = append(ports, matchNetSockets(proto, inodes)...)
 		}
