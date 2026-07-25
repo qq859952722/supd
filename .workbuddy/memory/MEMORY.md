@@ -20,3 +20,14 @@
 - `EventPublisher.Publish(eventType string, payload any)` 签名（payload 是 `any`，非 `map[string]any`）。core 包用 `sm.publisher.Publish(...)`。
 - 14 种事件类型全部实际发布（grep .Publish 确认）；system_resource_warning 仅磁盘（run.go:715）。
 - 错误码 22 个，后端 DefaultMessages 中英混杂（P-01-001 待修）；CLI/前端均有纯中文覆盖。
+
+## e2e 运行期测试（2026-07-25 全都要测战役）
+- 方案 `tmp/运行状态测试方案.md`，报告 `tmp/运行状态测试_e2e报告.md`：13 适用节全 PASS，3.13 前端 N/A(headless)。
+- SIGTERM 关停主进程 → 退出码 0、优雅退出日志序列、`ps` 无残留子进程（验证方式）。
+- **手动 start 不级联依赖**（设计，`service_operator.go:140`）；拓扑排序仅在启动期 autostart 生效。
+- 停止流 supd **不打印 SIGTERM/SIGKILL 字面日志**，正确性靠 stop 阻塞时长 + 进程回收证伪；顽固停止 grace 后 SIGKILL。
+- 资源端点返回 `process_count`/`fd_count`（无 `threads` 字段）。
+- zip-slip 导入返回 `200 entries=null` 未越界（建议改 400）。
+
+## 环境注意（重要，勿误伤）
+- 本机常驻**无关 supd 实例**：`:7979`（workdir `/tmp/test-workdir`）、`/tmp/supd-rt`（workdir `/tmp/supd-rt`），父进程均为 user-systemd(pid 218)。e2e 仅用仓库内 `test_workdir`，切勿 SIGTERM 或清理这两个实例及其子进程。
