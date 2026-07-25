@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { SkeletonCard } from '@/components/ui/Skeleton'
 import { TokenManager } from '@/components/settings/TokenManager'
-import { EnvEditor } from '@/components/settings/EnvEditor'
+import { EnvEditorDialog } from '@/components/settings/EnvEditor'
 import { t } from '@/lib/i18n'
 import { Save, Plus, Trash2, Info, AlertTriangle, Upload, Loader2, RefreshCw } from 'lucide-react'
 import { useState, useEffect, useRef } from 'react'
@@ -684,7 +684,20 @@ export default function SettingsPage() {
 
         {/* 全局环境变量 */}
         <div ref={(el) => { sectionRefs.current.env = el }} style={{ scrollMarginTop: '80px' }}>
-          <EnvEditor />
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>{t.settings.globalEnv}</CardTitle>
+                  <CardDescription>{t.settings.globalEnvDesc}</CardDescription>
+                </div>
+                <EnvEditorDialog />
+              </div>
+            </CardHeader>
+            <CardContent className="text-xs text-[var(--color-text-tertiary)]">
+              <p>环境变量文件格式为 YAML，包含 <code className="font-mono bg-[var(--color-surface-tertiary)] px-1 rounded">env</code> 顶层块，每个变量有 <code className="font-mono bg-[var(--color-surface-tertiary)] px-1 rounded">value</code>、<code className="font-mono bg-[var(--color-surface-tertiary)] px-1 rounded">enabled</code>（可选）、<code className="font-mono bg-[var(--color-surface-tertiary)] px-1 rounded">hint</code>（可选）字段。点击"编辑环境变量"按钮打开可视化编辑弹窗。</p>
+            </CardContent>
+          </Card>
         </div>
 
         {/* 运行时配置 */}

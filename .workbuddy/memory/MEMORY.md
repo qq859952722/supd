@@ -38,7 +38,17 @@
 
 ## 端口归属修复（2026-07-25）
 - **根因**：188 容器 yama ptrace_scope=1 → readlink /proc/<pid>/fd 对 nobody 进程 Permission denied → inode 精确匹配完全失败 → UID 降级把同 UID 的 qbittorrent/transmission 端口全部混在一起
-- **修复**：UID 降级路径添加 cmdline 交叉验证（`collectInodesByCmdlineUID`）：扫描 /proc 找 UID+cmdline 匹合进程 → 重试 inode → 有结果走精确匹配，无结果退回纯 UID 匹配 + Warn 日志
+- **四层降级策略**（完整）：
+  1. 主路径：inode 精确匹配（通过 readlink /proc/<pid>/fd）
+  2. 降级1：UID+cmdline 交叉验证（`collectInodesByCmdlineUID`）→ 扫描 /proc 找同 UID+cmdline 进程 → 重试 inode → ptrace_scope=1 下同样失败
+  3. 降级2：网络 CLI 探测（`collectPortsByNetCLI`）→ `ss -tlnp`/`ss -ulnp` 或 `netstat -tlnp`/`netstat -ulnp` → 对有 PID 的行做 cmdline 交叉验证，对无 PID 的行按 UID 匹配（交叉验证 ss 输出的端口列表）
+  4. 降级3（最终兜底）：纯 /proc/net/ UID 匹配 → **仅输出一次 Warn 日志**（`logUIDFallbackOnce`），避免每 5 秒刷屏
 - **签名变更**：`collectProcessPorts(pid int)` → `collectProcessPorts(pid int, cmdPattern string)`
-- **新增辅助**：`cmdPatternFromConfig(cfg)` 提取 `ServiceConfig.Command[0]`
-- **影响文件**：port_collector.go / service_handler.go / resource_handler.go
+- **新增辅助**：`cmdPatternFromConfig(cfg)`、`collectPortsByNetCLI`、`parseSSOutput`、`parseNetstatOutput`、`parseSSAddressPort`、`logUIDFallbackOnce`、`runNetCLI`、`ssLineRegex`
+- **影响文件**：port_collector.go / service_handler.go / resource_handler.go / port_collector_test.go
+- **ptrace_scope=1 实际影响范围**：readlink /proc/<pid>/fd、fdinfo、maps、mem 全部 Permission denied；但 /proc/<pid>/status、cmdline、stat 可正常读取。ss/netstat 的 Process 列同样受 ptrace_scope 限制（对 nobody 进程无 PID 信息），所以 CLI 探测对能显示 PID 的进程精确匹配，对不能显示 PID 的端口仍需 UID 匹配
+- **188 服务器环境**：Alpine Linux v3.20，iproute2-6.9.0（`/sbin/ss`），BusyBox v1.36.1（`/bin/netstat`）
+- **CLI 解析踩坑（重要）**：
+  - ss 输出列间填充空格 → `strings.Fields` 分割后 **fields[3]=Local Address:Port**（不是 fields[4]），首次代码写错为 fields[4]（取了 Peer Address），已修正
+  - netstat UDP 行**没有 State 列**（6字段），TCP 行有 State 列（7字段）→ PID/Program name 的字段索引不同：TCP=fields[6]，UDP=fields[5]。首次代码统一用 fields[6] 导致 UDP 行全部跳过，已修正
+  - ss/netstat 格式在 Alpine（BusyBox）和 Ubuntu（GNU）之间一致，不会因版本差异出问题

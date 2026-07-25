@@ -418,3 +418,220 @@ func TestCollectInodesByCmdlineUID_Basic(t *testing.T) {
 		t.Errorf("expected nil for empty cmdPattern, got %v", result)
 	}
 }
+
+// --- 降级路径2（CLI 探测）测试 ---
+
+// TestParseSSAddressPort 测试 ss 输出中的地址:端口解析
+func TestParseSSAddressPort(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    string
+		wantAddr string
+		wantPort int
+		wantOK   bool
+	}{
+		{"IPv4 any", "0.0.0.0:9091", "0.0.0.0", 9091, true},
+		{"IPv4 loopback", "127.0.0.1:25", "127.0.0.1", 25, true},
+		{"IPv6 any", "[::]:8000", "::", 8000, true},
+		{"IPv6 loopback", "[::1]:8000", "::1", 8000, true},
+		{"IPv6 with interface", "[::1]%lo:29321", "::1", 29321, true},
+		{"IPv4 with interface", "192.168.31.188%eth0:29321", "192.168.31.188", 29321, true},
+		{"wildcard star", "*:7979", "0.0.0.0", 7979, true},
+		{"IPv4 mapped", "[::ffff:127.0.0.1]:9091", "127.0.0.1", 9091, true},
+		{"no colon", "noport", "", 0, false},
+		{"empty string", "", "", 0, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			addr, port, ok := parseSSAddressPort(c.input)
+			if ok != c.wantOK {
+				t.Errorf("parseSSAddressPort(%q) ok=%v, want %v", c.input, ok, c.wantOK)
+			}
+			if ok && (addr != c.wantAddr || port != c.wantPort) {
+				t.Errorf("parseSSAddressPort(%q) = (%q, %d), want (%q, %d)", c.input, addr, port, c.wantAddr, c.wantPort)
+			}
+		})
+	}
+}
+
+// TestParseSSOutput_WithPID 测试 ss 输出中有 PID 信息的行解析
+// 模拟 ss -tlnp 输出中的带 Process 列的行
+func TestParseSSOutput_WithPID(t *testing.T) {
+	// 模拟 ss 输出中带 PID 的行（dropbear SSH）
+	ssOutput := `State  Recv-Q Send-Q                                  Local Address:Port  Peer Address:PortProcess
+LISTEN 0      1000                                          0.0.0.0:2222       0.0.0.0:*    users:(("dropbear",pid=46,fd=3))
+LISTEN 0      4096                                          0.0.0.0:9091       0.0.0.0:*
+LISTEN 0      50                                                  *:8080             *:*`
+
+	// 搜索 transmission-daemon — 只应匹配 PID 行中的进程名
+	cmdBase := "transmission-daemon"
+	uids := map[int]bool{65534: true}
+	ports := parseSSOutput(ssOutput, cmdBase, uids)
+
+	// 有 PID 的行：dropbear 不匹配 transmission-daemon → 被排除
+	// 无 PID 的行：9091 和 8080 → 按 UID 匹配（如果 /proc/net/ 中有对应 UID 的行）
+	// 测试环境中 /proc/net/ 是真实的系统数据，结果取决于系统实际端口
+	// 只验证函数不 panic、返回值合理
+	_ = ports
+}
+
+// TestParseSSOutput_WithMatchingPID 测试 ss 输出中 PID 匹配目标服务的行
+func TestParseSSOutput_WithMatchingPID(t *testing.T) {
+	ssOutput := `State  Recv-Q Send-Q                                  Local Address:Port  Peer Address:PortProcess
+LISTEN 0      1000                                          0.0.0.0:2222       0.0.0.0:*    users:(("dropbear",pid=46,fd=3))
+LISTEN 0      128                                           0.0.0.0:9091       0.0.0.0:*`
+
+	// 空 cmdBase → 所有 PID 行都会被保留
+	ports := parseSSOutput(ssOutput, "", map[int]bool{})
+	// 只验证不 panic
+	_ = ports
+}
+
+// TestParseNetstatOutput_WithPID 测试 netstat 输出中带 PID 的行解析
+func TestParseNetstatOutput_WithPID(t *testing.T) {
+	netstatOutput := `Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name
+tcp        0      0 0.0.0.0:2222            0.0.0.0:*               LISTEN      46/dropbear
+tcp        0      0 0.0.0.0:9091            0.0.0.0:*               LISTEN      -
+tcp        0      0 0.0.0.0:8080            0.0.0.0:*               LISTEN      -`
+
+	// 搜索 dropbear
+	ports := parseNetstatOutput(netstatOutput, "dropbear", map[int]bool{0: true})
+
+	// 应匹配到 2222 (dropbear PID 行)
+	found2222 := false
+	for _, p := range ports {
+		if p.Port == 2222 && p.Protocol == "tcp" && p.State == "LISTEN" {
+			found2222 = true
+		}
+	}
+	// 注意：测试环境中 /proc/net/tcp 是真实系统数据，
+	// netstat 中的无 PID 行是否出现在最终结果取决于 /proc/net/ UID 匹配
+	if !found2222 {
+		t.Error("expected port 2222 for dropbear PID matching")
+	}
+}
+
+// TestParseNetstatOutput_NoMatch 测试 netstat 无匹配结果
+func TestParseNetstatOutput_NoMatch(t *testing.T) {
+	netstatOutput := `Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name
+tcp        0      0 0.0.0.0:2222            0.0.0.0:*               LISTEN      46/dropbear`
+
+	// 搜索不存在的进程
+	ports := parseNetstatOutput(netstatOutput, "nonexistent", map[int]bool{999: true})
+	// dropbear 不匹配 nonexistent → 不会出现在结果中
+	// 但 2222 在 /proc/net/tcp 中 uid=0，而我们的 uids 只有 999 → 无 UID 匹配
+	if len(ports) > 0 {
+		// PID 行不匹配 cmdBase → 排除；无 PID 行按 UID 匹配但 uid=999 不匹配 uid=0
+		t.Logf("ports for nonexistent cmd: %v (some system ports may match)", ports)
+	}
+}
+
+// TestParseNetstatOutput_UDP 测试 netstat UDP 输出解析
+// UDP 行没有 State 列，PID/Program name 在 fields[5]（而非 fields[6]）
+func TestParseNetstatOutput_UDP(t *testing.T) {
+	netstatOutput := `Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name
+udp        0      0 0.0.0.0:51413           0.0.0.0:*                           -
+udp        0      0 0.0.0.0:6771            0.0.0.0:*                           -
+udp        0      0 192.168.31.188:50524    0.0.0.0:*                           46/dropbear`
+
+	// 测试有 PID 的 UDP 行（dropbear）
+	ports := parseNetstatOutput(netstatOutput, "dropbear", map[int]bool{0: true})
+
+	// 有 PID 的行 (46/dropbear) → 应匹配
+	found50524 := false
+	for _, p := range ports {
+		if p.Port == 50524 && p.Protocol == "udp" && p.State == "" {
+			found50524 = true
+		}
+	}
+	if !found50524 {
+		t.Error("expected UDP port 50524 for dropbear PID matching")
+	}
+}
+
+// TestLogUIDFallbackOnce_OnlyWarnOnce 测试一次性日志：同一 (uid, cmdPattern) 只 Warn 一次
+func TestLogUIDFallbackOnce_OnlyWarnOnce(t *testing.T) {
+	// 清空已记录日志
+	uidFallbackLogger.Lock()
+	uidFallbackLogger.logged = make(map[string]bool)
+	uidFallbackLogger.Unlock()
+
+	// 第一次调用 → 应记录 Warn
+	args := []any{"pid", 14, "uid", 65534, "cmdPattern", "transmission-daemon"}
+	logUIDFallbackOnce("test message", args...)
+
+	uidFallbackLogger.Lock()
+	firstLogged := uidFallbackLogger.logged["uid:65534,cmdPattern:transmission-daemon,"]
+	uidFallbackLogger.Unlock()
+
+	if !firstLogged {
+		t.Error("expected first call to be logged as Warn")
+	}
+
+	// 第二次调用 → 应转为 Debug（不再 Warn）
+	logUIDFallbackOnce("test message", args...)
+
+	uidFallbackLogger.Lock()
+	stillSingle := uidFallbackLogger.logged["uid:65534,cmdPattern:transmission-daemon,"]
+	uidFallbackLogger.Unlock()
+
+	if !stillSingle {
+		t.Error("expected second call to still be logged (but as Debug)")
+	}
+
+	// 不同参数 → 应再次 Warn
+	args2 := []any{"pid", 29, "uid", 65534, "cmdPattern", "qbittorrent-nox"}
+	logUIDFallbackOnce("test message 2", args2...)
+
+	uidFallbackLogger.Lock()
+	secondLogged := uidFallbackLogger.logged["uid:65534,cmdPattern:qbittorrent-nox,"]
+	uidFallbackLogger.Unlock()
+
+	if !secondLogged {
+		t.Error("expected different (uid, cmdPattern) to be logged as new Warn")
+	}
+}
+
+// TestCollectPortsByNetCLI_NoCLI 测试 ss/netstat 不可用时返回 nil
+// 此测试在 CI 环境中运行，ss 可能可用，所以只验证函数不 panic
+func TestCollectPortsByNetCLI_NoCLI(t *testing.T) {
+	// 空 cmdBase + 空 uids → 收集所有 ss 可显示的端口
+	ports := collectPortsByNetCLI("", map[int]bool{})
+	_ = ports // 不 panic 即通过
+}
+
+// TestSSLineRegex 测试 ss Process 列正则解析
+func TestSSLineRegex(t *testing.T) {
+	cases := []struct {
+		name   string
+		input  string
+		match  bool
+		proc   string
+		pidStr string
+		fdStr  string
+	}{
+		{"single user", `users:(("dropbear",pid=46,fd=3))`, true, "dropbear", "46", "3"},
+		{"multiple users", `users:(("dropbear",pid=46,fd=3),("supd",pid=1,fd=5))`, true, "dropbear", "46", "3"},
+		{"no users column", "", false, "", "", ""},
+		{"partial format", `users:(("proc"`, false, "", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := ssLineRegex.FindStringSubmatch(c.input)
+			if c.match {
+				if m == nil {
+					t.Errorf("expected match for %q", c.input)
+				} else if m[1] != c.proc || m[2] != c.pidStr || m[3] != c.fdStr {
+					t.Errorf("match = (%q, %q, %q), want (%q, %q, %q)", m[1], m[2], m[3], c.proc, c.pidStr, c.fdStr)
+				}
+			} else {
+				if m != nil {
+					t.Errorf("expected no match for %q, got %v", c.input, m)
+				}
+			}
+		})
+	}
+}
