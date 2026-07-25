@@ -10,7 +10,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：17 类审计评分 **97.84 / 100（⭐ 优秀）**；1000+ 单元测试通过（Go 948+ + 前端 60）；零竞态；staticcheck/go vet 零警告
-- **当前版本**：v0.0.27（版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.0.28（版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -103,7 +103,7 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-25 | 测试方案实施 + E2E 验证全通过 + v0.0.22 发布 | 修复 API 调用状态取值键名 (`state` -> `status`) 与配置反序列化字段名不匹配导致的问题，完成 Resource Collector、Normal Exit State Machine、Executor Logging、Extension Updater Fallback 的 4 个 E2E 场景测试，全部通过；版本升级 v0.0.22 并推送。 | [notes/2026-07-25.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-25.md) |
 | 2026-07-25 | 新增代码审计 + 运行测试 + v0.0.23 发布 | 审计 v0.0.22 新增代码（7 文件）：无安全漏洞；12 场景运行测试全通过：5 服务 ready、EventNormalExit(exit 0→down 不重启)验证、executor 日志 run_id 注入确认、JS 降依赖审计；无 bug 需修复。版本升级 v0.0.23 并推送。 | [notes/2026-07-25.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-25.md) |
 | 2026-07-25 | Docker SYS_PTRACE 验证与端口探测降级清理 | Docker `cap_add: SYS_PTRACE` 已验证生效；删除 UID/cmdline/ss/netstat/命令扫描降级，仅保留受管 PID 进程树 fd socket inode 精确匹配；后端构建、vet、API 测试及全量测试均通过；部署必须配置 SYS_PTRACE。 | [notes/2026-07-25.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-25.md) |
-| 2026-07-25 | auto-create-users 默认启用与生命周期前移 | docker-compose 增加 `ALLID="abc,claw"`；扩展默认启用并由 post_ready 前移至 pre_start；保留 `id` 存在判断，新增隔离 mock 幂等测试；专项构建、vet、cli/extension 测试通过；已有初始化目录需手动同步或重新初始化；版本保持 v0.0.27。 | [notes/2026-07-25.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-25.md) |
+| 2026-07-25 | 新增代码审计 + 端口探测简化与 auto-create-users 调整 + v0.0.28 发布 | 审计端口探测逻辑简化与 auto-create-users pre_start 默认启用扩展；后端 go test / go vet / pnpm build 全过；版本升级 v0.0.28 并推送。 | [notes/2026-07-25.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-25.md) |
 
 ---
 
@@ -115,4 +115,5 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 - **auto-create-users 修改文件**：`docker-compose.yml`、`internal/cli/init_examples.go`、`internal/cli/init_test.go`。
 - **本次专项验证**：`go build ./...`、`go vet ./...`、`go test ./internal/cli -run AutoCreateUsers -count=1`、`go test ./internal/extension -count=1` 均通过。
 - **初始化目录说明**：已有初始化目录不会被模板自动覆盖，需手动同步相关配置与脚本，或重新初始化。
-- **版本**：保持 `v0.0.27`。
+- **版本**：`v0.0.28`。
+
