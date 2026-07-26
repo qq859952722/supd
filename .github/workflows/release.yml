@@ -246,7 +246,6 @@ jobs:
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.meta.outputs.version }}-${{ matrix.arch }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-${{ matrix.arch }}
           labels: |
             org.opencontainers.image.version=${{ needs.meta.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -317,8 +316,21 @@ jobs:
       - name: 更新 latest manifest（仅正式版）
         if: needs.meta.outputs.is_prerelease == 'false'
         run: |
+          set -euo pipefail
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
           VERSION="${{ needs.meta.outputs.version }}"
+
+          git fetch --force --tags origin
+          HIGHEST_STABLE_TAG="$({ git tag --list | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -n 1)"
+          if [ -z "${HIGHEST_STABLE_TAG}" ]; then
+            echo "⏭️ 跳过 latest：仓库中没有严格正式 tag"
+            exit 0
+          fi
+          if [ "${VERSION}" != "${HIGHEST_STABLE_TAG}" ]; then
+            echo "⏭️ 跳过 latest：当前版本 ${VERSION} 不是最高正式版本 ${HIGHEST_STABLE_TAG}"
+            exit 0
+          fi
+
           docker buildx imagetools create \
             --tag "${IMAGE}:latest" \
             "${IMAGE}:${VERSION}-amd64" \

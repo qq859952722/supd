@@ -110,14 +110,13 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 
 ---
 
-## 八、最近会话重点（2026-07-26 v0.0.31 版本发布）
+## 八、最近会话重点（2026-07-26 GHCR latest 发布竞争修复）
 
-- **镜像工具**：Alpine 运行时新增 `shadow`，提供 `useradd/groupadd/usermod/groupmod/userdel/groupdel`。
-- **扩展优化**：默认 auto-create-users v1.1.0 优先使用 `usermod/groupmod` 修正 UID/GID，并保留 BusyBox 回退逻辑。
-- **启动提示**：日志初始化后输出 ALLID 格式/示例与全局 `env/00-base.yaml` YAML 写法，控制台和 `supd.log` 均可见。
-- **初始化提示**：默认全局环境变量文件加入可取消注释使用的 ALLID 配置示例。
-- **版本发布**：升级至 `v0.0.31`，更新 `README.md` Docker pull 示例与版本表。
-- **验证通过**：`go build ./...`、`go vet ./...`、`go test ./... -count=1`、`cd web && pnpm build` 与 `supd version` 验证全部通过。
+- **现象确认**：192.168.31.188 实例仍运行 v0.0.21，因此未包含 v0.0.30 的 `autostart:false → down` 修复。
+- **发布根因**：GitHub Actions 同时执行 v0.0.31 与补推的旧标签 v0.0.21，旧流程稍晚完成并将 GHCR `latest` 反向覆盖为旧版本。
+- **工作流修复**：架构构建仅推不可变 `${version}-${arch}` 标签；正式版仅当自身为仓库最高稳定语义版本时更新 `latest`。
+- **预发布规则**：预发布继续不更新 `latest`；旧标签补推和并发晚完成会安全跳过。
+- **验证通过**：`git diff --check`、VS Code YAML diagnostics、稳定版本筛选 shell 模拟均通过。
 
 
 
