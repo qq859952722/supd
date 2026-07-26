@@ -179,5 +179,6 @@ git push origin vX.Y.Z
 | 2026-07-26 | v0.0.29 | auto-create-users UID-GID 迁移修复：find -prune 语义显式化、UID/GID 输入校验、BusyBox adduser -G 组名参数、UID/组属主分别迁移及失败传播、扩展超时 300s |
 | 2026-07-26 | v0.0.30 | 修复 `autostart: false` 服务初始状态未置为 `down` 导致首页持续显示"过渡中"的 BUG（对齐规格 §2.8.1） |
 | 2026-07-26 | v0.0.31 | Docker 镜像增加 shadow 标准用户管理工具，优化 auto-create-users 扩展优先使用 usermod/groupmod，并在启动时向控制台与日志输出 ALLID 和全局 env 示例 |
+| 2026-07-26 | v0.0.32 | 修复 GHCR `latest` 发布竞争：仅仓库最高稳定语义版本可更新共享标签，旧标签补推不再覆盖最新镜像 |
 
 
