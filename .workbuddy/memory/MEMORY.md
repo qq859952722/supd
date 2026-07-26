@@ -35,6 +35,8 @@
 - **Transmission RPC 认证**：`settings.json` 中 `rpc-authentication-required:false`、`rpc-whitelist:127.0.0.1,::1`。tracker-updater 脚本走 **CSRF `X-Transmission-Session-Id`**（409 重试）认证，**无账号密码**；因白名单仅限本机，脚本用 `127.0.0.1` 连接（从开发机直连会 403）。
 - **下载目录持久化坑（重要）**：transmission `settings.json` 与 qBittorrent `qBittorrent.conf` 都会在该进程**优雅退出时重写**并丢弃外部手改的未知段落。改 download-dir / SavePath 必须：先 stop（让它用旧值重写一次）→ 编辑配置文件 → 再 start（新进程加载正确值）；直接 restart 会被退出重写覆盖回旧值。
 - `/tmp/supd-rt` 等本机实例仍为本机常驻沙盒，e2e 仅用仓库内 `test_workdir`，勿误伤。
+- **188 host key 每次重启都变**（/etc/ssh 不持久）：SSH 用 `-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=accept-new`，或先 `ssh-keygen -R [192.168.31.188]:2222` 再连，否则报 `REMOTE HOST IDENTIFICATION HAS CHANGED`。
+- **188 实际 ALLID=`adb,claw`**（非 abc）：据此建 `adb`(uid101)、`claw`(uid102) 两个系统用户；auto-create-users 扩展 `enabled:true`，开机(post_ready)自动重建（自愈重置）。
 
 ## 端口归属修复（2026-07-25）
 - **根因**：188 容器 yama ptrace_scope=1 → readlink /proc/<pid>/fd 对 nobody 进程 Permission denied → inode 精确匹配完全失败 → UID 降级把同 UID 的 qbittorrent/transmission 端口全部混在一起
