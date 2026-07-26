@@ -55,5 +55,9 @@
   - netstat UDP 行**没有 State 列**（6字段），TCP 行有 State 列（7字段）→ PID/Program name 的字段索引不同：TCP=fields[6]，UDP=fields[5]。首次代码统一用 fields[6] 导致 UDP 行全部跳过，已修正
   - ss/netstat 格式在 Alpine（BusyBox）和 Ubuntu（GNU）之间一致，不会因版本差异出问题
 
+## 188 auto-create-users 扩展（长期事实，2026-07-26）
+- **188 真实 ALLID=`abc:1000:1000,claw:1001:1001`**（`/etc/supd/env/00-base.yaml` 实测；此前"adb,claw/uid101/102"系误读）。扩展 `enabled:true`、`supd_lifecycle post_ready` 触发，开机按 ALLID 建/修正系统用户（自愈重置）。
+- **busybox `adduser` 设主组必须用 `-G <组名>`**（组先由 `addgroup -S -g $gid $user` 建好）；`-g` 任何形式无效（静默回落 nogroup），`-G` 传数字 gid 报 `unknown group`。188 的 run.sh 已修（`-G $user`），但**仓库 `internal/cli/init_examples.go` 的 `autoCreateUsersRunSH` 仍是旧 bug 版（`-G $gid`）**——重新 init 会复发，需手动把 188 修复反向补回源码或从 188 重新拷脚本。
+
 ## 项目级技能（已安装）
 - **supd-service-extension-dev**（项目级，安装于 `.workbuddy/skills/supd-service-extension-dev`；2026-07-25 从 `.trae/skills/` 复制安装，安全审计定级 P2 安全）：supd 服务/扩展一条龙开发指南。含 SKILL.md、`references/`（6 个 .md 规范手册：service/extension 规格、热重载矩阵、在线开发、env.yaml 规范、tjs 运行时）、`scripts/validate_dev.py`+`pack_dev.py`（仅校验/打包，无网络外联、无越权写删）、`examples/`（9 个示例）。触发场景：创建/修改/打包/导入服务或扩展、tjs 运行时（`runtime: tjs`，`run.js`）扩展开发。

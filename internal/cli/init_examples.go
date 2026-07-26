@@ -840,8 +840,8 @@ const autoCreateUsersRunSH = `#!/bin/bash
 #   - shell 为 /sbin/nologin（禁止登录）
 #   - 系统用户
 #
-# 兼容性：优先 useradd/userdel（Debian/RHEL/Arch），回退 adduser/deluser（Alpine busybox）。
-#   注意 busybox 无 usermod，故"修正 uid/gid"通过直接改写 passwd/group 实现。
+# 兼容性：优先 shadow 提供的 useradd/groupadd/usermod/groupmod（Docker 镜像内置），
+#   回退 adduser/addgroup 与直接改写 passwd/group（兼容仅含 busybox 的 Alpine 环境）。
 #
 # 注意：需要 root 权限。非 root 运行时会报错并提示解决方法。
 
@@ -899,14 +899,18 @@ ensure_group() {
                 CREATE_USER_ERR="同名组 $gname 已存在但 gid=$current_gid（目标 gid=$gid）"
                 return 1
             fi
-            grtmp="${grpfile}.tmp"
-            if ! awk -F: -v u="$gname" -v ng="$gid" 'BEGIN{OFS=":"} $1==u{$3=ng} {print}' "$grpfile" > "$grtmp"; then
-                rm -f "$grtmp"
-                return 1
-            fi
-            if ! mv "$grtmp" "$grpfile"; then
-                rm -f "$grtmp"
-                return 1
+            if command -v groupmod >/dev/null 2>&1; then
+                groupmod -g "$gid" "$gname" || return 1
+            else
+                grtmp="${grpfile}.tmp"
+                if ! awk -F: -v u="$gname" -v ng="$gid" 'BEGIN{OFS=":"} $1==u{$3=ng} {print}' "$grpfile" > "$grtmp"; then
+                    rm -f "$grtmp"
+                    return 1
+                fi
+                if ! mv "$grtmp" "$grpfile"; then
+                    rm -f "$grtmp"
+                    return 1
+                fi
             fi
         fi
         GROUP_NAME="$gname"
@@ -964,16 +968,23 @@ fix_user_id() {
         echo "  [FAIL] 确保组 $user(gid=$newgid) 失败"
         return 1
     fi
-    if ! awk -F: -v u="$user" -v nu="$newuid" -v ng="$newgid" 'BEGIN{OFS=":"} $1==u{$3=nu; $4=ng} {print}' \
-        "$pwfile" > "$pwtmp"; then
-        echo "  [FAIL] 改写 $pwfile 失败（awk 执行错误）"
-        rm -f "$pwtmp"
-        return 1
-    fi
-    if ! mv "$pwtmp" "$pwfile"; then
-        echo "  [FAIL] 写入 $pwfile 失败（mv 错误，原文件未改动）"
-        rm -f "$pwtmp"
-        return 1
+    if command -v usermod >/dev/null 2>&1; then
+        if ! usermod -u "$newuid" -g "$GROUP_NAME" "$user"; then
+            echo "  [FAIL] usermod 修正用户 $user(${newuid}:${newgid}) 失败"
+            return 1
+        fi
+    else
+        if ! awk -F: -v u="$user" -v nu="$newuid" -v ng="$newgid" 'BEGIN{OFS=":"} $1==u{$3=nu; $4=ng} {print}' \
+            "$pwfile" > "$pwtmp"; then
+            echo "  [FAIL] 改写 $pwfile 失败（awk 执行错误）"
+            rm -f "$pwtmp"
+            return 1
+        fi
+        if ! mv "$pwtmp" "$pwfile"; then
+            echo "  [FAIL] 写入 $pwfile 失败（mv 错误，原文件未改动）"
+            rm -f "$pwtmp"
+            return 1
+        fi
     fi
 
     # 先迁移旧组，再迁移旧属主；两者独立，避免 chown 顺带改变组导致漏匹配。

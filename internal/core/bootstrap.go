@@ -17,16 +17,16 @@ import (
 // BootstrapConfig 启动配置
 // REQ-F-033, REQ-F-034: supd 启动流程配置
 type BootstrapConfig struct {
-	ConfigPath   string         // config.yaml 路径
-	BaseDir      string         // /etc/supd/
-	LogDir       string         // /var/log/supd/
-	NoPID1       bool           // --no-pid1 标志
-	HTTPListen   string         // 覆盖 http_listen
-	LogLevel     string         // 覆盖 log_level（--log-level 标志）
+	ConfigPath     string         // config.yaml 路径
+	BaseDir        string         // /etc/supd/
+	LogDir         string         // /var/log/supd/
+	NoPID1         bool           // --no-pid1 标志
+	HTTPListen     string         // 覆盖 http_listen
+	LogLevel       string         // 覆盖 log_level（--log-level 标志）
 	EventPublisher EventPublisher // REQ-2.9.7: 事件发布器
 
 	// REQ-F-028: 运行时配置来源
-	Runtimes          map[string]string // config.yaml 声明的运行时别名映射
+	Runtimes           map[string]string // config.yaml 声明的运行时别名映射
 	DiscoveredRuntimes map[string]string // 扫描发现的运行时别名映射
 
 	// REQ-D-004: 生命周期触发回调（由 run.go 注入）
@@ -45,17 +45,17 @@ type BootstrapConfig struct {
 // BootstrapResult 启动结果
 // REQ-F-033, REQ-F-034: 11步启动流程结果
 type BootstrapResult struct {
-	Config        *config.Config
-	Discovery     *watch.DiscoveryResult
-	DepGraph      *DependencyGraph
-	StateMachines map[string]*StateMachine
-	ProcessMgr    *ProcessManager
-	Watcher       *watch.Watcher
-	Loggers       map[string]*logging.ServiceLogger
-	RuntimeRegistry *config.RuntimeRegistry // REQ-F-028: 运行时注册表
-	RestartEngines  map[string]*RestartEngine // REQ-F-008: 每服务重启策略引擎
+	Config          *config.Config
+	Discovery       *watch.DiscoveryResult
+	DepGraph        *DependencyGraph
+	StateMachines   map[string]*StateMachine
+	ProcessMgr      *ProcessManager
+	Watcher         *watch.Watcher
+	Loggers         map[string]*logging.ServiceLogger
+	RuntimeRegistry *config.RuntimeRegistry       // REQ-F-028: 运行时注册表
+	RestartEngines  map[string]*RestartEngine     // REQ-F-008: 每服务重启策略引擎
 	CancelFuncs     map[string]context.CancelFunc // supervisor goroutine 的 cancel context
-	Errors []error // 非致命错误（单个服务配置错误等）
+	Errors          []error                       // 非致命错误（单个服务配置错误等）
 }
 
 // Bootstrap 启动管理器
@@ -81,6 +81,18 @@ func NewBootstrap(cfg BootstrapConfig) *Bootstrap {
 		done:   make(chan struct{}),
 		stopCh: make(chan struct{}),
 	}
+}
+
+func logStartupConfigurationHints(baseDir string) {
+	slog.Info("ALLID 自动创建/修正用户",
+		"format", "name[:uid[:gid]],多个条目用逗号分隔",
+		"examples", "ALLID=abd:1000:1000,claw:1001 或 ALLID=abd,claw",
+		"behavior", "省略 gid 时等于 uid；仅用户名时由系统分配 uid/gid；需以 root 运行")
+	slog.Info("全局环境变量 YAML 写法",
+		"path", filepath.Join(baseDir, "env", "00-base.yaml"),
+		"config", "config.yaml 的 env_files 需引用该文件",
+		"example", `env: { ALLID: { value: "abd:1000:1000,claw:1001", enabled: true, hint: "启动前创建或修正用户" } }`,
+		"note", "必须包含 env 包装层，变量必须使用 value/enabled/hint 结构，不能写成 ALLID: value")
 }
 
 // Run 执行11步启动流程
@@ -126,6 +138,7 @@ func (b *Bootstrap) Run(ctx context.Context) (*BootstrapResult, error) {
 	if err := logging.InitSupdLoggerWithLevel(b.cfg.LogDir, logLevel); err != nil {
 		return nil, fmt.Errorf("step 2 init supd logger: %w", err)
 	}
+	logStartupConfigurationHints(b.cfg.BaseDir)
 
 	// Step 3: 运行时注册表在 Step 4 后构建（依赖 Discovery 结果）
 
@@ -315,11 +328,11 @@ func (b *Bootstrap) startAutostartServices(ctx context.Context) error {
 
 		// 同层并行启动
 		type startResult struct {
-			name      string
-			err       error
-			proc      *Process
-			logger    *logging.ServiceLogger
-			engine    *RestartEngine
+			name       string
+			err        error
+			proc       *Process
+			logger     *logging.ServiceLogger
+			engine     *RestartEngine
 			cancelFunc context.CancelFunc
 		}
 		resultCh := make(chan startResult, len(autostartSvcs))

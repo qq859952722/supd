@@ -265,7 +265,14 @@ func createDefaultEnv(path string) error {
 	}
 
 	content := `# supd 默认环境变量
-# 全局环境变量文件，按文件名字母序加载
+# 全局环境变量文件，按文件名字母序加载；config.yaml 的 env_files 需引用本文件
+# 格式必须包含 env: 包装层，每个变量必须使用 value/enabled/hint 结构。
+# 示例（取消注释后生效）：
+# env:
+#   ALLID:
+#     value: "abd:1000:1000,claw:1001"
+#     enabled: true
+#     hint: "启动前创建或修正用户"
 `
 
 	if initDryRun {

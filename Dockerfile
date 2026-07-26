@@ -52,6 +52,7 @@ LABEL org.opencontainers.image.title="supd" \
 # - psmisc: killall/pstree/fuser（进程管理）
 # - procps-ng: ps/top/free 完整版（比 busybox 版功能更全）
 # - util-linux: 更多系统工具
+# - shadow: 标准用户/组管理命令（useradd/groupadd/usermod/groupmod/userdel/groupdel）
 # - jq: JSON 处理（API 响应解析、配置生成）
 # - nano: 轻量编辑器（容器内快速编辑配置）
 # - dropbear: 轻量 SSH 服务器（~500KB），支持公钥认证 + SFTP 子系统，端口 2222
@@ -64,7 +65,7 @@ RUN apk add --no-cache \
         unzip bzip2 xz zstd 7zip \
         coreutils findutils lsof file tree \
         iproute2 iputils bind-tools socat netcat-openbsd \
-        psmisc procps-ng util-linux \
+        psmisc procps-ng util-linux shadow \
         jq nano \
         dropbear openssh-sftp-server \
         libffi libstdc++ libgcc \

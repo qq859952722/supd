@@ -469,6 +469,11 @@ func TestAutoCreateUsersDefaultMeta(t *testing.T) {
 	if !strings.Contains(autoCreateUsersMetaYAML, "timeout_seconds: 300") {
 		t.Error("auto-create-users 超时应覆盖两次 120 秒扫描及余量")
 	}
+	for _, command := range []string{"useradd", "groupadd", "usermod", "groupmod"} {
+		if !strings.Contains(autoCreateUsersRunSH, "command -v "+command) {
+			t.Errorf("auto-create-users 应优先使用 shadow 命令 %s", command)
+		}
+	}
 }
 
 func TestAutoCreateUsersPruneExpression(t *testing.T) {
@@ -562,6 +567,12 @@ gid=$(getent group "$group" | cut -d: -f3); [ -n "$group" ] && [ -z "$gid" ] && 
 [ -z "$gid" ] && gid="$uid"
 printf '%s:%s:%s\n' "$username" "$uid" "$gid" >> "$MOCK_UID_STATE"
 printf '%s\n' "$username" >> "$MOCK_CREATED_USERS"
+`,
+				"groupmod": `#!/bin/bash
+exit 0
+`,
+				"usermod": `#!/bin/bash
+exit 0
 `,
 				"find": `#!/bin/bash
 [ "$MOCK_FIND_FAIL" = 1 ] && exit 1
