@@ -10,7 +10,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：17 类审计评分 **97.84 / 100（⭐ 优秀）**；1000+ 单元测试通过（Go 948+ + 前端 60）；零竞态；staticcheck/go vet 零警告
-- **当前版本**：v0.0.30（版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.0.31（版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -106,16 +106,18 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-25 | 新增代码审计 + 端口探测简化与 auto-create-users 调整 + v0.0.28 发布 | 审计端口探测逻辑简化与 auto-create-users pre_start 默认启用扩展；后端 go test / go vet / pnpm build 全过；版本升级 v0.0.28 并推送。 | [notes/2026-07-25.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-25.md) |
 | 2026-07-26 | auto-create-users find/UID-GID 迁移修复 + v0.0.29 | 验证原 find -prune 语义正确并显式化；修复 ID 输入、BusyBox 组参数、属主/属组迁移失败传播、扩展超时和错误状态；按高权限内网/容器场景保留路径覆盖灵活性。 | [notes/2026-07-26.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-26.md) |
 | 2026-07-26 | autostart: false 服务初始状态修复与 v0.0.30 发布 | 修复 supd 启动时未将 `autostart: false` 服务状态归位至 `down` 导致首页左上角持续显示"过渡中"的问题（对应规格 §2.8.1）；单测、全量测试及构建验证全通过；版本升级至 v0.0.30 | [notes/2026-07-26.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-26.md) |
-| 2026-07-26 | Docker 用户命令与启动提示优化 | 镜像加入 shadow 标准用户管理命令；auto-create-users 优先 usermod/groupmod 并保留 BusyBox 回退；启动时在控制台与 supd.log 提示 ALLID 和全局 env YAML 写法 | [notes/2026-07-26.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-26.md) |
+| 2026-07-26 | Docker 用户命令与启动提示优化及 v0.0.31 发布 | 镜像加入 shadow 标准用户管理命令；auto-create-users 优先 usermod/groupmod 并保留 BusyBox 回退；启动时在控制台与 supd.log 提示 ALLID 和全局 env YAML 写法；升级至 v0.0.31 | [notes/2026-07-26.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-26.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-26 Docker 用户命令与启动提示优化）
+## 八、最近会话重点（2026-07-26 v0.0.31 版本发布）
 
 - **镜像工具**：Alpine 运行时新增 `shadow`，提供 `useradd/groupadd/usermod/groupmod/userdel/groupdel`。
 - **扩展优化**：默认 auto-create-users v1.1.0 优先使用 `usermod/groupmod` 修正 UID/GID，并保留 BusyBox 回退逻辑。
 - **启动提示**：日志初始化后输出 ALLID 格式/示例与全局 `env/00-base.yaml` YAML 写法，控制台和 `supd.log` 均可见。
 - **初始化提示**：默认全局环境变量文件加入可取消注释使用的 ALLID 配置示例。
-- **验证通过**：`go build ./...`、`go vet ./...`、`go test ./... -count=1`、`git diff --check` 及启动双输出验证通过；Docker daemon 无权限，未执行镜像内命令验证。
+- **版本发布**：升级至 `v0.0.31`，更新 `README.md` Docker pull 示例与版本表。
+- **验证通过**：`go build ./...`、`go vet ./...`、`go test ./... -count=1`、`cd web && pnpm build` 与 `supd version` 验证全部通过。
+
 
 
