@@ -105,14 +105,14 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-25 | Docker SYS_PTRACE 验证与端口探测降级清理 | Docker `cap_add: SYS_PTRACE` 已验证生效；删除 UID/cmdline/ss/netstat/命令扫描降级，仅保留受管 PID 进程树 fd socket inode 精确匹配；后端构建、vet、API 测试及全量测试均通过；部署必须配置 SYS_PTRACE。 | [notes/2026-07-25.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-25.md) |
 | 2026-07-25 | 新增代码审计 + 端口探测简化与 auto-create-users 调整 + v0.0.28 发布 | 审计端口探测逻辑简化与 auto-create-users pre_start 默认启用扩展；后端 go test / go vet / pnpm build 全过；版本升级 v0.0.28 并推送。 | [notes/2026-07-25.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-25.md) |
 | 2026-07-26 | auto-create-users find/UID-GID 迁移修复 + v0.0.29 | 验证原 find -prune 语义正确并显式化；修复 ID 输入、BusyBox 组参数、属主/属组迁移失败传播、扩展超时和错误状态；按高权限内网/容器场景保留路径覆盖灵活性。 | [notes/2026-07-26.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-26.md) |
+| 2026-07-26 | v0.0.29 版本发布 | 更新 README 版本号（Docker pull 示例+版本表）、构建验证全通过、ldflags 版本注入确认、推送 3 个提交+tag 触发 CI | [notes/2026-07-26.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-26.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-26 auto-create-users 迁移修复）
+## 八、最近会话重点（2026-07-26 v0.0.29 版本发布）
 
-- **find 语义验证**：确认原 `-prune -o` 表达式本身正确，会跳过 `/proc`、`/sys`、`/dev`；改为显式 `-a -prune -o`，不改变语义。
-- **迁移逻辑修复**：UID/GID 输入校验、BusyBox `adduser -G` 组名参数、UID/组属主分别迁移，并检查 `find/chown/chgrp/timeout` 失败状态。
-- **执行状态**：失败输出 `::result:: error` 并返回非零；扩展超时调整为 300 秒；按高权限内网/容器场景保留路径覆盖灵活性。
-- **测试与验证**：新增非数字 ID、迁移失败和 prune 表达式测试；`go build ./...`、`go vet ./...`、`go test ./... -count=1` 全部通过。
-- **版本**：`v0.0.29`。
+- **版本发布**：升级至 v0.0.29，更新 README Docker pull 示例与版本表。
+- **构建验证**：`go build ./...`、`go vet ./...`、`go test ./... -count=1` 全部通过。
+- **版本注入验证**：ldflags 注入 `v0.0.29` 确认。
+- **推送状态**：3 个提交已推送 origin/main，tag v0.0.29 已推送，CI 构建中。
 
