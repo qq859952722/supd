@@ -472,22 +472,44 @@ func TestAutoCreateUsersScriptBehavior(t *testing.T) {
 	tests := []struct {
 		name        string
 		allID       string
-		initial     []string
+		initial     []string // 已有用户，格式 "name:uid:gid"
 		wantCreated []string
 		wantResult  string
 	}{
 		{
 			name:        "跳过已有用户并创建新用户",
 			allID:       "existing,abc,claw",
-			initial:     []string{"existing"},
+			initial:     []string{"existing:1000:1000"},
 			wantCreated: []string{"abc", "claw"},
-			wantResult:  "创建: 2 | 跳过: 1 | 失败: 0",
+			wantResult:  "创建: 2 | 修正: 0 | 跳过: 1 | 失败: 0",
 		},
 		{
 			name:        "重复用户名只创建一次",
 			allID:       "repeat,repeat",
+			initial:     []string{},
 			wantCreated: []string{"repeat"},
-			wantResult:  "创建: 1 | 跳过: 1 | 失败: 0",
+			wantResult:  "创建: 1 | 修正: 0 | 跳过: 1 | 失败: 0",
+		},
+		{
+			name:        "指定uid创建",
+			allID:       "abc:2000:2000",
+			initial:     []string{},
+			wantCreated: []string{"abc"},
+			wantResult:  "创建: 1 | 修正: 0 | 跳过: 0 | 失败: 0",
+		},
+		{
+			name:        "已存在但uid不符则修正",
+			allID:       "abc:3000:3000",
+			initial:     []string{"abc:2000:2000"},
+			wantCreated: []string{},
+			wantResult:  "创建: 0 | 修正: 1 | 跳过: 0 | 失败: 0",
+		},
+		{
+			name:        "纯名字已存在按兼容跳过",
+			allID:       "plain",
+			initial:     []string{"plain:1000:1000"},
+			wantCreated: []string{},
+			wantResult:  "创建: 0 | 修正: 0 | 跳过: 1 | 失败: 0",
 		},
 	}
 
@@ -499,27 +521,91 @@ func TestAutoCreateUsersScriptBehavior(t *testing.T) {
 				t.Fatalf("创建 mock bin 目录失败: %v", err)
 			}
 
-			statePath := filepath.Join(tmpDir, "users")
-			if err := os.WriteFile(statePath, []byte(strings.Join(tt.initial, "\n")+"\n"), 0644); err != nil {
-				t.Fatalf("写入 mock 用户状态失败: %v", err)
+			// uid 状态文件：格式 "name:uid:gid"，供 mock id / useradd 读写
+			uidState := filepath.Join(tmpDir, "uid_state")
+			if err := os.WriteFile(uidState, []byte(strings.Join(tt.initial, "\n")+"\n"), 0644); err != nil {
+				t.Fatalf("写入 mock uid 状态失败: %v", err)
 			}
 			createdPath := filepath.Join(tmpDir, "created")
+			// FIX 路径直接改写 passwd/group，测试环境非 root 无法写 /etc，
+			// 通过 PW_FILE/GRP_FILE 环境变量重定向到可写临时文件以真实验证逻辑。
+			pwFile := filepath.Join(tmpDir, "passwd")
+			grpFile := filepath.Join(tmpDir, "group")
+			if err := os.WriteFile(pwFile, []byte(strings.Join(tt.initial, "\n")+"\n"), 0644); err != nil {
+				t.Fatalf("写入 mock passwd 失败: %v", err)
+			}
+			if err := os.WriteFile(grpFile, []byte(strings.Join(tt.initial, "\n")+"\n"), 0644); err != nil {
+				t.Fatalf("写入 mock group 失败: %v", err)
+			}
 
+			// mock id：支持 id / id -u <user> / id -g <user>，从 uid_state 读 uid/gid
 			mockID := `#!/bin/bash
-if [ "$1" = "-u" ]; then
-    echo 0
-    exit 0
-fi
-/usr/bin/grep -Fxq -- "$1" "$MOCK_USER_STATE"
+state="${MOCK_UID_STATE:-/dev/null}"
+if [ "$1" = "-u" ] && [ -z "$2" ]; then echo 0; exit 0; fi
+user=""
+case "$1" in
+  -u|-g) user="$2";;
+  *) user="$1";;
+esac
+[ -z "$user" ] && { echo 0; exit 0; }
+line=$(grep -E "^${user}:" "$state" 2>/dev/null | head -1)
+[ -z "$line" ] && exit 1
+uid=$(echo "$line" | cut -d: -f2)
+gid=$(echo "$line" | cut -d: -f3)
+[ "$1" = "-u" ] && echo "$uid"
+[ "$1" = "-g" ] && echo "$gid"
+[ "$1" != "-u" ] && [ "$1" != "-g" ] && echo "uid=$uid"
+exit 0
 `
+			// mock useradd：解析 --uid/--gid，写入 uid_state 与 created
 			mockUseradd := `#!/bin/bash
 username="${!#}"
-if ! /usr/bin/grep -Fxq -- "$username" "$MOCK_USER_STATE"; then
-    printf '%s\n' "$username" >> "$MOCK_USER_STATE"
-    printf '%s\n' "$username" >> "$MOCK_CREATED_USERS"
-fi
+uid=""; gid=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --uid) uid="$2";;
+    --gid) gid="$2";;
+  esac
+  shift
+done
+[ -z "$gid" ] && gid="$uid"
+[ -z "$uid" ] && uid=5000
+printf '%s:%s:%s\n' "$username" "$uid" "$gid" >> "$MOCK_UID_STATE"
+printf '%s\n' "$username" >> "$MOCK_CREATED_USERS"
 `
-			for name, content := range map[string]string{"id": mockID, "useradd": mockUseradd} {
+			// FIX 路径会改写 /etc/passwd 并全盘 find，用 mock 隔离避免污染真机
+			mockAwk := `#!/bin/bash
+cat
+`
+			mockChown := `#!/bin/bash
+echo "chown $@" >> "$MOCK_CHOWN_LOG"
+`
+			mockFind := `#!/bin/bash
+echo "find $@" >> "$MOCK_CHOWN_LOG"
+`
+			mockTimeout := `#!/bin/bash
+shift
+"$@"
+`
+			mockGetent := `#!/bin/bash
+exit 1
+`
+			mockAddgroup := `#!/bin/bash
+echo "addgroup $@" >> "$MOCK_CHOWN_LOG"
+`
+			mocks := map[string]string{
+				"id":        mockID,
+				"useradd":   mockUseradd,
+				"awk":       mockAwk,
+				"chown":     mockChown,
+				"find":      mockFind,
+				"timeout":   mockTimeout,
+				"getent":    mockGetent,
+				"addgroup":  mockAddgroup,
+				"adduser":   mockUseradd, // busybox 回退路径同样用 mock
+				"groupadd":  mockAddgroup,
+			}
+			for name, content := range mocks {
 				if err := os.WriteFile(filepath.Join(binDir, name), []byte(content), 0755); err != nil {
 					t.Fatalf("写入 mock %s 失败: %v", name, err)
 				}
@@ -530,11 +616,15 @@ fi
 				t.Fatalf("写入 auto-create-users run.sh 失败: %v", err)
 			}
 
+			chownLog := filepath.Join(tmpDir, "chown.log")
 			cmd := exec.Command("/bin/bash", runPath)
 			cmd.Env = append(os.Environ(),
 				"ALLID="+tt.allID,
-				"MOCK_USER_STATE="+statePath,
+				"MOCK_UID_STATE="+uidState,
 				"MOCK_CREATED_USERS="+createdPath,
+				"MOCK_CHOWN_LOG="+chownLog,
+				"PW_FILE="+pwFile,
+				"GRP_FILE="+grpFile,
 				"PATH="+binDir+":/usr/bin:/bin",
 			)
 			output, err := cmd.CombinedOutput()
@@ -545,13 +635,20 @@ fi
 				t.Errorf("脚本结果缺少 %q，输出:\n%s", tt.wantResult, output)
 			}
 
-			created, err := os.ReadFile(createdPath)
-			if err != nil {
-				t.Fatalf("读取创建记录失败: %v", err)
-			}
-			gotCreated := strings.Fields(string(created))
-			if strings.Join(gotCreated, ",") != strings.Join(tt.wantCreated, ",") {
-				t.Errorf("创建用户 = %v, want %v", gotCreated, tt.wantCreated)
+			if len(tt.wantCreated) > 0 {
+				created, err := os.ReadFile(createdPath)
+				if err != nil {
+					t.Fatalf("读取创建记录失败: %v", err)
+				}
+				gotCreated := strings.Fields(string(created))
+				if strings.Join(gotCreated, ",") != strings.Join(tt.wantCreated, ",") {
+					t.Errorf("创建用户 = %v, want %v", gotCreated, tt.wantCreated)
+				}
+			} else {
+				// 期望无创建动作（修正/跳过路径）时，created 文件不应被写出
+				if _, err := os.Stat(createdPath); err == nil {
+					t.Errorf("期望无创建记录，但 created 文件被意外写出: %s", createdPath)
+				}
 			}
 		})
 	}

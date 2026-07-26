@@ -793,10 +793,10 @@ esac
 // 默认启用（enabled: true）；ALLID 未设置时幂等跳过
 // 需要 root 权限（run_as: root），非 root 环境下需以 root 启动 supd
 const autoCreateUsersMetaYAML = `name: auto-create-users
-version: "1.0.0"
-description: "supd 启动时在自启动服务之前根据 ALLID 环境变量自动创建系统用户（默认启用，需 root）"
+version: "1.1.0"
+description: "supd 启动时根据 ALLID 环境变量创建/修正系统用户（支持指定 uid/gid，默认启用，需 root）"
 # 默认启用；ALLID 未设置时不创建用户
-# 启用前提：supd 需以 root 运行（创建用户需要 root 权限）
+# 启用前提：supd 需以 root 运行（创建/修改用户需要 root 权限）
 enabled: true
 runtime: bash
 entry: run.sh
@@ -812,25 +812,40 @@ triggers:
       action: create
 actions:
   - id: create
-    label: "创建用户"
+    label: "创建/修正用户"
     button_style: default
 `
 
 const autoCreateUsersRunSH = `#!/bin/bash
-# auto-create-users: 根据 ALLID 环境变量自动创建系统用户
+# auto-create-users: 根据 ALLID 环境变量创建或修正系统用户
 #
 # 触发时机：supd_lifecycle pre_start（自启动服务启动前）
 # 环境变量：
-#   ALLID — 逗号分隔的用户名列表，如 "user1,user2,user3"
+#   ALLID — 逗号分隔的用户条目，每个条目格式为 "name[:uid[:gid]]"
+#           例: "abd:1000:1000,claw:1001"  指定 uid/gid
+#           例: "abd:1000"                 指定 uid，gid 缺省等于 uid
+#           例: "abd,claw"                 纯名字（向后兼容），uid/gid 由系统分配
 #           支持空格分隔（自动 trim），空值跳过
+#
+# 行为矩阵：
+#   - 用户不存在            → 创建（指定 uid 用 adduser -u -G，否则系统自动分配）
+#   - 已存在且 uid/gid 一致 → 跳过（SKIP）
+#   - 已存在但 uid/gid 不一致 → 修正（FIX）：直接改写 /etc/passwd、/etc/group
+#                               数字字段，并递归 chown 迁移该用户旧文件的属主
+#   - 纯名字模式（未指定 uid）且已存在 → 跳过（无指定目标，无法判定是否需修正）
 #
 # 创建的用户特征：
 #   - 无密码（无法交互登录）
 #   - 无 home 目录
 #   - shell 为 /sbin/nologin（禁止登录）
-#   - 系统用户（UID 从系统范围分配）
+#   - 系统用户
+#
+# 兼容性：优先 useradd/userdel（Debian/RHEL/Arch），回退 adduser/deluser（Alpine busybox）。
+#   注意 busybox 无 usermod，故"修正 uid/gid"通过直接改写 passwd/group 实现。
 #
 # 注意：需要 root 权限。非 root 运行时会报错并提示解决方法。
+
+set -uo pipefail
 
 # 读取 ALLID 环境变量（宿主机/Docker 传入，非 SUPD_* 变量）
 ALLID="${ALLID:-}"
@@ -840,10 +855,10 @@ if [ -z "$ALLID" ]; then
     exit 0
 fi
 
-# 按逗号分割用户名
-IFS=',' read -ra USERS <<< "$ALLID"
+# 按逗号分割用户条目
+IFS=',' read -ra ENTRIES <<< "$ALLID"
 
-TOTAL=${#USERS[@]}
+TOTAL=${#ENTRIES[@]}
 if [ "$TOTAL" -eq 0 ]; then
     echo "::result:: success \"ALLID 为空，跳过用户创建\""
     exit 0
@@ -855,20 +870,46 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-# create_user: 兼容 Alpine(adduser) / Arch/Debian/RHEL(useradd) 创建系统用户
-# 参数: $1 = 用户名
-# 返回: 0 成功, 非 0 失败
+# 校验用户名合法性（字母/下划线开头，字母数字连字符下划线）
+valid_name() {
+    echo "$1" | grep -qE '^[a-z_][a-z0-9_-]*$'
+}
+
+# ensure_group: 若指定 gid 且同名组不存在则创建系统组
+# 参数: $1=组名(=用户名) $2=gid
+ensure_group() {
+    local gname="$1" gid="$2"
+    [ -z "$gid" ] && return 0
+    # 组已存在（按名或按 gid）则跳过
+    if getent group "$gname" >/dev/null 2>&1 || getent group "$gid" >/dev/null 2>&1; then
+        return 0
+    fi
+    if command -v groupadd >/dev/null 2>&1; then
+        groupadd -g "$gid" "$gname" 2>/dev/null || groupadd -r -g "$gid" "$gname" 2>/dev/null
+    elif command -v addgroup >/dev/null 2>&1; then
+        addgroup -S -g "$gid" "$gname" 2>/dev/null
+    fi
+}
+
+# create_user: 创建系统用户（可指定 uid/gid）
+# 参数: $1=用户名 $2=uid(可空) $3=gid(可空)
+# 返回: 0 成功, 非 0 失败（错误存入 CREATE_USER_ERR）
 create_user() {
-    local user="$1"
+    local user="$1" uid="$2" gid="$3"
     CREATE_USER_ERR=""
+    ensure_group "$user" "$gid"
     if command -v useradd >/dev/null 2>&1; then
-        # useradd（Arch/RHEL/Debian）: --system 系统用户 / --no-create-home 无 home / --shell 登录 shell
-        # 捕获 stderr 到 CREATE_USER_ERR，失败时附加到错误消息供用户排查
-        CREATE_USER_ERR=$(useradd --system --no-create-home --shell /sbin/nologin "$user" 2>&1)
+        local opts="--system --no-create-home --shell /sbin/nologin"
+        [ -n "$uid" ] && opts="$opts --uid $uid"
+        [ -n "$gid" ] && opts="$opts --gid $gid"
+        CREATE_USER_ERR=$(useradd $opts "$user" 2>&1)
         return $?
     elif command -v adduser >/dev/null 2>&1; then
-        # Alpine busybox adduser: -D 无密码 / -H 无 home / -S 系统用户 / -s 登录 shell
-        CREATE_USER_ERR=$(adduser -D -H -S -s /sbin/nologin "$user" 2>&1)
+        local opts="-D -H -S -s /sbin/nologin"
+        [ -n "$uid" ] && opts="$opts -u $uid"
+        # busybox adduser: -G 指定组(组须已存在)
+        [ -n "$gid" ] && opts="$opts -G $gid"
+        CREATE_USER_ERR=$(adduser $opts "$user" 2>&1)
         return $?
     else
         CREATE_USER_ERR="useradd/adduser 命令均不可用"
@@ -876,35 +917,108 @@ create_user() {
     fi
 }
 
+# fix_user_id: 修正已存在用户的 uid/gid（busybox 无 usermod，直接改写 passwd/group）
+# 参数: $1=用户名 $2=旧uid $3=新uid $4=新gid
+# 动作：
+#   1) 改写 /etc/passwd 对应用户的 uid(第3列) 与 gid(第4列)
+#   2) 若同名组存在，改写 /etc/group 的 gid(第3列)
+#   3) 若 uid 变化，全盘(-xdev, 排除 /proc /sys /dev)递归 chown 迁移旧文件属主
+fix_user_id() {
+    local user="$1" olduid="$2" newuid="$3" newgid="$4"
+    # PW_FILE/GRP_FILE 可在测试/特殊环境下覆盖（默认 /etc/passwd、/etc/group）
+    local pwfile="${PW_FILE:-/etc/passwd}"
+    local grpfile="${GRP_FILE:-/etc/group}"
+    # 1) 改 /etc/passwd: 第3列=uid, 第4列=gid
+    local pwtmp="${pwfile}.tmp"
+    if ! awk -F: -v u="$user" -v nu="$newuid" -v ng="$newgid" 'BEGIN{OFS=":"} $1==u{$3=nu; $4=ng} {print}' \
+        "$pwfile" > "$pwtmp"; then
+        echo "  [FAIL] 改写 $pwfile 失败（awk 执行错误）"
+        return 1
+    fi
+    if ! mv "$pwtmp" "$pwfile"; then
+        echo "  [FAIL] 写入 $pwfile 失败（mv 错误，原文件未改动）"
+        rm -f "$pwtmp"
+        return 1
+    fi
+    # 2) 同名组存在则改 gid
+    if getent group "$user" >/dev/null 2>&1; then
+        local grtmp="${grpfile}.tmp"
+        if ! awk -F: -v u="$user" -v ng="$newgid" 'BEGIN{OFS=":"} $1==u{$3=ng} {print}' \
+            "$grpfile" > "$grtmp"; then
+            echo "  [FAIL] 改写 $grpfile 失败（awk 执行错误）"
+            return 1
+        fi
+        if ! mv "$grtmp" "$grpfile"; then
+            echo "  [FAIL] 写入 $grpfile 失败（mv 错误，原文件未改动）"
+            rm -f "$grtmp"
+            return 1
+        fi
+    fi
+    # 3) 迁移旧文件属主（uid 变化时）
+    if [ "$olduid" != "$newuid" ]; then
+        echo "  [FIX] 迁移属主 ${olduid} -> ${newuid}（文件较多时可能稍慢）..."
+        timeout 120 find / -xdev \( -path /proc -o -path /sys -o -path /dev \) -prune \
+            -o -user "$olduid" -exec chown -h "${newuid}:${newgid}" {} + 2>/dev/null
+    fi
+    return 0
+}
+
 echo "::progress:: 10 \"准备处理 $TOTAL 个用户...\""
 
 CREATED=0
+FIXED=0
 SKIPPED=0
 FAILED=0
 ERRORS=""
 
-for i in "${!USERS[@]}"; do
-    # 去除前后空白（使用 username 避免覆盖 bash $USER 环境变量）
-    username=$(echo "${USERS[$i]}" | tr -d '[:space:]')
+for i in "${!ENTRIES[@]}"; do
+    # 解析 name[:uid[:gid]]，去除空白
+    entry=$(echo "${ENTRIES[$i]}" | tr -d '[:space:]')
+    [ -z "$entry" ] && continue
+    # 用 IFS=: read 解析 name[:uid[:gid]]：无冒号时 uid/gid 为空（cut 在无分隔符时会返回整行，不能用）
+    IFS=: read -r username uid gid <<< "$entry"
+    username=$(echo "$username" | tr -d '[:space:]')
+    uid=$(echo "$uid" | tr -d '[:space:]')
+    gid=$(echo "$gid" | tr -d '[:space:]')
+    # gid 缺省等于 uid
+    [ -z "$gid" ] && [ -n "$uid" ] && gid="$uid"
 
-    # 跳过空用户名
-    [ -z "$username" ] && continue
-
-    # 验证用户名合法性（字母/下划线开头，字母数字连字符下划线）
-    if ! echo "$username" | grep -qE '^[a-z_][a-z0-9_-]*$'; then
+    if ! valid_name "$username"; then
         ERRORS="${ERRORS}用户名 '${username}' 不合法(需匹配 ^[a-z_][a-z0-9_-]*$); "
         FAILED=$((FAILED + 1))
         continue
     fi
 
-    # 检查用户是否已存在
     if id "$username" >/dev/null 2>&1; then
-        echo "  [SKIP] 用户 $username 已存在"
-        SKIPPED=$((SKIPPED + 1))
+        # 已存在
+        if [ -z "$uid" ]; then
+            # 纯名字模式：未指定目标 uid，无法判定是否需修正，保持旧行为跳过
+            echo "  [SKIP] 用户 $username 已存在（未指定 uid，跳过）"
+            SKIPPED=$((SKIPPED + 1))
+        else
+            curuid=$(id -u "$username")
+            curgid=$(id -g "$username")
+            if [ "$curuid" = "$uid" ] && { [ -z "$gid" ] || [ "$curgid" = "$gid" ]; }; then
+                echo "  [SKIP] 用户 $username 已存在且 uid/gid 一致(${curuid}:${curgid})"
+                SKIPPED=$((SKIPPED + 1))
+            else
+                echo "  [FIX] 用户 $username 已存在(uid=${curuid}:${curgid})，修正为 ${uid}:${gid}"
+                if fix_user_id "$username" "$curuid" "$uid" "$gid"; then
+                    FIXED=$((FIXED + 1))
+                else
+                    ERRORS="${ERRORS}修正用户 ${username} 失败; "
+                    FAILED=$((FAILED + 1))
+                fi
+            fi
+        fi
     else
-        # 创建系统用户（兼容 useradd / adduser）
-        if create_user "$username"; then
-            echo "  [OK]   用户 $username 创建成功"
+        # 不存在 → 创建
+        if create_user "$username" "$uid" "$gid"; then
+            if [ -n "$uid" ]; then
+                echo "  [OK]   用户 $username 创建成功(uid=${uid}:${gid:-$uid})"
+            else
+                echo "  [OK]   用户 $username 创建成功(系统分配 uid)"
+            fi
             CREATED=$((CREATED + 1))
         else
             ERRORS="${ERRORS}创建用户 ${username} 失败: ${CREATE_USER_ERR}; "
@@ -920,7 +1034,7 @@ done
 echo "::progress:: 100 \"处理完成\""
 
 # 汇总结果
-SUMMARY="创建: ${CREATED} | 跳过: ${SKIPPED} | 失败: ${FAILED}"
+SUMMARY="创建: ${CREATED} | 修正: ${FIXED} | 跳过: ${SKIPPED} | 失败: ${FAILED}"
 if [ "$FAILED" -gt 0 ]; then
     echo "::result:: warning \"${SUMMARY} | 错误: ${ERRORS}\""
 else
