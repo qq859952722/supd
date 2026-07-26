@@ -203,10 +203,10 @@ command:
 		t.Error("auto-svc state machine not found")
 	}
 
-	// 验证：manual-svc 未启动（非 up/ready 状态）
+	// 验证：manual-svc 未启动（down 状态）
 	if sm, ok := result.StateMachines["manual-svc"]; ok {
-		if state := sm.Current(); state == StateUp || state == StateReady {
-			t.Errorf("manual-svc should not be started, state = %v", state)
+		if state := sm.Current(); state != StateDown {
+			t.Errorf("manual-svc state = %v, want %v", state, StateDown)
 		}
 	} else {
 		t.Error("manual-svc state machine not found")

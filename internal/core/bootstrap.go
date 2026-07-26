@@ -185,11 +185,14 @@ func (b *Bootstrap) Run(ctx context.Context) (*BootstrapResult, error) {
 	result.ProcessMgr.SetPIDFileDir(b.cfg.BaseDir)
 
 	// 为所有已发现的服务创建状态机
-	for name := range result.Discovery.Services {
+	for name, svcEntry := range result.Discovery.Services {
 		sm := NewStateMachine()
 		sm.SetName(name)
 		if b.cfg.EventPublisher != nil {
 			sm.SetPublisher(b.cfg.EventPublisher)
+		}
+		if svcEntry.Config != nil && !isAutostart(svcEntry.Config) {
+			sm.ResetTo(StateDown)
 		}
 		result.StateMachines[name] = sm
 	}
