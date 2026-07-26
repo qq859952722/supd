@@ -396,7 +396,27 @@ jobs:
           name: "supd ${{ needs.meta.outputs.version }}"
           body_path: ${{ steps.notes.outputs.notes_file }}
           prerelease: ${{ needs.meta.outputs.is_prerelease == 'true' }}
+          make_latest: false
           draft: false
           files: |
             release-assets/*.tar.gz
             release-assets/checksums.txt
+
+      - name: 标记最高正式版本为 Latest Release
+        if: needs.meta.outputs.is_prerelease == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.meta.outputs.version }}"
+          git fetch --force --tags origin
+          HIGHEST_STABLE_TAG="$({ git tag --list | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -n 1)"
+          if [ "${VERSION}" != "${HIGHEST_STABLE_TAG}" ]; then
+            echo "⏭️ 跳过 Latest Release：当前版本 ${VERSION} 不是最高正式版本 ${HIGHEST_STABLE_TAG}"
+            exit 0
+          fi
+          RELEASE_ID="$(gh api "repos/${{ github.repository }}/releases/tags/${VERSION}" --jq '.id')"
+          gh api --method PATCH \
+            "repos/${{ github.repository }}/releases/${RELEASE_ID}" \
+            -F make_latest=true
+          echo "✅ Latest Release → ${VERSION}"

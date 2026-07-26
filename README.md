@@ -302,7 +302,7 @@ docker run -d --stop-grace-period 30s ...
 
 | 项目 | 说明 |
 |------|------|
-| 当前版本 | `v0.0.31` |
+| 当前版本 | `v0.0.33` |
 | 平台支持 | Linux amd64 / Linux arm64 |
 | 后端语言 | Go 1.25+ |
 | 前端技术栈 | React 19 + TypeScript + Vite + Tailwind CSS 4 |
