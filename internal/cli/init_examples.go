@@ -800,7 +800,7 @@ description: "supd 启动时根据 ALLID 环境变量创建/修正系统用户�
 enabled: true
 runtime: bash
 entry: run.sh
-timeout_seconds: 30
+timeout_seconds: 300
 # run_as: root — 以 root 身份执行（创建用户需要 CAP_SETUID/CAP_SETGID）
 run_as: root
 concurrency: replace
@@ -875,20 +875,52 @@ valid_name() {
     echo "$1" | grep -qE '^[a-z_][a-z0-9_-]*$'
 }
 
-# ensure_group: 若指定 gid 且同名组不存在则创建系统组
-# 参数: $1=组名(=用户名) $2=gid
+# 校验非空 uid/gid 仅包含十进制数字
+valid_id() {
+    [ -z "$1" ] && return 0
+    case "$1" in *[!0-9]*) return 1;; *) return 0;; esac
+}
+
+# ensure_group: 确保同名组使用指定 gid
+# 参数: $1=组名(=用户名) $2=gid $3=是否允许修正已有同名组(0/1)
+# 成功时 GROUP_NAME 设置为可传给 adduser -G 的实际组名
 ensure_group() {
-    local gname="$1" gid="$2"
+    local gname="$1" gid="$2" allow_fix="$3"
+    local group_line current_gid grtmp
+    local grpfile="${GRP_FILE:-/etc/group}"
+    GROUP_NAME=""
     [ -z "$gid" ] && return 0
-    # 组已存在（按名或按 gid）则跳过
-    if getent group "$gname" >/dev/null 2>&1 || getent group "$gid" >/dev/null 2>&1; then
+
+    group_line=$(getent group "$gname" 2>/dev/null || true)
+    if [ -n "$group_line" ]; then
+        current_gid=$(echo "$group_line" | cut -d: -f3)
+        if [ "$current_gid" != "$gid" ]; then
+            if [ "$allow_fix" != "1" ]; then
+                CREATE_USER_ERR="同名组 $gname 已存在但 gid=$current_gid（目标 gid=$gid）"
+                return 1
+            fi
+            grtmp="${grpfile}.tmp"
+            if ! awk -F: -v u="$gname" -v ng="$gid" 'BEGIN{OFS=":"} $1==u{$3=ng} {print}' "$grpfile" > "$grtmp"; then
+                rm -f "$grtmp"
+                return 1
+            fi
+            if ! mv "$grtmp" "$grpfile"; then
+                rm -f "$grtmp"
+                return 1
+            fi
+        fi
+        GROUP_NAME="$gname"
         return 0
     fi
+
     if command -v groupadd >/dev/null 2>&1; then
-        groupadd -g "$gid" "$gname" 2>/dev/null || groupadd -r -g "$gid" "$gname" 2>/dev/null
+        groupadd -g "$gid" "$gname" 2>/dev/null || groupadd -r -g "$gid" "$gname" 2>/dev/null || return 1
     elif command -v addgroup >/dev/null 2>&1; then
-        addgroup -S -g "$gid" "$gname" 2>/dev/null
+        addgroup -S -g "$gid" "$gname" 2>/dev/null || return 1
+    else
+        return 1
     fi
+    GROUP_NAME="$gname"
 }
 
 # create_user: 创建系统用户（可指定 uid/gid）
@@ -897,18 +929,21 @@ ensure_group() {
 create_user() {
     local user="$1" uid="$2" gid="$3"
     CREATE_USER_ERR=""
-    ensure_group "$user" "$gid"
+    if ! ensure_group "$user" "$gid" 0; then
+        [ -n "$CREATE_USER_ERR" ] || CREATE_USER_ERR="创建组 $user(gid=$gid) 失败"
+        return 1
+    fi
     if command -v useradd >/dev/null 2>&1; then
         local opts="--system --no-create-home --shell /sbin/nologin"
         [ -n "$uid" ] && opts="$opts --uid $uid"
-        [ -n "$gid" ] && opts="$opts --gid $gid"
+        [ -n "$gid" ] && opts="$opts --gid $GROUP_NAME"
         CREATE_USER_ERR=$(useradd $opts "$user" 2>&1)
         return $?
     elif command -v adduser >/dev/null 2>&1; then
         local opts="-D -H -S -s /sbin/nologin"
         [ -n "$uid" ] && opts="$opts -u $uid"
-        # busybox adduser: -G 指定组(组须已存在)
-        [ -n "$gid" ] && opts="$opts -G $gid"
+        # busybox adduser: -G 必须传实际组名（组须已存在）
+        [ -n "$gid" ] && opts="$opts -G $GROUP_NAME"
         CREATE_USER_ERR=$(adduser $opts "$user" 2>&1)
         return $?
     else
@@ -918,21 +953,21 @@ create_user() {
 }
 
 # fix_user_id: 修正已存在用户的 uid/gid（busybox 无 usermod，直接改写 passwd/group）
-# 参数: $1=用户名 $2=旧uid $3=新uid $4=新gid
-# 动作：
-#   1) 改写 /etc/passwd 对应用户的 uid(第3列) 与 gid(第4列)
-#   2) 若同名组存在，改写 /etc/group 的 gid(第3列)
-#   3) 若 uid 变化，全盘(-xdev, 排除 /proc /sys /dev)递归 chown 迁移旧文件属主
+# 参数: $1=用户名 $2=旧uid $3=旧gid $4=新uid $5=新gid
 fix_user_id() {
-    local user="$1" olduid="$2" newuid="$3" newgid="$4"
-    # PW_FILE/GRP_FILE 可在测试/特殊环境下覆盖（默认 /etc/passwd、/etc/group）
-    local pwfile="${PW_FILE:-/etc/passwd}"
-    local grpfile="${GRP_FILE:-/etc/group}"
-    # 1) 改 /etc/passwd: 第3列=uid, 第4列=gid
+    local user="$1" olduid="$2" oldgid="$3" newuid="$4" newgid="$5"
+    local pwfile="${PW_FILE:-/etc/passwd}" grpfile="${GRP_FILE:-/etc/group}"
     local pwtmp="${pwfile}.tmp"
+
+    # 先确保组可用，避免生成指向不存在组的 passwd 记录
+    if ! ensure_group "$user" "$newgid" 1; then
+        echo "  [FAIL] 确保组 $user(gid=$newgid) 失败"
+        return 1
+    fi
     if ! awk -F: -v u="$user" -v nu="$newuid" -v ng="$newgid" 'BEGIN{OFS=":"} $1==u{$3=nu; $4=ng} {print}' \
         "$pwfile" > "$pwtmp"; then
         echo "  [FAIL] 改写 $pwfile 失败（awk 执行错误）"
+        rm -f "$pwtmp"
         return 1
     fi
     if ! mv "$pwtmp" "$pwfile"; then
@@ -940,25 +975,23 @@ fix_user_id() {
         rm -f "$pwtmp"
         return 1
     fi
-    # 2) 同名组存在则改 gid
-    if getent group "$user" >/dev/null 2>&1; then
-        local grtmp="${grpfile}.tmp"
-        if ! awk -F: -v u="$user" -v ng="$newgid" 'BEGIN{OFS=":"} $1==u{$3=ng} {print}' \
-            "$grpfile" > "$grtmp"; then
-            echo "  [FAIL] 改写 $grpfile 失败（awk 执行错误）"
-            return 1
-        fi
-        if ! mv "$grtmp" "$grpfile"; then
-            echo "  [FAIL] 写入 $grpfile 失败（mv 错误，原文件未改动）"
-            rm -f "$grtmp"
+
+    # 先迁移旧组，再迁移旧属主；两者独立，避免 chown 顺带改变组导致漏匹配。
+    if [ "$oldgid" != "$newgid" ]; then
+        echo "  [FIX] 迁移属组 ${oldgid} -> ${newgid}（文件较多时可能稍慢）..."
+        if ! timeout 120 find / -xdev \( -path /proc -o -path /sys -o -path /dev \) -a -prune \
+            -o -group "$oldgid" -a -exec chgrp -h "$newgid" {} + 2>/dev/null; then
+            echo "  [FAIL] 迁移属组 ${oldgid} -> ${newgid} 失败"
             return 1
         fi
     fi
-    # 3) 迁移旧文件属主（uid 变化时）
     if [ "$olduid" != "$newuid" ]; then
         echo "  [FIX] 迁移属主 ${olduid} -> ${newuid}（文件较多时可能稍慢）..."
-        timeout 120 find / -xdev \( -path /proc -o -path /sys -o -path /dev \) -prune \
-            -o -user "$olduid" -exec chown -h "${newuid}:${newgid}" {} + 2>/dev/null
+        if ! timeout 120 find / -xdev \( -path /proc -o -path /sys -o -path /dev \) -a -prune \
+            -o -user "$olduid" -a -exec chown -h "$newuid" {} + 2>/dev/null; then
+            echo "  [FAIL] 迁移属主 ${olduid} -> ${newuid} 失败"
+            return 1
+        fi
     fi
     return 0
 }
@@ -988,7 +1021,11 @@ for i in "${!ENTRIES[@]}"; do
         FAILED=$((FAILED + 1))
         continue
     fi
-
+    if ! valid_id "$uid" || ! valid_id "$gid"; then
+        ERRORS="${ERRORS}用户 ${username} 的 uid/gid 必须为十进制数字; "
+        FAILED=$((FAILED + 1))
+        continue
+    fi
     if id "$username" >/dev/null 2>&1; then
         # 已存在
         if [ -z "$uid" ]; then
@@ -1003,7 +1040,7 @@ for i in "${!ENTRIES[@]}"; do
                 SKIPPED=$((SKIPPED + 1))
             else
                 echo "  [FIX] 用户 $username 已存在(uid=${curuid}:${curgid})，修正为 ${uid}:${gid}"
-                if fix_user_id "$username" "$curuid" "$uid" "$gid"; then
+                if fix_user_id "$username" "$curuid" "$curgid" "$uid" "$gid"; then
                     FIXED=$((FIXED + 1))
                 else
                     ERRORS="${ERRORS}修正用户 ${username} 失败; "
@@ -1036,8 +1073,9 @@ echo "::progress:: 100 \"处理完成\""
 # 汇总结果
 SUMMARY="创建: ${CREATED} | 修正: ${FIXED} | 跳过: ${SKIPPED} | 失败: ${FAILED}"
 if [ "$FAILED" -gt 0 ]; then
-    echo "::result:: warning \"${SUMMARY} | 错误: ${ERRORS}\""
-else
-    echo "::result:: success \"${SUMMARY}\""
+    echo "::result:: error \"${SUMMARY} | 错误: ${ERRORS}\""
+    exit 1
 fi
+echo "::result:: success \"${SUMMARY}\""
+exit 0
 `
