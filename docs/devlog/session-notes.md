@@ -10,7 +10,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：17 类审计评分 **97.84 / 100（⭐ 优秀）**；1000+ 单元测试通过（Go 948+ + 前端 60）；零竞态；staticcheck/go vet 零警告
-- **当前版本**：v0.0.33（版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.0.34（版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -107,16 +107,18 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-26 | auto-create-users find/UID-GID 迁移修复 + v0.0.29 | 验证原 find -prune 语义正确并显式化；修复 ID 输入、BusyBox 组参数、属主/属组迁移失败传播、扩展超时和错误状态；按高权限内网/容器场景保留路径覆盖灵活性。 | [notes/2026-07-26.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-26.md) |
 | 2026-07-26 | autostart: false 服务初始状态修复与 v0.0.30 发布 | 修复 supd 启动时未将 `autostart: false` 服务状态归位至 `down` 导致首页左上角持续显示"过渡中"的问题（对应规格 §2.8.1）；单测、全量测试及构建验证全通过；版本升级至 v0.0.30 | [notes/2026-07-26.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-26.md) |
 | 2026-07-26 | Docker 用户命令与启动提示优化及 v0.0.31 发布 | 镜像加入 shadow 标准用户管理命令；auto-create-users 优先 usermod/groupmod 并保留 BusyBox 回退；启动时在控制台与 supd.log 提示 ALLID 和全局 env YAML 写法；升级至 v0.0.31 | [notes/2026-07-26.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-26.md) |
+| 2026-07-26 | 服务详情页基本信息元数据补充 | 补充服务详情页 header 及基本信息 Card 中的服务名称（name）、版本（version）与描述（description）展示；补充 i18n 文案；前端/后端测试与构建全过。 | [notes/2026-07-26.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-26.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-26 GHCR latest 发布竞争修复）
+## 八、最近会话重点（2026-07-26 服务详情页元数据展示补充）
 
-- **现象确认**：192.168.31.188 实例仍运行 v0.0.21，因此未包含 v0.0.30 的 `autostart:false → down` 修复。
-- **发布根因**：GitHub Actions 同时执行 v0.0.31 与补推的旧标签 v0.0.21，旧流程稍晚完成并将 GHCR `latest` 反向覆盖为旧版本。
-- **工作流修复**：架构构建仅推不可变 `${version}-${arch}` 标签；正式版仅当自身为仓库最高稳定语义版本时更新 `latest`。
-- **预发布规则**：预发布继续不更新 `latest`；旧标签补推和并发晚完成会安全跳过。
-- **验证通过**：`git diff --check`、VS Code YAML diagnostics、稳定版本筛选 shell 模拟均通过。
+- **需求实现**：在 WebUI 服务详情页（ServiceDetail）补充服务名称（`name`）、版本号（`version`）与描述信息（`description`）展示。
+- **Header 区域**：标题旁边增加版本 Badge（`v1.0.0`），下方显示服务描述（`description`）。
+- **基本信息 Card**：显式列出服务名、版本及描述字段。
+- **国际化**：在 `i18n.ts` 中补充 `version` 与 `description` 文案。
+- **验证通过**：前端 60/60 单测通过、前端 build 打包通过、后端 go build/vet/test 全部通过。
+
 
 
 

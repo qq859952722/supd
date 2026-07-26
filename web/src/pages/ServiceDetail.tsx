@@ -720,6 +720,11 @@ export function ServiceDetail() {
         <div className="flex items-center gap-2">
           {service.config?.icon && <IconRenderer name={service.config.icon} className="h-5 w-5 text-[var(--color-brand-primary)]" />}
           <h2 className="text-xl font-semibold text-[var(--color-text-primary)]">{service.name}</h2>
+          {service.config?.version && (
+            <span className="text-xs font-mono text-[var(--color-text-secondary)] bg-[var(--color-surface-tertiary)] px-1.5 py-0.5 rounded">
+              v{service.config.version}
+            </span>
+          )}
           <Badge variant={stateVariantMap[service.status]}>{t.status[service.status]}</Badge>
         </div>
         <div className="flex-1" />
@@ -762,6 +767,11 @@ export function ServiceDetail() {
           </Button>
         </div>
       </div>
+      {service.config?.description && (
+        <p className="text-sm text-[var(--color-text-secondary)]">
+          {service.config.description}
+        </p>
+      )}
 
       {/* 7个标签页 */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -782,6 +792,10 @@ export function ServiceDetail() {
               <CardHeader><CardTitle>基本信息</CardTitle></CardHeader>
               <CardContent>
                 <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                  <dt className="text-[var(--color-text-tertiary)]">{t.service.name}</dt>
+                  <dd className="font-semibold text-[var(--color-text-primary)]">{service.name}</dd>
+                  <dt className="text-[var(--color-text-tertiary)]">{t.service.version}</dt>
+                  <dd className="font-mono text-[var(--color-text-primary)]">{service.config?.version || '1.0.0'}</dd>
                   <dt className="text-[var(--color-text-tertiary)]">{t.service.status}</dt>
                   <dd><Badge variant={stateVariantMap[service.status]}>{t.status[service.status]}</Badge></dd>
                   <dt className="text-[var(--color-text-tertiary)]">{t.service.pid}</dt>
@@ -800,6 +814,14 @@ export function ServiceDetail() {
                     <>
                       <dt className="text-[var(--color-text-tertiary)]">{t.service.group}</dt>
                       <dd className="font-mono text-[var(--color-text-primary)]">{service.config.group}</dd>
+                    </>
+                  )}
+                  {service.config?.description && (
+                    <>
+                      <dt className="text-[var(--color-text-tertiary)]">{t.service.description}</dt>
+                      <dd className="col-span-2 text-[var(--color-text-secondary)] bg-[var(--color-surface-secondary)]/50 p-2 rounded text-xs">
+                        {service.config.description}
+                      </dd>
                     </>
                   )}
                 </dl>

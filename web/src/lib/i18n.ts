@@ -90,6 +90,8 @@ export const t = {
     startupHistory: '启动历史',
     recent20: '最近20条',
     name: '名称',
+    version: '版本',
+    description: '描述',
     icon: '图标',
     tags: '标签',
     editable: '可编辑',
