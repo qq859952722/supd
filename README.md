@@ -243,7 +243,7 @@ triggers:
 docker pull ghcr.io/qq859952722/supd:latest
 
 # 或指定具体版本
-docker pull ghcr.io/qq859952722/supd:v0.0.28
+docker pull ghcr.io/qq859952722/supd:v0.0.29
 ```
 
 > 也可从源码自行构建：`docker build -t supd:latest .`（多阶段：`node:24-alpine` → `golang:1.25-alpine` → `alpine:3.20`，最终以非 root 用户 `supd` 运行）。
