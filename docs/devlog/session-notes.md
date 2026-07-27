@@ -11,7 +11,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：⭐ 优秀（满分 100），1000+ 单元测试通过（Go + 前端），零竞态；staticcheck/go vet 零警告
-- **当前版本**：v0.0.34（版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.0.35（版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -63,9 +63,9 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 编号 | 内容 | 优先级 | 状态 |
 |------|------|--------|------|
 | R-06 | `meta.yaml` 解析失败时扩展从列表消失（UX 缺陷）+ 回归 | 🟡 中 | ✅ 已修复（含 REG-01） |
-| R-01/R-02 | 资源采集降级路径多实例匹配 + 缺 CPU/内存占比 | 🔵 低 | 待处理 |
-| R-03/R-09 | `transmission-updater` downloadFile 全量缓冲 | 🔵 低 | 待处理 |
-| R-05 | 脚本依赖外部命令未校验存在性 | 🔵 低 | 待处理 |
+| R-01/R-02 | 资源采集降级路径多实例匹配 + 缺 CPU/内存占比 | 🔵 低 | ✅ 已修复 |
+| R-03/R-09 | `transmission-updater` downloadFile 全量缓冲 | 🔵 低 | ✅ 已修复 |
+| R-05 | 脚本依赖外部命令未校验存在性 | 🔵 低 | ✅ 已修复 |
 | R-04 | gopsutil context 限制（仅文档补注） | 🔵 低 | ✅ 文档已补 |
 | R-07 | GitHub Actions Node.js 弃用警告（已复核无警告） | 🔵 低 | ✅ 已闭环 |
 | R-08 | `buildStopConfigs` nil 保护（非可达路径） | 🔵 低 | ✅ 已修复 |
@@ -101,22 +101,21 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-26 | 服务详情页元数据展示 + v0.0.34 | 服务详情页补充 name/version/description 展示与 i18n | [notes/2026-07-26.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-26.md) |
 | 2026-07-27 | 任务执行计划全面审计与测试 | R-06 修复 + REG-01 回归修复（reload_classifier nil panic）+ 66 用例测试 + 一致性检查 + 综合测试服务准备 | [notes/2026-07-27.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-27.md) |
 | 2026-07-27 | R-01/R-02、R-03/R-05、R-08 技术债闭环 | NSpid 精确映射与完整资源指标；curl 流式落盘与按需依赖校验；停止配置 nil 防御 | [notes/2026-07-27.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-27.md) |
+| 2026-07-28 | 代码审计 + 运行状态测试 + v0.0.35 发布 | 13 项运行测试全通过（资源 API/停止配置/tjs 扩展）；R-01～R-09 全部闭环 | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-27 任务执行计划）
+## 八、最近会话重点（2026-07-28 代码审计与运行状态测试）
 
-- **任务**：按 `docs/任务执行计划.md` 开展全面审计与测试（8 阶段）
-- **阶段 0-7 完成**：
-  - 阶段 0：生成 `tmp/remediation_plan.md`（11 项 TODO），压缩主索引
-  - 阶段 1：修复 R-06（meta.yaml 解析失败保留扩展，9 个文件修改）
-  - 阶段 2：增量审计 99.95/100（仅 1 项 🔵 优化建议）
-  - 阶段 3：制定测试方案（66 用例）+ 运行测试，发现并修复 R-06-REG-01 回归（reload_classifier nil panic）
-  - 阶段 4：一致性检查，修复 2 项 test_workdir 不合规（env.yaml value 类型 + run.js 协议）
-  - 阶段 6：新增 2 个并发策略扩展 + 扩展 2 个 lifecycle 扩展覆盖全事件，端到端验证通过
-  - 阶段 7：会话归档至 `notes/2026-07-27.md`
-- **R-06-REG-01 关键教训**：Go 类型断言对 typed nil 返回 `ok=true`，不能依赖断言结果判断 nil，必须在断言后显式检查指针
-- **遗留**：spec/code 偏差（ui 字段），Phase 5（Skill 优化）未执行，Phase 8 最终审计待执行
+- **任务**：对 R-01/R-02、R-03/R-05、R-08 修复代码进行审计，组织运行状态测试方案并执行，升级版本至 v0.0.35
+- **代码审计**：6 个修改文件全部通过，NSpid 精确映射逻辑正确，curl 流式落盘与按需依赖校验合理，nil 防御最小化
+- **运行状态测试**：13 项全部通过
+  - A 组（资源采集 API）：web-demo/tcp-echo 的 resources/processes 端点返回完整 CPU/内存/进程数/内存占比
+  - B 组（停止配置）：API 停止服务在配置 grace/timeout 内完成（1642ms < 5s）
+  - C 组（transmission-updater）：check-update 不依赖外部命令；curl 缺失时错误清晰；架构识别不武断回退
+  - D 组（回归）：go build/vet/test、race test、pnpm build 全部通过
+- **R-01～R-09 全部闭环**：所有技术债已修复并验证
+- **版本**：v0.0.35 发布
 
 ### R-09 规格偏差处理（同日续）
 - **偏差一**：`ui.show_logs`/`ui.button_style` 代码已实现但规格未记录 → 已写入需求规格说明_v1.5.md L451-454

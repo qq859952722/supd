@@ -182,6 +182,7 @@ git push origin vX.Y.Z
 | 2026-07-26 | v0.0.32 | 修复 GHCR `latest` 发布竞争：仅仓库最高稳定语义版本可更新共享标签，旧标签补推不再覆盖最新镜像 |
 | 2026-07-26 | v0.0.33 | 修复 GitHub Latest Release 发布竞争：创建 Release 时禁止自动抢占，仅仓库最高稳定语义版本可显式标记为 Latest |
 | 2026-07-26 | v0.0.34 | 服务详情页基本信息与元数据补充（显示名称、版本号与描述，补充 i18n 支持） |
+| 2026-07-28 | v0.0.35 | R-01/R-02 资源采集降级路径修复（NSpid 精确映射 + 完整 CPU/内存指标）；R-03/R-05 transmission-updater 改用 curl 流式落盘 + 按需依赖校验 + 严格架构识别；R-08 buildStopConfigs nil 防御 |
 
 
 
