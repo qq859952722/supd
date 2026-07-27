@@ -227,7 +227,20 @@ func classifyServiceChange(filePath string, old, new_ *config.ServiceConfig) []C
 
 // classifyExtensionChange 对比 ExtensionMeta 各字段变更，按分类表归类
 // REQ-F-027: 需求规格说明书2.4.3节 meta.yaml 分类表
+// R-06 修复回归：old/new_ 任一为 nil（meta.yaml 解析失败/恢复）时，归类为 Immediate 变更，
+// 由调用方按"扩展恢复/损坏"路径处理，避免对 nil Meta 解引用导致 panic。
 func classifyExtensionChange(filePath string, old, new_ *config.ExtensionMeta) []ClassifiedChange {
+	if old == nil || new_ == nil {
+		// 一侧为 nil 表示 meta.yaml 解析状态发生转换（坏→好 或 好→坏），
+		// 此处无法按字段对比归类，统一作为 Immediate（立即生效）变更。
+		return []ClassifiedChange{{
+			File:     filePath,
+			Category: CategoryImmediate,
+			Fields:   []string{"meta"},
+			Detail:   "meta.yaml 解析状态变更",
+		}}
+	}
+
 	var changes []ClassifiedChange
 
 	// triggers/actions/concurrency → Immediate

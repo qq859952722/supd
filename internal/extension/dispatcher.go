@@ -207,8 +207,13 @@ func findMatchingExtensions(req DispatchRequest) []matchedExtension {
 // matchExtension 检查单个扩展是否匹配当前触发事件
 // REQ-F-022: 根据 EventType+Phase 匹配扩展的 triggers 定义
 // REQ-F-023: serviceName/serviceSpec 描述扩展所属服务的上下文，供执行时身份继承
+// R-06 修复：meta.yaml 解析失败时 Meta 为 nil，跳过该扩展的触发匹配（不可执行）
 func matchExtension(extEntry *watch.ExtensionEntry, req DispatchRequest, serviceName string, serviceSpec identity.CredentialSpec) *matchedExtension {
 	meta := extEntry.Meta
+	if meta == nil {
+		// Meta=nil 表示 meta.yaml 解析失败，扩展保留在列表仅供诊断，不参与触发匹配
+		return nil
+	}
 	if meta.Enabled == nil || !*meta.Enabled {
 		return nil
 	}

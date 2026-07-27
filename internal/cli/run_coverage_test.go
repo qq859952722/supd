@@ -34,6 +34,20 @@ func TestValidateLogDir_MkdirError(t *testing.T) {
 	}
 }
 
+func TestBuildStopConfigs_NilResult(t *testing.T) {
+	cfg := buildStopConfigs(nil)
+	if cfg == nil || len(cfg) != 0 {
+		t.Errorf("nil BootstrapResult 应返回已初始化的空映射，实际 %#v", cfg)
+	}
+}
+
+func TestBuildStopConfigs_NilDiscovery(t *testing.T) {
+	cfg := buildStopConfigs(&core.BootstrapResult{})
+	if cfg == nil || len(cfg) != 0 {
+		t.Errorf("nil Discovery 应返回已初始化的空映射，实际 %#v", cfg)
+	}
+}
+
 // TestBuildStopConfigs_Empty 测试空 Services 返回空映射
 // 注：生产路径中 result.Discovery 总由 bootstrap.Run() 赋值，非 nil；
 // 此处仅覆盖 Discovery 已初始化但无服务的分支。
@@ -50,7 +64,7 @@ func TestBuildStopConfigs_Defaults(t *testing.T) {
 	res := &core.BootstrapResult{
 		Discovery: &watch.DiscoveryResult{
 			Services: map[string]*watch.ServiceEntry{
-				"noConfig": {Name: "noConfig", Config: nil},
+				"noConfig":  {Name: "noConfig", Config: nil},
 				"emptyStop": {Name: "emptyStop", Config: &config.ServiceConfig{Stop: nil}},
 				"zeroStop":  {Name: "zeroStop", Config: &config.ServiceConfig{Stop: &config.StopConfig{}}},
 			},

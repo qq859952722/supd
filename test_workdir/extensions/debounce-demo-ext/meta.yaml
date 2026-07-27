@@ -1,0 +1,16 @@
+name: debounce-demo-ext
+version: "1.0.0"
+description: "并发策略 debounce:5s 演示：5 秒内多次触发仅执行最后一次"
+enabled: true
+runtime: bash
+entry: run.sh
+timeout_seconds: 30
+concurrency: debounce:5s
+ui:
+  icon: clock
+actions:
+  - id: run
+    label: "防抖执行（debounce:5s）"
+    button_style: default
+triggers:
+  on_demand: true

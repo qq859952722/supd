@@ -1637,10 +1637,30 @@ export default function ExtensionDetailPage() {
       {/* 面包屑 + 标题 */}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-[var(--color-text-primary)]">{name}</h1>
-        <Badge variant={String(ext?.display_state) === 'active' ? 'success' : String(ext?.display_state) === 'failed' ? 'danger' : 'default'}>
+        <Badge variant={String(ext?.display_state) === 'active' ? 'success' : String(ext?.display_state) === 'failed' || String(ext?.display_state) === 'config_error' ? 'danger' : 'default'}>
           {String(ext?.display_state ?? '-')}
         </Badge>
       </div>
+
+      {/* R-06 修复：meta.yaml 解析失败或配置错误时，详情页顶部显示错误诊断 */}
+      {Array.isArray(ext?.config_errors) && ext!.config_errors!.length > 0 && (
+        <div className="rounded-md border border-[var(--color-border-error)] bg-[var(--color-surface-error)] p-3">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 text-[var(--color-text-error)] shrink-0 mt-0.5" />
+            <div className="flex flex-col gap-1 min-w-0">
+              <p className="text-sm font-medium text-[var(--color-text-error)]">配置错误</p>
+              <ul className="text-xs text-[var(--color-text-secondary)] space-y-0.5 break-all">
+                {(ext!.config_errors as string[]).map((msg, i) => (
+                  <li key={i} className="font-mono">{msg}</li>
+                ))}
+              </ul>
+              <p className="text-[10px] text-[var(--color-text-tertiary)] mt-1">
+                请修正 meta.yaml 后通过「重启」或「热重载」生效；扩展在错误修复前无法运行。
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 4标签页 */}
       <Tabs defaultValue="overview">

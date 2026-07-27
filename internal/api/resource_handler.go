@@ -7,6 +7,7 @@ import (
 	"syscall"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/shirou/gopsutil/v4/mem"
 
 	"github.com/supdorg/supd/internal/errors"
 )
@@ -47,6 +48,26 @@ type ProcessListResponse struct {
 	Processes []ProcessInfo `json:"processes"`
 }
 
+func summarizeProcesses(processes []ProcessInfo, totalMemoryBytes uint64) *ResourceResponse {
+	resources := &ResourceResponse{ProcessCount: len(processes)}
+	for _, process := range processes {
+		resources.CPUPercent += process.CPUPercent
+		resources.MemoryMB += process.MemoryMB
+	}
+	if totalMemoryBytes > 0 {
+		resources.MemoryPercent = resources.MemoryMB * 1024 * 1024 / float64(totalMemoryBytes) * 100
+	}
+	return resources
+}
+
+func summarizeProcessesWithSystemMemory(processes []ProcessInfo) *ResourceResponse {
+	var totalMemory uint64
+	if memory, err := mem.VirtualMemory(); err == nil {
+		totalMemory = memory.Total
+	}
+	return summarizeProcesses(processes, totalMemory)
+}
+
 // handleServiceResources GET /api/services/{name}/resources
 // REQ-I-006: 按需采集服务资源使用情况
 func (s *Server) handleServiceResources(w http.ResponseWriter, r *http.Request) {
@@ -77,11 +98,7 @@ func (s *Server) handleServiceResources(w http.ResponseWriter, r *http.Request) 
 			cmdPattern = info.Config.Command[0]
 		}
 		procs := collectProcessTreeByCommand(info.PID, cmdPattern)
-		resources = &ResourceResponse{}
-		for _, p := range procs {
-			resources.MemoryMB += p.MemoryMB
-			resources.ProcessCount++
-		}
+		resources = summarizeProcessesWithSystemMemory(procs)
 	}
 	resources.Ports = collectProcessPorts(info.PID)
 

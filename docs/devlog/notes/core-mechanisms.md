@@ -103,6 +103,8 @@
 - cron 表达式必须 5 段（robfig/cron/v3 标准），6 段会解析失败
 - 服务配置无 `args` 字段，command 本身是字符串数组
 - `restart.policy` 有效值 `always/on-failure/never`（`no` 无效）
+- **资源采集（gopsutil）context 限制**（R-04 已记录取舍）：`resource_collector.go` 中 `ctx` 仅用于 `ctx.Err()` 抽查；gopsutil 内部 `/proc` 读取无独立超时。极端情况下若 `/proc` 卡住可能拖累资源采集，但生产环境极少触发。若未来 distroless 或受限环境出现卡死，可改为基于 `proc/stat` 自行读取并加 goroutine 超时
+- **资源采集降级路径**（R-01/R-02 已记录取舍）：PID 命名空间不一致时（容器 sandbox）走 `collectProcessTreeByCommand` 降级，仅取第一个匹配主进程 + DFS 子进程；`ResourceResponse` 降级时缺 `CPUPercent/MemoryPercent`。生产路径由 `bootstrap.Run()` 赋值 Discovery，非可达 nil 路径（R-08）
 
 ## 十、前端嵌入机制
 

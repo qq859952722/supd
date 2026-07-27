@@ -67,12 +67,20 @@ func (p *CoreExtensionProvider) ListExtensions() []ExtensionInfo {
 
 func (p *CoreExtensionProvider) extEntryToInfo(name string, extEntry *watch.ExtensionEntry, serviceName string) ExtensionInfo {
 	// D-05-02 修复：extEntry 或 Meta 为 nil 时返回最小化 info，避免 nil 解引用 panic
+	// R-06 修复：Meta 为 nil 但 ParseError 非空时，暴露错误信息给前端用于诊断
 	if extEntry == nil || extEntry.Meta == nil {
-		return ExtensionInfo{
+		info := ExtensionInfo{
 			Name:    name,
 			Service: serviceName,
 			Enabled: false,
 		}
+		if extEntry != nil && extEntry.ParseError != "" {
+			info.DisplayState = string(extension.DisplayConfigError)
+			info.ConfigErrors = []string{extEntry.ParseError}
+			info.ConfigPath = extEntry.ConfigPath
+			info.EnvPath = extEntry.EnvPath
+		}
+		return info
 	}
 	meta := extEntry.Meta
 	enabled := meta.Enabled != nil && *meta.Enabled
@@ -90,6 +98,8 @@ func (p *CoreExtensionProvider) extEntryToInfo(name string, extEntry *watch.Exte
 		Meta:         meta,
 		ConfigPath:   extEntry.ConfigPath,
 		EnvPath:      extEntry.EnvPath,
+		// R-06 修复：将 trigger.action 引用错误等配置错误暴露到 API 层
+		ConfigErrors: extension.GetConfigErrors(meta),
 	}
 
 	// REQ-2.2.14: 扩展列表展示运行历史统计

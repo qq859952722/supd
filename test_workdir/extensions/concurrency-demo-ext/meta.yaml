@@ -1,0 +1,16 @@
+name: concurrency-demo-ext
+version: "1.0.0"
+description: "并发策略 serialize 演示：多次触发排队执行，验证串行队列"
+enabled: true
+runtime: bash
+entry: run.sh
+timeout_seconds: 30
+concurrency: serialize
+ui:
+  icon: list
+actions:
+  - id: run
+    label: "串行执行（serialize）"
+    button_style: primary
+triggers:
+  on_demand: true

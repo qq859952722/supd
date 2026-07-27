@@ -34,6 +34,10 @@ func (t *OnDemandTrigger) Trigger(ctx context.Context, extName, actionID, trigge
 	}
 
 	// REQ-D-004: 验证扩展有 on_demand trigger
+	// R-06 修复：Meta=nil（meta.yaml 解析失败）时拒绝触发并返回明确错误
+	if extEntry.Meta == nil {
+		return nil, fmt.Errorf("extension %s: meta.yaml parse failed, cannot trigger", extName)
+	}
 	if extEntry.Meta.Triggers.OnDemand == nil || !*extEntry.Meta.Triggers.OnDemand {
 		return nil, fmt.Errorf("extension %s: on_demand trigger not enabled", extName)
 	}

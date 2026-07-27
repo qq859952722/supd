@@ -45,6 +45,9 @@ type ExtensionSummary struct {
 	// 运行时和入口（便于前端快速识别扩展用途）
 	Runtime string `json:"runtime,omitempty"`
 	Entry   string `json:"entry,omitempty"`
+	// ConfigErrors 配置错误列表（meta.yaml 解析失败或 trigger.action 引用不存在时填充）
+	// R-06 修复：暴露给前端用于在列表显示错误诊断图标，避免"扩展消失且无提示"
+	ConfigErrors []string `json:"config_errors,omitempty"`
 }
 
 // ExtensionDetail 扩展详情
@@ -106,11 +109,12 @@ func (s *Server) handleListExtensions(w http.ResponseWriter, r *http.Request) {
 			FailCount:    ext.FailCount,
 			LastRunAt:    ext.LastRunAt,
 			LastStatus:   ext.LastStatus,
+			ConfigErrors: ext.ConfigErrors,
 		}
 		// D-05-001 设计说明：当 ext.Meta 为 nil（meta.yaml 解析失败）时，
 		// Triggers/Actions/Concurrency/Runtime/Entry 等可选字段保持零值并按 omitted 省略。
-		// 前端可通过 ExtensionDetail 端点（GET /api/extensions/{name}）获取 ConfigErrors
-		// 字段以诊断配置错误。ExtensionSummary 仅提供列表展示，不混入错误诊断信息。
+		// R-06 修复：ConfigErrors 已在上方赋值，列表与详情均可查看错误诊断；
+		// ExtensionSummary 仍不混入完整 Meta，保持响应体精简。
 		if ext.Meta != nil {
 			summary.Triggers = &ext.Meta.Triggers
 			summary.Actions = ext.Meta.Actions
@@ -160,6 +164,7 @@ func (s *Server) handleGetExtension(w http.ResponseWriter, r *http.Request) {
 		ConfigPath:   configPath,
 		EnvPath:      envPath,
 		Service:      ext.Service,
+		ConfigErrors: ext.ConfigErrors,
 	}
 	// D-05-004 修复：ext.Meta 可能为 nil，访问 Concurrency/Actions 前需检查
 	if ext.Meta != nil {
@@ -650,6 +655,7 @@ func (s *Server) handleListServiceExtensions(w http.ResponseWriter, r *http.Requ
 				FailCount:    ext.FailCount,
 				LastRunAt:    ext.LastRunAt,
 				LastStatus:   ext.LastStatus,
+				ConfigErrors: ext.ConfigErrors,
 			}
 			if ext.Meta != nil {
 				summary.Triggers = &ext.Meta.Triggers
@@ -700,6 +706,7 @@ func (s *Server) handleGetServiceExtension(w http.ResponseWriter, r *http.Reques
 		ConfigPath:   configPath,
 		EnvPath:      envPath,
 		Service:      ext.Service,
+		ConfigErrors: ext.ConfigErrors,
 	}
 	// D-05-004 修复：ext.Meta 可能为 nil，访问 Concurrency/Actions 前需检查
 	if ext.Meta != nil {

@@ -45,6 +45,8 @@ export interface ExtensionInfo {
   entry?: string
   config_path?: string
   env_path?: string
+  // R-06 修复：meta.yaml 解析失败或 trigger.action 引用错误时填充，前端用于显示错误诊断
+  config_errors?: string[]
 }
 
 const triggerTypeLabel: Record<string, string> = {
@@ -490,7 +492,14 @@ export default function ExtensionsPage() {
               >
                 <TableCell>
                   <div className="flex items-center gap-2">
-                    <Puzzle className="h-4 w-4 text-[var(--color-text-tertiary)] shrink-0" />
+                    {ext.config_errors && ext.config_errors.length > 0 ? (
+                      <AlertTriangle
+                        className="h-4 w-4 text-[var(--color-text-error)] shrink-0"
+                        aria-label="配置错误"
+                      />
+                    ) : (
+                      <Puzzle className="h-4 w-4 text-[var(--color-text-tertiary)] shrink-0" />
+                    )}
                     <div className="flex flex-col min-w-0">
                       <span className="font-medium">{ext.name}</span>
                       {ext.version && (
@@ -501,6 +510,14 @@ export default function ExtensionsPage() {
                           {ext.runtime ? `${ext.runtime} ` : ''}{ext.entry}
                         </span>
                       )}
+                      {ext.config_errors && ext.config_errors.length > 0 && (
+                        <span
+                          className="text-[10px] text-[var(--color-text-error)] truncate max-w-[240px]"
+                          title={ext.config_errors.join('; ')}
+                        >
+                          {ext.config_errors[0]}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </TableCell>
@@ -508,9 +525,15 @@ export default function ExtensionsPage() {
                   {ext.description || '-'}
                 </TableCell>
                 <TableCell>
-                  <Badge variant={ext.enabled ? 'success' : 'secondary'}>
-                    {ext.enabled ? 'enabled' : 'disabled'}
-                  </Badge>
+                  {ext.config_errors && ext.config_errors.length > 0 ? (
+                    <Badge variant="danger" title={ext.config_errors.join('; ')}>
+                      config_error
+                    </Badge>
+                  ) : (
+                    <Badge variant={ext.enabled ? 'success' : 'secondary'}>
+                      {ext.enabled ? 'enabled' : 'disabled'}
+                    </Badge>
+                  )}
                 </TableCell>
                 <TableCell>
                   <div className="flex flex-wrap gap-1">
@@ -553,7 +576,7 @@ export default function ExtensionsPage() {
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
-                    {/* 有 actions 时展示每个 action 的按钮 */}
+                    {/* R-06：config_errors 时禁用所有运行按钮 */}
                     {ext.actions && ext.actions.length > 0 ? (
                       ext.actions.map((act) => (
                         <Button
@@ -561,7 +584,7 @@ export default function ExtensionsPage() {
                           variant={act.button_style === 'primary' ? 'primary' : act.button_style === 'danger' ? 'danger' : 'default'}
                           size="sm"
                           onClick={() => runExtensionWithLog(ext.name, act.id)}
-                          disabled={!ext.enabled}
+                          disabled={!ext.enabled || !!(ext.config_errors && ext.config_errors.length)}
                           title={`运行 action: ${act.id}`}
                         >
                           <Play className="h-3 w-3" />
@@ -573,7 +596,7 @@ export default function ExtensionsPage() {
                         variant="primary"
                         size="sm"
                         onClick={() => runExtensionWithLog(ext.name)}
-                        disabled={!ext.enabled}
+                        disabled={!ext.enabled || !!(ext.config_errors && ext.config_errors.length)}
                       >
                         <Play className="h-3.5 w-3.5" />
                         {t.extension.run}

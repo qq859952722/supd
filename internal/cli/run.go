@@ -483,6 +483,9 @@ func injectProviders(server *api.Server, result *core.BootstrapResult, cfg *conf
 // buildStopConfigs 从 BootstrapResult 构建服务停止配置映射
 func buildStopConfigs(result *core.BootstrapResult) map[string]core.StopConfig {
 	stopConfigs := make(map[string]core.StopConfig)
+	if result == nil || result.Discovery == nil {
+		return stopConfigs
+	}
 	for name, svc := range result.Discovery.Services {
 		if svc.Config == nil || svc.Config.Stop == nil {
 			stopConfigs[name] = core.DefaultStopConfig()

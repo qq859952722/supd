@@ -59,6 +59,9 @@ type ExtensionInfo struct {
 	Meta         *config.ExtensionMeta `json:"meta,omitempty"`
 	ConfigPath   string                `json:"config_path,omitempty"`
 	EnvPath      string                `json:"env_path,omitempty"`
+	// ConfigErrors 配置错误列表（meta.yaml 解析失败或 trigger.action 引用不存在时填充）
+	// R-06 修复：暴露给前端用于在列表/详情显示错误诊断
+	ConfigErrors []string `json:"config_errors,omitempty"`
 }
 
 // ExtensionProvider 提供扩展信息与操作

@@ -341,6 +341,43 @@ func TestDiscoverGlobalExtensions_MissingMetaYAML(t *testing.T) {
 	}
 }
 
+func TestDiscoverGlobalExtensions_InvalidMetaYAML(t *testing.T) {
+	// R-06 修复：meta.yaml 解析失败的全局扩展仍保留在列表中（Meta=nil + ParseError）
+	dir := createTestDir(t)
+	defer os.RemoveAll(dir)
+
+	extDir := filepath.Join(dir, "extensions")
+	brokenDir := filepath.Join(extDir, "broken")
+	if err := os.MkdirAll(brokenDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(brokenDir, "meta.yaml"), []byte("invalid: yaml\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	d := NewDiscovery(dir, filepath.Join(dir, "log"))
+	result := d.Scan()
+
+	// 解析失败的扩展仍保留在 GlobalExts 中以便前端诊断
+	if len(result.GlobalExts) != 1 {
+		t.Fatalf("expected 1 broken global extension retained for diagnosis, got %d", len(result.GlobalExts))
+	}
+	brokenExt, ok := result.GlobalExts["broken"]
+	if !ok {
+		t.Fatal("expected 'broken' global extension to be retained in list")
+	}
+	if brokenExt.Meta != nil {
+		t.Errorf("expected Meta=nil for parse failure, got non-nil")
+	}
+	if brokenExt.ParseError == "" {
+		t.Errorf("expected ParseError to be populated, got empty")
+	}
+
+	if len(result.Errors) == 0 {
+		t.Error("expected at least one error for invalid meta.yaml")
+	}
+}
+
 func TestDiscoverGlobalExtensions_WithEnvYAML(t *testing.T) {
 	// REQ-F-025: 扩展级 env.yaml 可选
 	dir := createTestDir(t)
@@ -623,8 +660,20 @@ func TestDiscoverServiceExtensions_InvalidMetaYAML(t *testing.T) {
 	result := d.Scan()
 
 	svc := result.Services["web"]
-	if len(svc.Extensions) != 0 {
-		t.Errorf("expected 0 extensions, got %d", len(svc.Extensions))
+	// R-06 修复：meta.yaml 解析失败时扩展仍保留在列表中（Meta=nil + ParseError），
+	// 以便前端展示错误诊断。原 expected 0 extensions 行为已废弃。
+	if len(svc.Extensions) != 1 {
+		t.Fatalf("expected 1 broken extension retained for diagnosis, got %d", len(svc.Extensions))
+	}
+	brokenExt, ok := svc.Extensions["broken"]
+	if !ok {
+		t.Fatal("expected 'broken' extension to be retained in list")
+	}
+	if brokenExt.Meta != nil {
+		t.Errorf("expected Meta=nil for parse failure, got non-nil")
+	}
+	if brokenExt.ParseError == "" {
+		t.Errorf("expected ParseError to be populated, got empty")
 	}
 
 	if len(result.Errors) == 0 {

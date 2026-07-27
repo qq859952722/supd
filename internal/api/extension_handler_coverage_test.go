@@ -219,6 +219,14 @@ func TestListExtensions(t *testing.T) {
 				Name: "ext-no-meta", Version: "0.9", Enabled: false, DisplayState: "disabled",
 				Meta: nil,
 			},
+			// R-06 修复：解析失败的扩展应携带 ConfigErrors 供前端诊断
+			"ext-broken": {
+				Name:         "ext-broken",
+				Enabled:      false,
+				DisplayState: "config_error",
+				Meta:         nil,
+				ConfigErrors: []string{"parse extension meta: yaml: line 1: could not find expected ':'"},
+			},
 		},
 	}
 	server := newExtensionTestServer(t, fp)
@@ -230,14 +238,18 @@ func TestListExtensions(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &list); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(list) != 2 {
-		t.Fatalf("expected 2 extensions, got %d", len(list))
+	if len(list) != 3 {
+		t.Fatalf("expected 3 extensions, got %d", len(list))
 	}
 	// 含 Meta 的项应透传 Triggers/Actions/Concurrency/Runtime
 	var withMeta *ExtensionSummary
+	var broken *ExtensionSummary
 	for i := range list {
 		if list[i].Name == "ext-with-meta" {
 			withMeta = &list[i]
+		}
+		if list[i].Name == "ext-broken" {
+			broken = &list[i]
 		}
 	}
 	if withMeta == nil {
@@ -245,6 +257,16 @@ func TestListExtensions(t *testing.T) {
 	}
 	if withMeta.Concurrency != "replace" || withMeta.Runtime != "bash" || len(withMeta.Actions) != 1 {
 		t.Errorf("meta fields not propagated: %+v", withMeta)
+	}
+	// R-06：ConfigErrors 应透传到 ExtensionSummary，前端可据此显示错误诊断
+	if broken == nil {
+		t.Fatal("ext-broken missing from list")
+	}
+	if len(broken.ConfigErrors) == 0 {
+		t.Errorf("expected ConfigErrors to be propagated for broken extension, got empty")
+	}
+	if broken.DisplayState != "config_error" {
+		t.Errorf("expected DisplayState=config_error, got %q", broken.DisplayState)
 	}
 }
 

@@ -11,6 +11,11 @@ const WEBUI_API = `https://api.github.com/repos/${WEBUI_REPO}/releases/latest`;
 const action = tjs.env.SUPD_ACTION || 'check-update';
 const serviceDir = tjs.env.SUPD_SERVICE_DIR || tjs.cwd;
 
+function emitResult(status, message) {
+  const escaped = String(message).replace(/[\r\n]+/g, ' ').replace(/"/g, '\\"');
+  console.log(`::result:: ${status} "${escaped}"`);
+}
+
 // --- tjs 内置工具函数 ---
 
 /** 读取 ReadableStream 为字符串 */
@@ -27,9 +32,9 @@ async function readStream(stream) {
   return result;
 }
 
-/** 执行外部命令（tjs 无法内置替换的场景：tar/unzip/chown 等） */
+/** 执行外部命令（tjs 无法内置替换的场景：curl/tar/unzip/uname 等） */
 // 修复：并发读取 stdout/stderr，避免管道死锁（子进程写 stderr 超过缓冲时阻塞，
-// 而父进程还在等 stdout → 双方卡死。tar/unzip/chown 输出几乎都在 stderr）
+// 而父进程还在等 stdout → 双方卡死）
 async function runCmd(args, options = {}) {
   const proc = await tjs.spawn(args, {
     stdout: 'pipe',
@@ -41,26 +46,36 @@ async function runCmd(args, options = {}) {
   return { stdout, stderr, exitCode: status.exitCode ?? 0 };
 }
 
-/** 流式下载文件（避免 arrayBuffer 卡死，>10MB 必须用此方式） */
+/** 使用 curl 直接流式下载到临时文件，成功后原子替换目标文件 */
 async function downloadFile(url, destPath) {
-  const resp = await fetch(url, {
-    headers: { 'User-Agent': 'supd-tjs-ext' },
-  });
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
-  const reader = resp.body.getReader();
-  const chunks = [];
-  let received = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    received += value.length;
+  const partPath = `${destPath}.part`;
+  try { await tjs.remove(partPath); } catch (e) {}
+
+  let result;
+  try {
+    result = await runCmd([
+      'curl', '--fail', '--location', '--silent', '--show-error',
+      '--output', partPath, url,
+    ]);
+  } catch (e) {
+    try { await tjs.remove(partPath); } catch (cleanupError) {}
+    throw new Error(`curl 命令不可用或启动失败: ${e.message}。请安装 curl 后重试`);
   }
-  const buffer = new Uint8Array(received);
-  let pos = 0;
-  for (const chunk of chunks) { buffer.set(chunk, pos); pos += chunk.length; }
-  await tjs.writeFile(destPath, buffer);
-  return received;
+
+  if (result.exitCode !== 0) {
+    try { await tjs.remove(partPath); } catch (e) {}
+    const detail = result.stderr.trim() || '无错误输出';
+    throw new Error(`curl 下载失败 (exitCode=${result.exitCode}): ${detail}`);
+  }
+
+  try {
+    await tjs.rename(partPath, destPath);
+  } catch (e) {
+    try { await tjs.remove(partPath); } catch (cleanupError) {}
+    throw e;
+  }
+  const stat = await tjs.stat(destPath);
+  return stat.size;
 }
 
 /** 列出目录条目，兼容 tjs 不同版本返回的目录形态：
@@ -194,6 +209,10 @@ async function findSharedWasmPath() {
 
 /** 通用解压归档文件（优先使用 shared runtimes/ 下的 WASM 模块，未找到时平滑降级为系统 Shell 工具） */
 async function extractArchive(archivePath, extractDir, type) {
+  if (type !== 'tar.xz' && type !== 'zip') {
+    throw new Error(`未知归档类型: ${type}`);
+  }
+
   const wasmPath = await findSharedWasmPath();
   if (wasmPath) {
     try {
@@ -216,10 +235,23 @@ async function extractArchive(archivePath, extractDir, type) {
   }
 
   // 降级使用系统 CLI 解压
+  let args;
   if (type === 'tar.xz') {
-    await runCmd(['tar', '-xf', archivePath, '-C', extractDir]);
-  } else if (type === 'zip') {
-    await runCmd(['unzip', '-o', archivePath, '-d', extractDir]);
+    args = ['tar', '-xf', archivePath, '-C', extractDir];
+  } else {
+    args = ['unzip', '-o', archivePath, '-d', extractDir];
+  }
+
+  const command = args[0];
+  let result;
+  try {
+    result = await runCmd(args);
+  } catch (e) {
+    throw new Error(`${command} 命令不可用或启动失败: ${e.message}。请安装 ${command} 后重试`);
+  }
+  if (result.exitCode !== 0) {
+    const detail = result.stderr.trim() || '无错误输出';
+    throw new Error(`${command} 解压失败 (exitCode=${result.exitCode}): ${detail}`);
   }
 }
 
@@ -227,17 +259,22 @@ async function extractArchive(archivePath, extractDir, type) {
 async function chownRecursive(dirPath, uid, gid) {
   try {
     await tjs.chown(dirPath, uid, gid);
-  } catch (e) {}
+  } catch (e) {
+    throw new Error(`设置属主失败 (${dirPath}): ${e.message}`);
+  }
   const entries = await listEntries(dirPath);
   if (!entries) return;
 
   for (const ent of entries) {
     const fullPath = `${dirPath}/${ent.name}`;
-    try {
-      await tjs.chown(fullPath, uid, gid);
-    } catch (e) {}
     if (ent.isDir) {
       await chownRecursive(fullPath, uid, gid);
+    } else {
+      try {
+        await tjs.chown(fullPath, uid, gid);
+      } catch (e) {
+        throw new Error(`设置属主失败 (${fullPath}): ${e.message}`);
+      }
     }
   }
 }
@@ -258,13 +295,22 @@ async function getArch() {
     }
   } catch (e) {}
 
+  let result;
   try {
-    const { stdout } = await runCmd(['uname', '-m']);
-    const m = stdout.trim();
-    return (m === 'aarch64' || m === 'arm64') ? 'arm64' : 'amd64';
+    result = await runCmd(['uname', '-m']);
   } catch (e) {
-    return 'amd64';
+    throw new Error(`无法启动 uname 获取系统架构: ${e.message}。请安装 uname（通常由 coreutils 或 BusyBox 提供）后重试`);
   }
+  if (result.exitCode !== 0) {
+    const detail = result.stderr.trim() || '无错误输出';
+    throw new Error(`uname -m 执行失败 (exitCode=${result.exitCode}): ${detail}`);
+  }
+
+  const machine = result.stdout.trim().toLowerCase();
+  if (machine === 'x86_64' || machine === 'amd64') return 'amd64';
+  if (machine === 'aarch64' || machine === 'arm64') return 'arm64';
+  if (!machine) throw new Error('uname -m 未返回系统架构');
+  throw new Error(`不支持或无法识别的系统架构: ${machine}`);
 }
 
 /** 下载并安装 transmission-daemon 二进制 */
@@ -373,14 +419,7 @@ async function setupDirectories() {
   }
   
   // 校验与递归改属主 (nobody:nobody -> uid 65534, gid 65534)
-  try {
-    await chownRecursive(serviceDir, 65534, 65534);
-  } catch (e) {
-    const chownResult = await runCmd(['chown', '-R', 'nobody:nobody', serviceDir]);
-    if (chownResult.exitCode !== 0) {
-      console.log(`::result:: warning "chown 失败 (exit ${chownResult.exitCode})，目录权限可能不正确。请确保 supd 以 root 运行，否则 nobody 用户可能无法写入配置/下载目录"`);
-    }
-  }
+  await chownRecursive(serviceDir, 65534, 65534);
 }
 
 // --- Action: 检查更新 ---
@@ -444,10 +483,10 @@ try {
   switch (action) {
     case 'check-update': await doCheck(); break;
     case 'install-update': await doInstall(); break;
-    default: console.log(`::result:: error "未知 action: ${action}"`); tjs.exit(1);
+    default: emitResult('error', `未知 action: ${action}`); tjs.exit(1);
   }
 } catch (e) {
-  console.log(`::result:: error "执行失败: ${e.message}"`);
+  emitResult('error', `执行失败: ${e.message}`);
   console.error(e.stack || e.message);
   tjs.exit(1);
 }

@@ -1,6 +1,6 @@
 name: supd-startup-hook
 version: "1.0.0"
-description: "supd 生命周期钩子扩展（post_ready/pre_shutdown）"
+description: "supd 生命周期钩子扩展（pre_start/post_ready/pre_shutdown 全 3 事件）"
 enabled: true
 runtime: bash
 entry: run.sh
@@ -8,11 +8,16 @@ timeout_seconds: 60
 concurrency: parallel
 triggers:
   supd_lifecycle:
+    - event: pre_start
+      action: on_pre_start
     - event: post_ready
       action: notify
     - event: pre_shutdown
       action: cleanup
 actions:
+  - id: on_pre_start
+    label: "supd 启动前钩子"
+    button_style: default
   - id: notify
     label: "启动通知"
     button_style: primary

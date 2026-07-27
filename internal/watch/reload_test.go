@@ -235,6 +235,45 @@ func TestClassifyExtensionChange_NoChange(t *testing.T) {
 	}
 }
 
+// TestClassifyExtensionChange_NilMeta_R06Regression 验证 R-06 修复的回归问题：
+// 当 meta.yaml 解析失败导致 old 或 new 的 Meta 为 nil 时，热重载对比不应 panic，
+// 而是归类为 Immediate 变更（解析状态转换）。
+// 复现路径：discovery 保留 Meta=nil + ParseError 的 ExtensionEntry，
+// 修复 meta.yaml 后 watcher 触发 Reload → compareGlobalExtensions → ClassifyChange。
+// 注意：discovery 传入的是 (*config.ExtensionMeta)(nil)（typed nil），类型断言成功但指针为 nil。
+func TestClassifyExtensionChange_NilMeta_R06Regression(t *testing.T) {
+	// 用 typed nil 模拟 discovery 中 Meta=nil 的 ExtensionEntry 传入 ClassifyChange 的实际场景
+	var nilMeta (*config.ExtensionMeta) = nil
+
+	// 场景 1：old=nil（解析失败）→ new=有效 Meta（修复后）
+	validMeta := &config.ExtensionMeta{
+		Concurrency:    "serialize",
+		TimeoutSeconds: 600,
+	}
+	changes := ClassifyChange("/etc/supd/extensions/broken/meta.yaml", nilMeta, validMeta)
+	if len(changes) == 0 {
+		t.Fatalf("expected Immediate change when meta.yaml recovers from parse failure, got 0")
+	}
+	if changes[0].Category != CategoryImmediate {
+		t.Errorf("expected CategoryImmediate for nil→valid transition, got %s", changes[0].Category)
+	}
+
+	// 场景 2：old=有效 Meta → new=nil（破坏后）
+	changes = ClassifyChange("/etc/supd/extensions/broken/meta.yaml", validMeta, nilMeta)
+	if len(changes) == 0 {
+		t.Fatalf("expected Immediate change when meta.yaml becomes invalid, got 0")
+	}
+	if changes[0].Category != CategoryImmediate {
+		t.Errorf("expected CategoryImmediate for valid→nil transition, got %s", changes[0].Category)
+	}
+
+	// 场景 3：双 nil（持续解析失败，少见但不应 panic）
+	changes = ClassifyChange("/etc/supd/extensions/broken/meta.yaml", nilMeta, nilMeta)
+	if len(changes) == 0 {
+		t.Fatalf("expected Immediate change for nil→nil, got 0")
+	}
+}
+
 // REQ-F-027: ClassifyChange 对 config.yaml 各字段正确分类
 
 func TestClassifyConfigChange_HTTPListen(t *testing.T) {

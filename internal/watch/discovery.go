@@ -23,7 +23,8 @@ type ExtensionEntry struct {
 	Name        string                // 扩展名
 	ConfigPath  string                // meta.yaml 路径
 	EnvPath     string                // env.yaml 路径（可选）
-	Meta        *config.ExtensionMeta // 解析后的配置
+	Meta        *config.ExtensionMeta // 解析后的配置（meta.yaml 解析失败时为 nil）
+	ParseError  string                // meta.yaml 解析失败时的错误信息（Meta 为 nil 时填充）
 	ServiceName string                // 服务级扩展所属的服务名，全局扩展为空
 }
 
@@ -194,10 +195,25 @@ func (d *Discovery) discoverGlobalExtensions(result *DiscoveryResult) {
 
 		meta, err := config.LoadExtension(metaPath)
 		if err != nil {
+			// R-06 修复：meta.yaml 解析失败时不丢弃扩展条目，保留 Entry（Meta=nil + ParseError）
+			// 以便前端列表能看到该扩展并显示错误诊断，避免"扩展消失且无提示"的 UX 缺陷。
+			// 同时仍记录到 DiscoveryResult.Errors 供扫描错误汇总。
 			result.Errors = append(result.Errors, DiscoveryError{
 				Path:    metaPath,
 				Message: err.Error(),
 			})
+			extEntry := &ExtensionEntry{
+				Name:       extName,
+				ConfigPath: metaPath,
+				Meta:       nil,
+				ParseError: err.Error(),
+			}
+			// env.yaml 检查仍执行（解析失败也可能伴随 env.yaml，且不影响诊断）
+			envPath := filepath.Join(extSubDir, "env.yaml")
+			if _, err := os.Stat(envPath); err == nil {
+				extEntry.EnvPath = envPath
+			}
+			result.GlobalExts[extName] = extEntry
 			continue
 		}
 
@@ -288,10 +304,23 @@ func (d *Discovery) discoverServiceExtensions(svcEntry *ServiceEntry, result *Di
 
 		meta, err := config.LoadExtension(metaPath)
 		if err != nil {
+			// R-06 修复：同全局扩展，meta.yaml 解析失败时保留 Entry 供前端诊断
 			result.Errors = append(result.Errors, DiscoveryError{
 				Path:    metaPath,
 				Message: err.Error(),
 			})
+			extEntry := &ExtensionEntry{
+				Name:        extName,
+				ConfigPath:  metaPath,
+				Meta:        nil,
+				ParseError:  err.Error(),
+				ServiceName: svcEntry.Name,
+			}
+			envPath := filepath.Join(extSubDir, "env.yaml")
+			if _, err := os.Stat(envPath); err == nil {
+				extEntry.EnvPath = envPath
+			}
+			svcEntry.Extensions[extName] = extEntry
 			continue
 		}
 

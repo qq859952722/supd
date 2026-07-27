@@ -195,7 +195,11 @@ func resolveScheduleActionID(meta *config.ExtensionMeta, scheduleAction string) 
 
 // RegisterSchedule 从扩展配置中注册 cron 调度
 // REQ-D-004: 遍历扩展的 on_schedule triggers，为每个调度注册 cron job
+// R-06 修复：Meta=nil（meta.yaml 解析失败）时跳过注册，避免 nil 解引用 panic
 func (ct *CronTrigger) RegisterSchedule(extEntry *watch.ExtensionEntry, discovery *watch.DiscoveryResult) error {
+	if extEntry.Meta == nil {
+		return nil
+	}
 	if extEntry.Meta.Enabled == nil || !*extEntry.Meta.Enabled {
 		return nil
 	}
@@ -223,7 +227,11 @@ func (ct *CronTrigger) RegisterSchedule(extEntry *watch.ExtensionEntry, discover
 
 // UnregisterSchedule 移除扩展的所有 cron 调度
 // REQ-D-004: 移除指定扩展的所有 on_schedule cron jobs
+// R-06 修复：Meta=nil 时无 cron 可注销，直接返回
 func (ct *CronTrigger) UnregisterSchedule(extEntry *watch.ExtensionEntry) {
+	if extEntry.Meta == nil {
+		return
+	}
 	for _, schedule := range extEntry.Meta.Triggers.OnSchedule {
 		actionID := resolveScheduleActionID(extEntry.Meta, schedule.Action)
 		ct.scheduler.RemoveJob(extEntry.Name, actionID)

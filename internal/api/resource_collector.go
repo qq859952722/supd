@@ -518,9 +518,45 @@ func readProcessIdentityFromStatus(pid int) (int, int, string, string) {
 	return uid, gid, username, groupName
 }
 
+type commandProcessCandidate struct {
+	hostPID      int
+	namespacePID int
+	cmdline      string
+}
+
+func parseNSpid(status []byte) (int, bool) {
+	for _, line := range strings.Split(string(status), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "NSpid:" {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[len(fields)-1])
+		if err != nil {
+			return 0, false
+		}
+		return pid, true
+	}
+	return 0, false
+}
+
+func selectCommandProcessCandidate(candidates []commandProcessCandidate, namespacePID int) (commandProcessCandidate, bool) {
+	var exact []commandProcessCandidate
+	for _, candidate := range candidates {
+		if candidate.hostPID == namespacePID || candidate.namespacePID == namespacePID {
+			exact = append(exact, candidate)
+		}
+	}
+	if len(exact) == 1 {
+		return exact[0], true
+	}
+	if len(exact) > 1 || len(candidates) != 1 {
+		return commandProcessCandidate{}, false
+	}
+	return candidates[0], true
+}
+
 // collectProcessTreeByCommand 通过命令行匹配 /proc 查找进程（PID命名空间降级方案）
 // 当 gopsutil 因 PID 命名空间不一致无法找到进程时使用
-// 优化：从原来的"主进程+直接子进程"改为"一次 /proc 扫描 + DFS 递归遍历所有子孙"
 func collectProcessTreeByCommand(namespacePID int, cmdPattern string) []ProcessInfo {
 	// 提取命令的基础名（如 ./bin/qbittorrent-nox → qbittorrent-nox）
 	cmdBase := filepath.Base(cmdPattern)
@@ -531,14 +567,12 @@ func collectProcessTreeByCommand(namespacePID int, cmdPattern string) []ProcessI
 	// 一次扫描 /proc 构建父子关系映射（用于递归遍历）
 	ppidMap := buildPPIDMap()
 
-	// 扫描 /proc 查找匹配的主进程（host PID）
-	var mainHostPID int
-	var mainCmdline string
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return []ProcessInfo{}
 	}
 
+	var candidates []commandProcessCandidate
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -547,100 +581,92 @@ func collectProcessTreeByCommand(namespacePID int, cmdPattern string) []ProcessI
 		if err != nil {
 			continue
 		}
-
-		// 读取 cmdline
-		cmdlinePath := filepath.Join("/proc", entry.Name(), "cmdline")
-		cmdData, err := readFileWithTimeout(cmdlinePath)
+		cmdData, err := readFileWithTimeout(filepath.Join("/proc", entry.Name(), "cmdline"))
 		if err != nil {
 			continue
 		}
-		cmdline := strings.ReplaceAll(string(cmdData), "\x00", " ")
-		if cmdline == "" {
+		cmdline := strings.TrimSpace(strings.ReplaceAll(string(cmdData), "\x00", " "))
+		if cmdline == "" || (cmdPattern != "" && !strings.Contains(cmdline, cmdBase)) {
 			continue
 		}
 
-		// 匹配命令
-		if cmdPattern != "" && !strings.Contains(cmdline, cmdBase) {
-			continue
+		candidate := commandProcessCandidate{hostPID: hostPID, cmdline: cmdline}
+		if status, err := readFileWithTimeout(filepath.Join("/proc", entry.Name(), "status")); err == nil {
+			candidate.namespacePID, _ = parseNSpid(status)
 		}
-
-		mainHostPID = hostPID
-		mainCmdline = strings.TrimSpace(cmdline)
-		break // 只取第一个匹配的主进程
+		candidates = append(candidates, candidate)
 	}
 
-	if mainHostPID == 0 {
+	main, ok := selectCommandProcessCandidate(candidates, namespacePID)
+	if !ok {
 		return []ProcessInfo{}
 	}
 
-	// 读取主进程信息
-	var processes []ProcessInfo
-	mainInfo, err := readProcessInfoFromProc(mainHostPID)
-	if err == nil {
-		mainInfo.PID = namespacePID // 用 namespace PID 替换 host PID（主进程）
-		mainInfo.Command = mainCmdline
-
-		// 尝试读取内存信息
-		statmPath := filepath.Join("/proc", strconv.Itoa(mainHostPID), "statm")
-		if statmData, err := readFileWithTimeout(statmPath); err == nil {
-			fields := strings.Fields(string(statmData))
-			if len(fields) >= 2 {
-				rssPages, _ := strconv.ParseInt(fields[1], 10, 64)
-				mainInfo.MemoryMB = float64(rssPages) * 4096 / 1024 / 1024
-			}
+	hostPIDs := []int{main.hostPID}
+	collectTreeHostPIDs(main.hostPID, ppidMap, 0, &hostPIDs)
+	gopsutilProcesses := make(map[int]*process.Process, len(hostPIDs))
+	for _, hostPID := range hostPIDs {
+		if p, err := getProcess(int32(hostPID)); err == nil {
+			gopsutilProcesses[hostPID] = p
 		}
-
-		// 尝试读取线程数
-		taskDir := filepath.Join("/proc", strconv.Itoa(mainHostPID), "task")
-		if taskEntries, err := os.ReadDir(taskDir); err == nil {
-			mainInfo.ThreadCount = len(taskEntries)
-		}
-
-		processes = append(processes, *mainInfo)
+	}
+	if len(gopsutilProcesses) > 0 {
+		time.Sleep(200 * time.Millisecond)
 	}
 
-	// 递归遍历所有子孙进程（DFS，深度限制 10）
-	collectTreeDFSByCommand(mainHostPID, &processes, ppidMap, 0)
-
-	if processes == nil {
-		processes = []ProcessInfo{}
+	processes := make([]ProcessInfo, 0, len(hostPIDs))
+	for _, hostPID := range hostPIDs {
+		info, err := processInfoWithProcFallback(hostPID, gopsutilProcesses[hostPID])
+		if err != nil {
+			continue
+		}
+		if hostPID == main.hostPID {
+			info.PID = namespacePID
+			info.Command = main.cmdline
+		}
+		processes = append(processes, *info)
 	}
 	return processes
 }
 
-// collectTreeDFSByCommand 递归收集进程树信息（命令行匹配降级方案的 DFS）
-// 从 ppidMap 中查找子进程，从 /proc 读取信息（含 statm 内存、task 线程数）
-func collectTreeDFSByCommand(parentHostPID int, processes *[]ProcessInfo, ppidMap map[int][]int, depth int) {
+func collectTreeHostPIDs(parentPID int, ppidMap map[int][]int, depth int, pids *[]int) {
 	if depth > 10 {
 		return
 	}
+	for _, childPID := range ppidMap[parentPID] {
+		*pids = append(*pids, childPID)
+		collectTreeHostPIDs(childPID, ppidMap, depth+1, pids)
+	}
+}
 
-	children := ppidMap[parentHostPID]
-	for _, childPID := range children {
-		childInfo, err := readProcessInfoFromProc(childPID)
-		if err != nil {
-			continue
-		}
-
-		// 读取子进程 cmdline
-		childCmdPath := filepath.Join("/proc", strconv.Itoa(childPID), "cmdline")
-		if childCmdData, err := readFileWithTimeout(childCmdPath); err == nil {
-			childInfo.Command = strings.TrimSpace(strings.ReplaceAll(string(childCmdData), "\x00", " "))
-		}
-
-		// 读取子进程内存（statm）
-		childStatmPath := filepath.Join("/proc", strconv.Itoa(childPID), "statm")
-		if statmData, err := readFileWithTimeout(childStatmPath); err == nil {
-			fields := strings.Fields(string(statmData))
+func processInfoWithProcFallback(pid int, p *process.Process) (*ProcessInfo, error) {
+	procInfo, procErr := readProcessInfoFromProc(pid)
+	if procErr == nil {
+		if statm, err := readFileWithTimeout(filepath.Join("/proc", strconv.Itoa(pid), "statm")); err == nil {
+			fields := strings.Fields(string(statm))
 			if len(fields) >= 2 {
-				rssPages, _ := strconv.ParseInt(fields[1], 10, 64)
-				childInfo.MemoryMB = float64(rssPages) * 4096 / 1024 / 1024
+				if rssPages, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
+					procInfo.MemoryMB = float64(rssPages) * float64(os.Getpagesize()) / 1024 / 1024
+				}
 			}
 		}
-
-		*processes = append(*processes, *childInfo)
-
-		// 递归遍历孙进程
-		collectTreeDFSByCommand(childPID, processes, ppidMap, depth+1)
+		if tasks, err := os.ReadDir(filepath.Join("/proc", strconv.Itoa(pid), "task")); err == nil {
+			procInfo.ThreadCount = len(tasks)
+		}
 	}
+
+	if p != nil {
+		if info, err := processToInfo(p); err == nil {
+			if procInfo != nil {
+				if info.MemoryMB == 0 {
+					info.MemoryMB = procInfo.MemoryMB
+				}
+				if info.Command == "" {
+					info.Command = procInfo.Command
+				}
+			}
+			return info, nil
+		}
+	}
+	return procInfo, procErr
 }
