@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/supdorg/supd/internal/config"
 )
 
 // ErrPathTraversal 路径穿越攻击错误
@@ -23,10 +25,134 @@ const (
 	MaxSingleFileSize = 1024 * 1024 * 1024
 )
 
-// PackDir 将目录打包为tar.gz
-// REQ-F-038: 服务导出为tar.gz格式
-// C-01-001 修复：显式关闭 tar/gzip 写入器并检查错误，避免生成损坏的归档
+// forcedExcludes 强制排除的文件模式，无论 profile 如何设置都生效。
+// 这些是临时/备份/日志文件，不应出现在导出包中。
+var forcedExcludes = []string{"*.bak", "*.tmp", "*.log", ".cache/"}
+
+// DefaultPackageProfile 内置默认打包规则：排除 data/ 目录（向后兼容）。
+// 当未提供 profile 且不存在 package.default.yaml 时使用。
+var DefaultPackageProfile = &config.PackageConfig{
+	Exclude: []string{"data/"},
+	Default: "include",
+}
+
+// matchPattern 判断相对路径是否匹配某个通配模式。
+//
+// 模式语义：
+//   - 以 "/" 结尾：匹配目录及其所有子内容（如 "data/" 匹配 "data"、"data/x"）
+//   - 含 "/"：对完整相对路径做 filepath.Match（如 "data/config/app.yaml"）
+//   - 不含 "/"：对 basename 做 filepath.Match（如 "*.log" 匹配任意目录下的 .log 文件）
+func matchPattern(pattern, relPath string) bool {
+	relPath = filepath.ToSlash(relPath)
+
+	if dir, ok := strings.CutSuffix(pattern, "/"); ok {
+		return relPath == dir || strings.HasPrefix(relPath, dir+"/")
+	}
+
+	if strings.Contains(pattern, "/") {
+		matched, _ := filepath.Match(pattern, relPath)
+		return matched
+	}
+
+	matched, _ := filepath.Match(pattern, filepath.Base(relPath))
+	return matched
+}
+
+// anyPatternMatch 判断路径是否匹配 patterns 中的任意一个。
+func anyPatternMatch(patterns []string, relPath string) bool {
+	for _, p := range patterns {
+		if matchPattern(p, relPath) {
+			return true
+		}
+	}
+	return false
+}
+
+// shouldPackEntry 根据打包规则判断给定相对路径是否应包含在导出包中。
+//
+// 规则优先级：
+//  1. service.yaml 强制包含（服务身份文件，导入必需）
+//  2. forcedExcludes 强制排除（临时/备份/日志文件）
+//  3. profile 的 include/exclude/default 规则
+//  4. profile 为 nil 时使用 DefaultPackageProfile
+func shouldPackEntry(relPath string, profile *config.PackageConfig) bool {
+	// 1. 强制包含 service.yaml
+	if relPath == "service.yaml" {
+		return true
+	}
+
+	// 2. 强制排除垃圾文件
+	if anyPatternMatch(forcedExcludes, relPath) {
+		return false
+	}
+
+	// 3. 确定 effective profile
+	if profile == nil {
+		profile = DefaultPackageProfile
+	}
+
+	// 4. 应用 profile 规则
+	if profile.Default == "exclude" {
+		// 默认排除模式：仅 include 匹配的路径包含
+		return anyPatternMatch(profile.Include, relPath)
+	}
+
+	// 默认包含模式：排除 exclude 匹配的路径
+	if anyPatternMatch(profile.Exclude, relPath) {
+		return false
+	}
+	return true
+}
+
+// shouldSkipDirTree 判断是否应跳过整个目录树（不遍历子条目）。
+//
+// 在 default: include 模式下，目录匹配 exclude 时跳过整棵子树（性能优化）。
+// 在 default: exclude 模式下，仅当没有任何 include 模式可能匹配子条目时跳过。
+func shouldSkipDirTree(relPath string, profile *config.PackageConfig) bool {
+	relPath = filepath.ToSlash(relPath)
+
+	// 强制排除的目录直接跳过
+	if anyPatternMatch(forcedExcludes, relPath) {
+		return true
+	}
+
+	if profile == nil {
+		profile = DefaultPackageProfile
+	}
+
+	if profile.Default == "exclude" {
+		// 默认排除模式：检查是否有 include 模式可能匹配此目录的子条目
+		if len(profile.Include) == 0 {
+			return true
+		}
+		for _, p := range profile.Include {
+			p = strings.TrimSuffix(p, "/")
+			// 不跳过的三种情况：
+			// 1. p == relPath：目录本身在 include 列表中
+			// 2. p 是 relPath 的后代：relPath 是通向 include 目标的祖先，需要遍历进去
+			// 3. relPath 是 p 的后代：relPath 在 include 目录树下，应包含
+			if p == relPath || strings.HasPrefix(p, relPath+"/") || strings.HasPrefix(relPath, p+"/") {
+				return false
+			}
+		}
+		return true
+	}
+
+	// 默认包含模式：目录匹配 exclude 时跳过整棵子树
+	return anyPatternMatch(profile.Exclude, relPath)
+}
+
+// PackDir 将目录打包为tar.gz，使用内置默认规则（排除 data/）。
+// 向后兼容：等价于 PackDirWithProfile(srcDir, w, nil)。
 func PackDir(srcDir string, w io.Writer) error {
+	return PackDirWithProfile(srcDir, w, nil)
+}
+
+// PackDirWithProfile 按 profile 规则将目录打包为 tar.gz。
+// profile 为 nil 时使用 DefaultPackageProfile（排除 data/，向后兼容）。
+// REQ-I-006: 服务导出为tar.gz格式，支持按 profile 过滤
+// C-01-001 修复：显式关闭 tar/gzip 写入器并检查错误，避免生成损坏的归档
+func PackDirWithProfile(srcDir string, w io.Writer, profile *config.PackageConfig) error {
 	gw := gzip.NewWriter(w)
 	tw := tar.NewWriter(gw)
 
@@ -35,20 +161,28 @@ func PackDir(srcDir string, w io.Writer) error {
 			return err
 		}
 
-		// 跳过 data/ 目录（REQ-I-006: 导出保留数据但可选）
 		relPath, err := filepath.Rel(srcDir, path)
 		if err != nil {
 			return err
 		}
-
-		// D-06-01 修复：实现跳过 data/ 目录（与上方注释一致），
-		// 避免导出运行时数据/潜在敏感数据
-		if relPath == "data" && info.IsDir() {
-			return filepath.SkipDir
-		}
+		relPath = filepath.ToSlash(relPath)
 
 		// 跳过根目录本身
 		if relPath == "." {
+			return nil
+		}
+
+		// 目录跳过优化：如果整个目录树都不需要打包，直接 SkipDir
+		if info.IsDir() && shouldSkipDirTree(relPath, profile) {
+			return filepath.SkipDir
+		}
+
+		// 判断此条目是否应包含
+		if !shouldPackEntry(relPath, profile) {
+			if info.IsDir() {
+				// 目录本身不打包，但仍需遍历子条目（default:exclude 模式下子条目可能被 include）
+				return nil
+			}
 			return nil
 		}
 
@@ -57,11 +191,8 @@ func PackDir(srcDir string, w io.Writer) error {
 		if err != nil {
 			return err
 		}
-
-		// 使用相对路径
 		header.Name = relPath
 
-		// 写入 header
 		if err := tw.WriteHeader(header); err != nil {
 			return err
 		}

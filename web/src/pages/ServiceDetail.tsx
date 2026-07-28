@@ -223,6 +223,9 @@ export function ServiceDetail() {
   const [showSignalDialog, setShowSignalDialog] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [showForceStopDialog, setShowForceStopDialog] = useState(false)
+  const [showExportDialog, setShowExportDialog] = useState(false)
+  const [exportProfiles, setExportProfiles] = useState<{ name: string; has_file: boolean }[]>([])
+  const [exportProfilesLoading, setExportProfilesLoading] = useState(false)
   // 扩展日志对话框状态 — 统一对话框（左侧运行列表 + 右侧日志内容）
   const [extLogExt, setExtLogExt] = useState<string | null>(null)
   const [extLogSelectedRunId, setExtLogSelectedRunId] = useState<string | null>(null)
@@ -628,11 +631,13 @@ export function ServiceDetail() {
     },
   })
 
-  const handleExport = async () => {
+  const handleExport = async (profile?: string) => {
     if (!service) return
     // REQ-2.12.1: 调用后端 export 端点下载 .tar.gz
+    // profile 为空或 "default" 时使用默认导出；指定 profile 时按规则文件导出
     try {
-      const url = `/api/services/${encodeURIComponent(serviceName)}/export`
+      const params = profile && profile !== 'default' ? `?profile=${encodeURIComponent(profile)}` : ''
+      const url = `/api/services/${encodeURIComponent(serviceName)}/export${params}`
       const response = await fetch(url)
       if (!response.ok) throw new Error(`导出失败: ${response.status}`)
       const blob = await response.blob()
@@ -645,8 +650,25 @@ export function ServiceDetail() {
       document.body.removeChild(a)
       URL.revokeObjectURL(downloadUrl)
       toast.success('服务已导出')
+      setShowExportDialog(false)
     } catch (err) {
       toast.error(getErrorMessage(err, '导出失败'))
+    }
+  }
+
+  // 加载可用的导出 profile 列表
+  const loadExportProfiles = async () => {
+    setExportProfilesLoading(true)
+    try {
+      const data = await apiGet<{ name: string; has_file: boolean }[]>(
+        `/api/services/${encodeURIComponent(serviceName)}/export-profiles`
+      )
+      setExportProfiles(data)
+    } catch {
+      // 加载失败时静默处理，对话框仍可用默认导出
+      setExportProfiles([{ name: 'default', has_file: false }])
+    } finally {
+      setExportProfilesLoading(false)
     }
   }
 
@@ -756,7 +778,7 @@ export function ServiceDetail() {
           <Button variant="default" size="sm" onClick={() => setActiveTab('env')}>
             <Settings className="h-3.5 w-3.5" /> {t.service.editEnv}
           </Button>
-          <Button variant="default" size="sm" onClick={handleExport}>
+          <Button variant="default" size="sm" onClick={() => { loadExportProfiles(); setShowExportDialog(true) }}>
             <Download className="h-3.5 w-3.5" /> {t.service.export}
           </Button>
           <Button variant="danger" size="sm" onClick={() => setShowDeleteDialog(true)}>
@@ -1388,6 +1410,68 @@ export function ServiceDetail() {
               <Button variant="primary" onClick={() => signalMutation.mutate(signalInput)} disabled={signalMutation.isPending}>
                 {t.service.sendSignal}
               </Button>
+            </DialogFooter>
+          </div>
+        </div>
+      )}
+
+      {/* 导出对话框 — 默认导出 + 按规则文件导出 */}
+      {showExportDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" />
+          <div className="relative z-10 w-full max-w-md rounded-lg border border-[var(--color-border-primary)] bg-[var(--color-surface-secondary)] p-6 shadow-[var(--shadow-lg)]">
+            <DialogHeader>
+              <DialogTitle>{t.service.export}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3 py-2">
+              {/* 默认导出 */}
+              <button
+                className="flex w-full items-center justify-between rounded-md border border-[var(--color-border-primary)] px-4 py-3 text-left hover:bg-[var(--color-surface-tertiary)]"
+                onClick={() => handleExport('default')}
+              >
+                <div>
+                  <div className="text-sm font-medium text-[var(--color-text-primary)]">默认导出</div>
+                  <div className="text-xs text-[var(--color-text-secondary)]">
+                    使用内置规则（排除 data/ 目录）
+                  </div>
+                </div>
+                <Download className="h-4 w-4 text-[var(--color-text-secondary)]" />
+              </button>
+
+              {/* 分隔线 + 规则导出 */}
+              {exportProfilesLoading ? (
+                <div className="py-2 text-center text-sm text-[var(--color-text-secondary)]">加载中…</div>
+              ) : (
+                exportProfiles
+                  .filter((p) => p.name !== 'default')
+                  .map((p) => (
+                    <button
+                      key={p.name}
+                      className="flex w-full items-center justify-between rounded-md border border-[var(--color-border-primary)] px-4 py-3 text-left hover:bg-[var(--color-surface-tertiary)]"
+                      onClick={() => handleExport(p.name)}
+                    >
+                      <div>
+                        <div className="text-sm font-medium text-[var(--color-text-primary)]">
+                          {p.name}
+                        </div>
+                        <div className="text-xs text-[var(--color-text-secondary)]">
+                          package.{p.name}.yaml
+                        </div>
+                      </div>
+                      <Download className="h-4 w-4 text-[var(--color-text-secondary)]" />
+                    </button>
+                  ))
+              )}
+
+              {/* 无额外规则文件时的提示 */}
+              {!exportProfilesLoading && exportProfiles.filter((p) => p.name !== 'default').length === 0 && (
+                <div className="rounded-md border border-dashed border-[var(--color-border-primary)] px-4 py-3 text-center text-xs text-[var(--color-text-secondary)]">
+                  未发现自定义规则文件（package.*.yaml），仅支持默认导出
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="default" onClick={() => setShowExportDialog(false)}>{t.common.cancel}</Button>
             </DialogFooter>
           </div>
         </div>

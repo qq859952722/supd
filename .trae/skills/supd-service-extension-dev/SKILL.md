@@ -56,13 +56,14 @@ description: "supd服务与扩展开发指南。当用户要求开发、修改�
 ## 💡 开发工作流 (Development Workflow)
 
 1. **确认需求**: 明确开发对象是服务还是扩展。若是扩展，确定触发器类型与并发策略。
-2. **查阅规格与示例**: 阅读 `references/` 中的规范，并在 `examples/` 中寻找可用模板。
-3. **生成代码**: 严格按照规范编写配置文件和代码。
-4. **自动校验**: 运行 Python 脚本排查低级格式错误（需传入目标服务或扩展目录路径）：
+2. **规划文件布局**: 按 `bin/` + `data/` 目录规范组织服务（详见 `references/01_service_spec.md` §1）。评估服务是否支持二进制更新，若支持则规划更新扩展。
+3. **查阅规格与示例**: 阅读 `references/` 中的规范，并在 `examples/` 中寻找可用模板。
+4. **生成代码**: 严格按照规范编写配置文件和代码。
+5. **自动校验**: 运行 Python 脚本排查低级格式错误（需传入目标服务或扩展目录路径）：
    ```bash
    python3 .trae/skills/supd-service-extension-dev/scripts/validate_dev.py <target_dir>
    ```
-5. **打包导出** (如需): 
+6. **打包导出** (如需): 按导出场景选择默认导出或按规则文件导出：
    ```bash
    python3 .trae/skills/supd-service-extension-dev/scripts/pack_dev.py <target_dir> [output.tar.gz]
    ```
@@ -76,4 +77,4 @@ description: "supd服务与扩展开发指南。当用户要求开发、修改�
 - **服务类**: `01-simple-service/`, `02-complex-service/`
 - **扩展类 (Shell)**: `03-on-demand-ext/`, `04-scheduled-ext/`, `05-service-lifecycle-ext/`, `06-supd-lifecycle-ext/`
 - **扩展进阶**: `07-health-check-ext/`, `08-stats-report-ext/`
-- **扩展 (TJS)**: `09-tjs-ext/`
+- **扩展 (TJS)**: `09-tjs-ext/`, `10-binary-updater-ext/`（二进制更新扩展：流式下载 + 原子替换 + 版本检测）

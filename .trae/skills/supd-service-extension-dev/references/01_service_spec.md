@@ -6,16 +6,86 @@
 
 ## 1. 服务目录结构
 
+服务根目录中，**控制面文件**（`service.yaml`、`env.yaml`、`extensions/`、`package.*.yaml`）与**业务载荷**（`bin/`、`data/`）严格分离。业务载荷只允许放在 `bin/` 和 `data/` 两个目录中，不得在根目录散落二进制、配置或临时文件。
+
 ```
 <baseDir>/services/<service-name>/
-├── service.yaml          # 必需：服务元数据与配置
-├── env.yaml              # 可选：服务专属环境变量（必须使用 env: 包装层）
-├── <启动脚本或二进制>     # 必需：由 command/runtime 指定
-└── extensions/           # 可选：服务级扩展
-    └── <ext-name>/
-        ├── meta.yaml
-        └── run.sh
+├── service.yaml              # 必需：服务元数据与配置
+├── env.yaml                  # 可选：服务专属环境变量（必须使用 env: 包装层）
+├── bin/                      # 必需：版本化、可替换的程序载荷
+│   ├── <service-binary>      #   服务主程序（command 应直接指向 ./bin/<binary>）
+│   └── share/                #   可选：随版本发布的只读资源（如 WebUI 模板）
+├── data/                     # 可选：实例私有、升级必须保留的数据
+│   ├── config/               #   用户配置（迁移导出时包含，共享导出时排除）
+│   ├── state/                #   运行状态（导出时排除）
+│   ├── cache/                #   可再生成缓存（导出时排除）
+│   ├── certs/                #   服务私有证书
+│   └── web/                  #   用户可修改或运行期下载的 WebUI
+├── extensions/               # 可选：服务级扩展
+│   └── <ext-name>/
+│       ├── meta.yaml
+│       └── run.sh / run.js
+├── package.default.yaml      # 可选：默认导出规则（不存在时使用内置规则：排除 data/）
+├── package.migrate.yaml      # 可选：迁移导出规则（含 data/config，排除 data/cache 和 data/state）
+└── package.share.yaml        # 可选：共享导出规则（仅 bin/ 和 extensions/）
 ```
+
+### 1.1 bin/ 与 data/ 的边界
+
+| 文件类型 | 目录 | 原因 |
+|---|---|---|
+| 主二进制、辅助二进制 | `bin/` | 随版本替换 |
+| 随二进制发布的只读资源 | `bin/share/` | 与程序版本绑定 |
+| 用户编辑配置 | `data/config/` | 升级必须保留 |
+| 运行期状态、数据库 | `data/state/` | 实例数据 |
+| 可再生成缓存 | `data/cache/` | 升级可丢弃 |
+| 用户私有证书 | `data/certs/` | 不导出 |
+| 用户安装/在线更新的 WebUI | `data/web/` | 不应被导入升级覆盖 |
+| 临时下载包、解压目录 | 系统临时目录（`tjs.tmpDir`） | 成功或失败后均清理 |
+| 服务日志 | supd 日志目录 | 不放入服务目录 |
+
+### 1.2 权限隔离
+
+```
+service.yaml、env.yaml、extensions/、package.*.yaml   管理员/supd 所有
+bin/                                                    root 或 supd 所有，服务用户只读和执行
+data/                                                   服务运行用户所有，可读写
+```
+
+- 更新扩展只修改 `bin/`。
+- 服务进程只写 `data/`。
+- 如需调整属主，只处理 `data/`，**禁止** `chown -R <serviceDir>`（会让服务用户获得修改 `bin/` 和扩展脚本的权限）。
+- `bin/` 目录 `0755`，二进制 `0755`。
+
+### 1.3 command 指向
+
+`command` 应直接指向 `./bin/<binary>`，不增加只做转发的 `start.sh`。如需指定配置目录，通过命令行参数指向 `./data/config/`。
+
+```yaml
+# ✅ 推荐
+command:
+  - ./bin/my-daemon
+  - --config
+  - ./data/config/app.conf
+
+# ❌ 避免：start.sh 包装
+command: [./start.sh]
+```
+
+### 1.4 可更新性评估
+
+开发服务时应明确标注是否支持二进制手动更新：
+
+- **支持手动二进制更新**：存在稳定版本来源、可识别架构资产、二进制支持非交互安装。此时增加服务级 TJS 更新扩展（参考 `examples/10-binary-updater-ext/`）。
+- **不支持**：二进制由系统包管理器维护、下载页需浏览器交互、安装修改系统依赖等。
+- **暂不确定**：需要用户提供更新源/版本规则。
+
+### 1.5 打包导出规则
+
+服务支持多份打包规则文件（`package.<profile>.yaml`），详见需求规格说明 §2.12.2。
+
+- **默认导出**：使用 `package.default.yaml`（可选），回退到内置规则（排除 `data/`）。
+- **按规则导出**：指定 `package.<name>.yaml`（必须存在），适用于迁移（含配置不含运行数据）或共享（仅程序不含数据）等场景。
 
 ---
 

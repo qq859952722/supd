@@ -151,7 +151,50 @@ def validate_service(service_dir):
 
     # 5. env.yaml 格式校验
     validate_env_yaml(service_dir)
+
+    # 6. 目录布局建议（bin/ + data/ 规范，仅 warning 不 fail）
+    check_service_layout(service_dir, content)
     return True
+
+
+def check_service_layout(service_dir, service_yaml_content):
+    """检查服务目录是否符合 bin/ + data/ 布局规范（仅 warning）"""
+    # 检查 bin/ 目录是否存在
+    bin_dir = service_dir / "bin"
+    if bin_dir.exists():
+        log_pass("服务包含 bin/ 目录（符合 bin/+data 布局规范）")
+    else:
+        # 检查根目录是否有散落的二进制或脚本
+        root_files = [f for f in service_dir.iterdir()
+                      if f.is_file() and f.name not in
+                      ("service.yaml", "env.yaml") and not f.name.startswith("package.")]
+        if root_files:
+            log_warn(f"根目录有散落文件 {len(root_files)} 个，建议移入 bin/（程序）或 data/（数据）")
+            for f in root_files[:5]:
+                log_warn(f"  - {f.name}")
+
+    # 检查 command 是否指向 bin/
+    m_cmd = re.search(r"^\s*command:\s*\[?(.+)", service_yaml_content, re.MULTILINE)
+    if m_cmd:
+        cmd_line = m_cmd.group(1).strip().rstrip("]")
+        first_cmd = cmd_line.split(",")[0].strip().strip("'\"")
+        if first_cmd.startswith("./bin/"):
+            log_pass(f"command 指向 bin/ 目录: {first_cmd}")
+        elif first_cmd.startswith("./data/"):
+            log_warn(f"command 指向 data/ 目录: {first_cmd}（二进制应放在 bin/）")
+        elif not first_cmd.startswith("/"):
+            # 相对路径但不在 bin/ 或 data/ 下
+            log_warn(f"command 使用相对路径 '{first_cmd}'，建议指向 './bin/<binary>'")
+
+    # 检查是否有二进制文件在 data/ 中
+    data_dir = service_dir / "data"
+    if data_dir.exists():
+        for f in data_dir.rglob("*"):
+            if f.is_file():
+                st = f.stat()
+                if st.st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH):
+                    log_warn(f"data/ 中有可执行文件: {f.relative_to(service_dir)}（二进制应放在 bin/）")
+                    break
 
 
 def validate_extension(ext_dir):

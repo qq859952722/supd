@@ -227,7 +227,8 @@ func (s *Server) setupRoutes() {
 				r.Get("/deaths", s.handleServiceDeaths)    // GET /api/services/{name}/deaths
 
 				// 服务导入导出
-				r.Get("/export", s.handleExportService)    // GET /api/services/{name}/export
+				r.Get("/export", s.handleExportService)               // GET /api/services/{name}/export[?profile=<name>]
+				r.Get("/export-profiles", s.handleListExportProfiles) // GET /api/services/{name}/export-profiles
 
 				// 服务级扩展
 				r.Route("/extensions", func(r chi.Router) {

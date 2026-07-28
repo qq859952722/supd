@@ -49,8 +49,12 @@ type ImportVersionInfo struct {
 	ExistsLocal  bool   `json:"exists_local"`
 }
 
-// handleExportService GET /api/services/{name}/export
-// REQ-I-006, REQ-F-038: 导出服务为tar.gz
+// handleExportService GET /api/services/{name}/export[?profile=<name>]
+// REQ-I-006, REQ-F-038: 导出服务为tar.gz，支持按 profile 过滤
+//
+// profile 参数：
+//   - 未指定或 "default"：使用 package.default.yaml（如存在），否则回退到 service.yaml 中的 package 配置，最终回退到内置默认（排除 data/）
+//   - 其他名称：必须存在 package.<name>.yaml，否则返回 404
 func (s *Server) handleExportService(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	if name == "" {
@@ -79,15 +83,94 @@ func (s *Server) handleExportService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 解析 profile 参数
+	profileName := r.URL.Query().Get("profile")
+	if profileName == "" {
+		profileName = "default"
+	}
+
+	// 加载 service.yaml 中的 package 配置（用于 default 回退）
+	var svcPackage *config.PackageConfig
+	if sc, err := config.LoadService(filepath.Join(svcDir, "service.yaml")); err == nil {
+		svcPackage = sc.Package
+	}
+
+	// 解析实际使用的 profile
+	profile, source, err := config.ResolveExportProfile(svcDir, profileName, svcPackage)
+	if err != nil {
+		slog.Error("resolve export profile failed", "name", name, "profile", profileName, "error", err)
+		respondError(w, errors.ErrFileNotFound, fmt.Sprintf("profile %q not found", profileName))
+		return
+	}
+
+	slog.Info("export service", "name", name, "profile", profileName, "source", source)
+
 	// 设置响应头
 	w.Header().Set("Content-Type", "application/gzip")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s.tar.gz", name))
 
-	// 打包服务目录
-	if err := archive.PackDir(svcDir, w); err != nil {
-		slog.Error("export service failed", "name", name, "error", err)
+	// 按 profile 打包服务目录
+	if err := archive.PackDirWithProfile(svcDir, w, profile); err != nil {
+		slog.Error("export service failed", "name", name, "profile", profileName, "error", err)
 		return
 	}
+}
+
+// ExportProfileInfo 导出 profile 信息
+type ExportProfileInfo struct {
+	Name        string `json:"name"`        // profile 名称
+	HasFile     bool   `json:"has_file"`    // 是否存在 package.<name>.yaml 文件
+	Description string `json:"description"` // 可选描述（从 profile 文件读取，目前留空）
+}
+
+// handleListExportProfiles GET /api/services/{name}/export-profiles
+// 返回服务可用的导出 profile 列表。
+// 始终包含 "default"（即使无文件，使用内置规则），另列出所有 package.<name>.yaml 文件。
+func (s *Server) handleListExportProfiles(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if name == "" {
+		respondError(w, errors.ErrInvalidRequest, "service name is required")
+		return
+	}
+
+	if s.stateProvider != nil {
+		if _, exists := s.stateProvider.GetServiceState(name); !exists {
+			respondError(w, errors.ErrServiceNotFound, fmt.Sprintf("service %s not found", name))
+			return
+		}
+	}
+
+	var svcDir string
+	if s.pathValidator != nil {
+		svcDir = filepath.Join(s.pathValidator.baseDir, "services", name)
+	} else {
+		svcDir = filepath.Join("/etc/supd/services", name)
+	}
+
+	if _, err := os.Stat(svcDir); os.IsNotExist(err) {
+		respondError(w, errors.ErrServiceNotFound, fmt.Sprintf("service directory %s not found", name))
+		return
+	}
+
+	profiles, err := config.ListPackageProfiles(svcDir)
+	if err != nil {
+		slog.Error("list export profiles failed", "name", name, "error", err)
+		respondError(w, errors.ErrInternal, "failed to list export profiles")
+		return
+	}
+
+	result := make([]ExportProfileInfo, 0, len(profiles))
+	for _, p := range profiles {
+		info := ExportProfileInfo{Name: p}
+		// 检查文件是否存在
+		filePath := filepath.Join(svcDir, config.PackageProfileFileName(p))
+		if st, err := os.Stat(filePath); err == nil && !st.IsDir() {
+			info.HasFile = true
+		}
+		result = append(result, info)
+	}
+
+	respondJSON(w, http.StatusOK, result)
 }
 
 // handleImportService POST /api/services/import

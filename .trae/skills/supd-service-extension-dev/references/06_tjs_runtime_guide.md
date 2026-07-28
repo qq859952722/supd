@@ -108,6 +108,7 @@ exit code 127
 |---|---|
 | `await tjs.readFile(path)` | 读取文件，返回 `Uint8Array` |
 | `await tjs.writeFile(path, data)` | 写入文件，data 为 `Uint8Array` 或 `string` |
+| `await tjs.open(path, flags, mode?)` | 打开文件返回 `FileHandle`（**流式读写**，详见 §5.2） |
 | `await tjs.readDir(path)` | 列出目录，返回 `DirHandle`（v26.6.0 中需 `for await` 异步迭代，见 §8.3 `listEntries` 兼容函数） |
 | `await tjs.stat(path)` / `tjs.lstat(path)` | 文件状态，返回对象（含 `mode`/`size`/`mtim`/`uid`/`gid` 及 `isFile`/`isDirectory` 布尔属性） |
 | `await tjs.makeDir(path)` | 创建目录 |
@@ -123,6 +124,23 @@ exit code 127
 | `await tjs.utime(path, atim, mtim)` / `tjs.lutime` | 修改访问/修改时间 |
 | `await tjs.statFs(path)` | 文件系统状态 |
 | `tjs.watch(path, callback)` | 监听文件变化 |
+
+#### FileHandle（由 `tjs.open` 返回，支持流式读写）
+
+`tjs.open(path, flags, mode?)` 返回的 `FileHandle` 对象，flags 支持 `'r'`/`'w'`/`'a'`/`'r+'`/`'w+'`/`'a+'`。
+
+| 方法 | 说明 |
+|---|---|
+| `await fh.write(Uint8Array)` | 写入数据，**自动推进文件位置**（连续调用即追加），返回写入字节数 |
+| `await fh.write(Uint8Array, position)` | pwrite：在指定位置写入（不改变当前文件位置） |
+| `await fh.read(Uint8Array)` | 读取到 buffer，自动推进位置，返回读取字节数 |
+| `await fh.read(Uint8Array, position)` | pread：在指定位置读取 |
+| `await fh.close()` | 关闭文件句柄（也支持 `await using fh = ...` 自动关闭） |
+| `await fh.sync()` / `fh.datasync()` | 刷盘 |
+| `await fh.stat()` / `fh.truncate(n)` / `fh.chmod(mode)` / `fh.chown(uid,gid)` | 文件操作 |
+| `fh.path` | 文件路径属性 |
+
+> **关键**：`fh.write(buf)` 自动推进文件位置，连续调用等价于追加写入。这使得逐块下载直接写盘成为可能（内存占用与文件大小无关）。详见 §5.2 `downloadStream`。
 
 #### 进程与执行
 | API | 说明 |
@@ -302,11 +320,59 @@ async function doInstall() {
 }
 ```
 
-### 5.2 文件下载与保存（fetch + tjs.writeFile）
+### 5.2 文件下载与保存
+
+#### downloadStream（推荐：真正的流式落盘，内存与文件大小无关）
+
+使用 `tjs.open()` 打开文件句柄，逐块 `fh.write()` 直接写盘。内存占用仅为单个 chunk（约 8-64KB），与文件大小无关。已在 txiki.js v26.6.0 实测验证。
 
 ```javascript
-// ⚠️ 重要：大文件（>10MB）必须用流式读取，resp.arrayBuffer() 会卡死！
-// 详见 7.5 节「fetch 大文件 arrayBuffer 卡死」
+/**
+ * 流式下载文件到磁盘 —— 内存占用与文件大小无关（仅单块缓冲）
+ * tjs.open + fh.write 实测验证（txiki.js v26.6.0）
+ *
+ * @param {string} url 下载地址
+ * @param {string} destPath 目标路径
+ * @param {object} [opts] 可选：onProgress(received, total)、maxBytes、headers
+ * @returns {Promise<number>} 已下载字节数
+ */
+async function downloadStream(url, destPath, opts = {}) {
+  const { onProgress = null, maxBytes = 0, headers = {} } = opts;
+  const resp = await fetch(url, {
+    headers: { 'User-Agent': 'supd-tjs-ext', ...headers },
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+
+  const total = resp.headers.get('content-length');
+  const totalNum = total ? parseInt(total, 10) : 0;
+
+  const fh = await tjs.open(destPath, 'w', 0o644);
+  let received = 0;
+  try {
+    const reader = resp.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (maxBytes && received + value.length > maxBytes) {
+        throw new Error(`超出大小上限 ${maxBytes}（已接收 ${received + value.length}）`);
+      }
+      await fh.write(value);   // 自动推进位置，逐块落盘
+      received += value.length;
+      if (onProgress) onProgress(received, totalNum);
+    }
+    await fh.sync();           // 刷盘
+  } finally {
+    await fh.close();
+  }
+  return received;
+}
+```
+
+#### downloadFile（旧版：全量内存，适合小文件）
+
+`fetch` + `getReader()` 分块读取后合并为完整 `Uint8Array` 再 `tjs.writeFile`。内存峰值约为文件大小的 2 倍（chunks 数组 + 合并 buffer）。适合几 MB 以内的小文件/JSON。**大文件请用上面的 `downloadStream`。**
+
+```javascript
 async function downloadFile(url, destPath) {
   console.log(`下载: ${url}`);
   const resp = await fetch(url, {
@@ -723,9 +789,13 @@ actions:
 
 1. **服务 `user` 字段**：服务以指定用户身份启动，其写入的文件属主为该用户（如 `nobody`）。
 2. **扩展 `run_as: root`**：扩展需要修改服务目录文件属主、安装二进制等操作时，必须提权为 root。
-3. **扩展安装后 chown**：扩展以 root 下载/创建文件后，应 `chown -R` 为服务用户，确保服务进程能读写：
+3. **扩展安装后 chown**：扩展以 root 下载/创建文件后，应将 `bin/` 的属主设为 root 或 supd（服务用户只读执行），将 `data/` 的属主设为服务用户。**禁止** `chown -R <serviceDir>` 整目录递归——这会让服务用户获得修改 `bin/`、扩展脚本和 `service.yaml` 的权限，破坏权限隔离：
    ```javascript
-   await runCmd(['chown', '-R', 'nobody:nobody', serviceDir]);
+   // ✅ 正确：分别处理 bin/ 和 data/
+   await runCmd(['chown', '-R', 'root:root', `${serviceDir}/bin`]);
+   await runCmd(['chown', '-R', 'nobody:nobody', `${serviceDir}/data`]);
+   // ❌ 错误：整目录递归 chown
+   // await runCmd(['chown', '-R', 'nobody:nobody', serviceDir]);
    ```
 4. **服务级扩展继承规则**：`run_as` 为空时继承所属服务身份；显式指定 `run_as` 则覆盖继承。
 

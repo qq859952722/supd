@@ -11,7 +11,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：⭐ 优秀（满分 100），1000+ 单元测试通过（Go + 前端），零竞态；staticcheck/go vet 零警告
-- **当前版本**：v0.0.35（版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.0.36（版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -102,20 +102,27 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-27 | 任务执行计划全面审计与测试 | R-06 修复 + REG-01 回归修复（reload_classifier nil panic）+ 66 用例测试 + 一致性检查 + 综合测试服务准备 | [notes/2026-07-27.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-27.md) |
 | 2026-07-27 | R-01/R-02、R-03/R-05、R-08 技术债闭环 | NSpid 精确映射与完整资源指标；curl 流式落盘与按需依赖校验；停止配置 nil 防御 | [notes/2026-07-27.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-27.md) |
 | 2026-07-28 | 代码审计 + 运行状态测试 + v0.0.35 发布 | 13 项运行测试全通过（资源 API/停止配置/tjs 扩展）；R-01～R-09 全部闭环 | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
+| 2026-07-28 | 多 profile 导出 + Skill 优化 + v0.0.36 | 服务打包支持多份 package.\<name\>.yaml 规则文件；bin/+data/ 目录规范；tjs.open 流式下载；二进制更新扩展示例 | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-28 代码审计与运行状态测试）
+## 八、最近会话重点（2026-07-28 多 profile 导出 + Skill 优化 + v0.0.36）
 
-- **任务**：对 R-01/R-02、R-03/R-05、R-08 修复代码进行审计，组织运行状态测试方案并执行，升级版本至 v0.0.35
-- **代码审计**：6 个修改文件全部通过，NSpid 精确映射逻辑正确，curl 流式落盘与按需依赖校验合理，nil 防御最小化
-- **运行状态测试**：13 项全部通过
-  - A 组（资源采集 API）：web-demo/tcp-echo 的 resources/processes 端点返回完整 CPU/内存/进程数/内存占比
-  - B 组（停止配置）：API 停止服务在配置 grace/timeout 内完成（1642ms < 5s）
-  - C 组（transmission-updater）：check-update 不依赖外部命令；curl 缺失时错误清晰；架构识别不武断回退
-  - D 组（回归）：go build/vet/test、race test、pnpm build 全部通过
-- **R-01～R-09 全部闭环**：所有技术债已修复并验证
-- **版本**：v0.0.35 发布
+- **任务**：优化 Skill（目录结构 + tjs 流式下载 + 二进制更新扩展）；需求文档和代码支持多份打包规则文件；审计 + 运行测试 + 升级版本
+- **Skill 优化**：
+  - 新增 `bin/`+`data/` 目录规范（控制面/业务载荷分离、权限隔离、command 指向）
+  - 发现 `tjs.open()` 返回 FileHandle 支持 `fh.write()` 自动推进位置，实现真正流式落盘（内存与文件大小无关），已在 txiki.js v26.6.0 源码+运行时双重验证
+  - 新增 `downloadStream()` 替代旧版全量内存 `downloadFile()`
+  - 修正 chown 建议：禁止 `chown -R <serviceDir>`，改为分别处理 bin/ 和 data/
+  - 新增 `examples/10-binary-updater-ext/`（check-update/update/force-update 三 action，放宽验证，原子替换+回滚）
+- **代码变更**：
+  - `internal/archive/packer.go`：新增 `PackDirWithProfile` + `matchPattern` + `shouldPackEntry` + `shouldSkipDirTree`
+  - `internal/config/package_profile.go`（新文件）：`LoadPackageProfile`/`ListPackageProfiles`/`ResolveExportProfile`
+  - `internal/api/export_handler.go`：导出支持 `?profile=<name>` 参数；新增 `GET /export-profiles` 端点
+  - `web/src/pages/ServiceDetail.tsx`：导出对话框（默认导出 + 按规则文件导出）
+  - 需求规格说明 §2.12.2 重写：多 profile 命名规范、模式匹配语义、两种导出方式
+- **运行测试**：export-profiles 端点返回正确 profile 列表；share/migrate profile 导出内容符合预期；不存在的 profile 返回 404
+- **版本**：v0.0.36
 
 ### R-09 规格偏差处理（同日续）
 - **偏差一**：`ui.show_logs`/`ui.button_style` 代码已实现但规格未记录 → 已写入需求规格说明_v1.5.md L451-454
