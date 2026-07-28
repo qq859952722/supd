@@ -37,6 +37,7 @@ interface TaskToastContextValue {
     action?: string
     serviceName?: string
     dryRun?: boolean
+    env?: Record<string, string>
   }) => void
 }
 
@@ -80,9 +81,9 @@ export function TaskToastProvider({ children }: { children: ReactNode }) {
   }, [removeNotification])
 
   const runExtension = useCallback(
-    (params: { extensionName: string; action?: string; serviceName?: string; dryRun?: boolean }) => {
+    (params: { extensionName: string; action?: string; serviceName?: string; dryRun?: boolean; env?: Record<string, string> }) => {
       const id = `task-${++notificationIdCounter}`
-      const { extensionName, action, serviceName, dryRun } = params
+      const { extensionName, action, serviceName, dryRun, env } = params
 
       // §2.2.16: dry_run=true 查询参数表示试运行模式（不产生实际副作用）
       const query = dryRun ? '?dry_run=true' : ''
@@ -90,7 +91,11 @@ export function TaskToastProvider({ children }: { children: ReactNode }) {
         ? `/api/services/${encodeURIComponent(serviceName)}/extensions/${encodeURIComponent(extensionName)}/run${query}`
         : `/api/extensions/${encodeURIComponent(extensionName)}/run${query}`
 
-      const runPromise = apiPost(url, action ? { action } : {})
+      // 构造请求体：action + env（临时环境变量，仅本次运行）
+      const body: Record<string, unknown> = {}
+      if (action) body.action = action
+      if (env && Object.keys(env).length > 0) body.env = env
+      const runPromise = apiPost(url, body)
 
       setNotifications((prev) => [
         ...prev,

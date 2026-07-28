@@ -938,35 +938,29 @@ func TestGroupByServiceGlobalOnly(t *testing.T) {
 }
 
 // TestFindActionByID 测试 action 查找
-// REQ-F-022: 根据 actionID 查找 action
+// REQ-F-022: 根据 actionID 查找 action，返回 actionID（args 已删除）
 func TestFindActionByID(t *testing.T) {
 	meta := &config.ExtensionMeta{
 		Actions: []config.Action{
-			{ID: "run", Label: "Run", Args: []string{"--verbose"}},
-			{ID: "check", Label: "Check", Args: nil},
+			{ID: "run", Label: "Run"},
+			{ID: "check", Label: "Check"},
 		},
 	}
 
 	// 查找存在的 action
-	id, args := FindActionByID(meta, "check")
+	id := FindActionByID(meta, "check")
 	if id != "check" {
 		t.Errorf("expected check, got %s", id)
 	}
-	if args != nil {
-		t.Errorf("expected nil args, got %v", args)
-	}
 
-	// 查找存在的 action with args
-	id, args = FindActionByID(meta, "run")
+	// 查找另一个存在的 action
+	id = FindActionByID(meta, "run")
 	if id != "run" {
 		t.Errorf("expected run, got %s", id)
 	}
-	if len(args) != 1 || args[0] != "--verbose" {
-		t.Errorf("expected [--verbose], got %v", args)
-	}
 
 	// 空ID返回第一个action
-	id, _ = FindActionByID(meta, "")
+	id = FindActionByID(meta, "")
 	if id != "run" {
 		t.Errorf("expected first action run, got %s", id)
 	}

@@ -37,11 +37,11 @@ type UIConfig struct {
 
 // Action 扩展动作定义
 // REQ-2.2.3: actions 段
+// args 字段已删除：统一用 SUPD_ACTION 环境变量区分 action，避免死代码
 type Action struct {
-	ID          string   `yaml:"id" json:"id"`
-	Label       string   `yaml:"label" json:"label,omitempty"`
-	ButtonStyle string   `yaml:"button_style" json:"button_style,omitempty"`
-	Args        []string `yaml:"args" json:"args,omitempty"`
+	ID          string `yaml:"id" json:"id"`
+	Label       string `yaml:"label" json:"label,omitempty"`
+	ButtonStyle string `yaml:"button_style" json:"button_style,omitempty"`
 }
 
 // Triggers 触发器定义

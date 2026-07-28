@@ -77,7 +77,7 @@ func (e *Executor) buildExecContext(runID string, meta *config.ExtensionMeta, tc
 			runtimePath = rt.AbsPath
 		}
 	}
-	command := BuildCommand(meta.Runtime, runtimePath, meta.Entry, tc.ActionArgs)
+	command := BuildCommand(meta.Runtime, runtimePath, meta.Entry)
 	if len(command) == 0 {
 		return nil, fmt.Errorf("extension %s: command is empty", meta.Name)
 	}

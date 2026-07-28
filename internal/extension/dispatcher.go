@@ -2,6 +2,7 @@ package extension
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -125,7 +126,6 @@ func (d *Dispatcher) ExecuteOnDemand(ctx context.Context, meta *config.Extension
 type matchedExtension struct {
 	extEntry    *watch.ExtensionEntry
 	actionID    string
-	actionArgs  []string
 	serviceName string // 空=全局扩展
 	// serviceSpec 服务级扩展匹配时携带的服务身份配置，
 	// 用于扩展执行时 ResolveRunAs 的服务级身份继承（REQ-F-023, §2.2.13）
@@ -221,11 +221,10 @@ func matchExtension(extEntry *watch.ExtensionEntry, req DispatchRequest, service
 	switch req.EventType {
 	case "on_demand":
 		if meta.Triggers.OnDemand != nil && *meta.Triggers.OnDemand {
-			actionID, actionArgs := FindActionByID(meta, "")
+			actionID := FindActionByID(meta, "")
 			return &matchedExtension{
 				extEntry:    extEntry,
 				actionID:    actionID,
-				actionArgs:  actionArgs,
 				serviceName: serviceName,
 				serviceSpec: serviceSpec,
 			}
@@ -234,16 +233,14 @@ func matchExtension(extEntry *watch.ExtensionEntry, req DispatchRequest, service
 		for _, schedule := range meta.Triggers.OnSchedule {
 			if schedule.Cron != "" {
 				actionID := schedule.Action
-				var actionArgs []string
 				if actionID == "" {
-					actionID, actionArgs = FindActionByID(meta, "")
+					actionID = FindActionByID(meta, "")
 				} else {
-					_, actionArgs = FindActionByID(meta, actionID)
+					FindActionByID(meta, actionID) // 仅校验存在性
 				}
 				return &matchedExtension{
 					extEntry:    extEntry,
 					actionID:    actionID,
-					actionArgs:  actionArgs,
 					serviceName: serviceName,
 					serviceSpec: serviceSpec,
 				}
@@ -253,16 +250,14 @@ func matchExtension(extEntry *watch.ExtensionEntry, req DispatchRequest, service
 		for _, lc := range meta.Triggers.ServiceLifecycle {
 			if lc.Event == req.Phase {
 				actionID := lc.Action
-				var actionArgs []string
 				if actionID == "" {
-					actionID, actionArgs = FindActionByID(meta, "")
+					actionID = FindActionByID(meta, "")
 				} else {
-					_, actionArgs = FindActionByID(meta, actionID)
+					FindActionByID(meta, actionID) // 仅校验存在性
 				}
 				return &matchedExtension{
 					extEntry:    extEntry,
 					actionID:    actionID,
-					actionArgs:  actionArgs,
 					serviceName: serviceName,
 					serviceSpec: serviceSpec,
 				}
@@ -272,16 +267,14 @@ func matchExtension(extEntry *watch.ExtensionEntry, req DispatchRequest, service
 		for _, lc := range meta.Triggers.SupdLifecycle {
 			if lc.Event == req.Phase {
 				actionID := lc.Action
-				var actionArgs []string
 				if actionID == "" {
-					actionID, actionArgs = FindActionByID(meta, "")
+					actionID = FindActionByID(meta, "")
 				} else {
-					_, actionArgs = FindActionByID(meta, actionID)
+					FindActionByID(meta, actionID) // 仅校验存在性
 				}
 				return &matchedExtension{
 					extEntry:    extEntry,
 					actionID:    actionID,
-					actionArgs:  actionArgs,
 					serviceName: serviceName,
 					serviceSpec: serviceSpec,
 				}
@@ -294,19 +287,20 @@ func matchExtension(extEntry *watch.ExtensionEntry, req DispatchRequest, service
 
 // FindActionByID 查找 action
 // REQ-F-022: 根据 actionID 查找 action，id 为空时返回第一个 action
-func FindActionByID(meta *config.ExtensionMeta, actionID string) (string, []string) {
+// 返回 actionID（args 已删除，统一用 SUPD_ACTION 环境变量区分 action）
+func FindActionByID(meta *config.ExtensionMeta, actionID string) string {
 	if actionID != "" {
 		for _, a := range meta.Actions {
 			if a.ID == actionID {
-				return a.ID, a.Args
+				return a.ID
 			}
 		}
 	}
 	// 返回第一个 action
 	if len(meta.Actions) > 0 {
-		return meta.Actions[0].ID, meta.Actions[0].Args
+		return meta.Actions[0].ID
 	}
-	return "run", nil
+	return "run"
 }
 
 // groupByService 按服务名分组
@@ -423,7 +417,6 @@ func (d *Dispatcher) executeForService(ctx context.Context, serviceName string, 
 			ServiceSignal:   req.ServiceSignal,
 			RestartCount:    req.RestartCount,
 			ActionID:        ext.actionID,
-			ActionArgs:      ext.actionArgs,
 			WorkDir:         workDir,
 		}
 
@@ -469,6 +462,15 @@ func (d *Dispatcher) executeWithConcurrency(ctx context.Context, meta *config.Ex
 
 	// J-02-001: 构建合并后的环境变量（REQ-F-015 4层合并）
 	mergedEnvSlice := d.buildMergedEnv(tc.ServiceName, meta.Name)
+
+	// 合并运行时临时 Env（由前端"运行时参数编辑抽屉"传入）
+	// 追加到 mergedEnvSlice 之后，在 executor.go 中位于 supdEnv 之前，
+	// 确保：1) 覆盖 env.yaml 同名变量；2) 不能覆盖 SUPD_* 保护变量
+	if len(tc.TempEnv) > 0 {
+		for k, v := range tc.TempEnv {
+			mergedEnvSlice = append(mergedEnvSlice, fmt.Sprintf("%s=%s", k, v))
+		}
+	}
 
 	// 通过 tracker 执行，应用并发策略（replace/serialize/parallel/debounce）
 	// 传入 ctx 作为父 context，确保外部取消能传播到扩展任务

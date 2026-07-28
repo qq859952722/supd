@@ -542,8 +542,7 @@ func actionsEqual(a, b []config.Action) bool {
 	for i := range a {
 		if a[i].ID != b[i].ID ||
 			a[i].Label != b[i].Label ||
-			a[i].ButtonStyle != b[i].ButtonStyle ||
-			!sliceEqual(a[i].Args, b[i].Args) {
+			a[i].ButtonStyle != b[i].ButtonStyle {
 			return false
 		}
 	}

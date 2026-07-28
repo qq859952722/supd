@@ -280,53 +280,35 @@ func TestSupdEnvOnFailure(t *testing.T) {
 }
 
 // TestBuildCommand 测试命令构造
-// REQ-F-016, 2.2.5 第3步: <runtime 路径> entry args... 或 entry args...
+// REQ-F-016, 2.2.5 第3步: <runtime 路径> entry 或 entry
+// args 参数已删除：统一用 SUPD_ACTION 环境变量区分 action
 func TestBuildCommand(t *testing.T) {
 	tests := []struct {
 		name        string
 		runtime     string
 		runtimePath string
 		entry       string
-		args        []string
 		want        []string
 	}{
 		{
-			name:        "no runtime no args",
+			name:        "no runtime",
 			runtime:     "",
 			runtimePath: "",
 			entry:       "/bin/sh",
-			args:        nil,
 			want:        []string{"/bin/sh"},
 		},
 		{
-			name:        "no runtime with args",
-			runtime:     "",
-			runtimePath: "",
-			entry:       "/bin/sh",
-			args:        []string{"-c", "echo hello"},
-			want:        []string{"/bin/sh", "-c", "echo hello"},
-		},
-		{
-			name:        "with runtime no args",
+			name:        "with runtime",
 			runtime:     "python3",
 			runtimePath: "/usr/bin/python3",
 			entry:       "script.py",
-			args:        nil,
 			want:        []string{"/usr/bin/python3", "script.py"},
-		},
-		{
-			name:        "with runtime with args",
-			runtime:     "python3",
-			runtimePath: "/usr/bin/python3",
-			entry:       "script.py",
-			args:        []string{"--verbose", "input.txt"},
-			want:        []string{"/usr/bin/python3", "script.py", "--verbose", "input.txt"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := BuildCommand(tt.runtime, tt.runtimePath, tt.entry, tt.args)
+			got := BuildCommand(tt.runtime, tt.runtimePath, tt.entry)
 			if len(got) != len(tt.want) {
 				t.Errorf("expected %v, got %v", tt.want, got)
 				return

@@ -77,7 +77,6 @@ actions:
   - id: full-backup
     label: Full Backup
     button_style: danger
-    args: ["--full", "--compress"]
   - id: incr-backup
     label: Incremental Backup
 
@@ -140,9 +139,6 @@ triggers:
 	}
 	if meta.Actions[0].ButtonStyle != "danger" {
 		t.Errorf("Actions[0].ButtonStyle = %q, want danger", meta.Actions[0].ButtonStyle)
-	}
-	if len(meta.Actions[0].Args) != 2 {
-		t.Errorf("len(Actions[0].Args) = %d, want 2", len(meta.Actions[0].Args))
 	}
 	// action without explicit button_style inherits from ui.button_style
 	if meta.Actions[1].ButtonStyle != "primary" {

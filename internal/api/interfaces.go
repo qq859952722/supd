@@ -72,7 +72,7 @@ type ExtensionProvider interface {
 	UpdateExtension(name string, meta *config.ExtensionMeta, service string) error
 	DeleteExtension(name string, service string) error
 	SaveExtensionEnv(name string, envData *config.EnvFile, service string) error
-	RunExtension(ctx context.Context, name string, actionID string, service string, dryRun bool) (*extension.RunResult, error)
+	RunExtension(ctx context.Context, name string, actionID string, service string, dryRun bool, env map[string]string) (*extension.RunResult, error)
 	GetExtensionStatus(name string, service string) (map[string]any, error)
 	// ExportExtension、ImportExtension、ConfirmImport 已删除 — 由 handler 层直接操作 archive 包
 }

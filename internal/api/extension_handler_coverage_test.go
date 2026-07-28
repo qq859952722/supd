@@ -62,7 +62,7 @@ func (f *fakeExtensionProvider) SaveExtensionEnv(name string, envData *config.En
 	return f.saveEnvErr
 }
 
-func (f *fakeExtensionProvider) RunExtension(ctx context.Context, name string, actionID string, service string, dryRun bool) (*extension.RunResult, error) {
+func (f *fakeExtensionProvider) RunExtension(ctx context.Context, name string, actionID string, service string, dryRun bool, env map[string]string) (*extension.RunResult, error) {
 	return f.runResult, f.runErr
 }
 

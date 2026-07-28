@@ -19,7 +19,7 @@ supd 内置 [txiki.js](https://txiki.js.org/)（简称 tjs）作为 JavaScript �
 
 ### 调用方式
 
-supd 执行器通过 `BuildCommand` 构造命令：`[/usr/local/bin/tjs, run.js, ...args]`。
+supd 执行器通过 `BuildCommand` 构造命令：`[/usr/local/bin/tjs, run.js]`。action 区分通过 `SUPD_ACTION` 环境变量传递，不在命令行拼接参数。
 
 `/usr/local/bin/tjs` 是包装脚本，自动识别子命令：
 - `tjs run.js` → `tjs-bin run run.js`（自动补 `run` 子命令）
@@ -433,13 +433,16 @@ const status = await proc.wait();  // 等待退出，返回 {exitCode}
 
 ### 5.4 读取 action 参数
 
-supd 通过 `SUPD_ACTION` 环境变量传递当前 action ID，通过 `SUPD_ACTION_ARGS` 或命令行参数传递 args。在 tjs 中：
+supd 通过 `SUPD_ACTION` 环境变量传递当前 action ID。在 tjs 中：
 
 ```javascript
 const action = tjs.env.SUPD_ACTION;
-// action args 通过 tjs.args 传递（在 entry 之后）
-// tjs.args = ['tjs', 'run', 'run.js', ...actionArgs]
-const actionArgs = tjs.args.slice(3);  // 跳过 'tjs' 'run' 'run.js'
+// 根据 action 值分支处理
+if (action === 'backup') {
+  // 备份逻辑
+} else if (action === 'verify') {
+  // 验证逻辑
+}
 ```
 
 ---

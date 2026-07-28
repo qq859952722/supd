@@ -40,7 +40,7 @@
 | `ui.show_logs` | bool | `true` | 前端 UI 是否实时展示日志 |
 | `ui.button_style` | string | `"default"` | 前端按钮样式：`primary` / `default` / `danger` |
 | `ui.icon` | string | `""` | 前端图标名称 |
-| `actions` | list[struct] | `[]` | 扩展导出的 Action 动作列表（`id`, `label`, `button_style`, `args`） |
+| `actions` | list[struct] | `[]` | 扩展导出的 Action 动作列表（`id`, `label`, `button_style`） |
 | `triggers` | struct | nil | 触发器配置 |
 
 > **注意**：`actions[].icon` 字段为规格要求但代码暂未实现（详见偏差台账 DEV-012），配置时可省略该字段。`actions[].id` 必须唯一。

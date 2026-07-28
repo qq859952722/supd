@@ -2,12 +2,11 @@
 # demo-action: 通用 on-demand 手动扩展示例
 # 通过 SUPD_ACTION 区分动作；通过 SERVICE_PORT 配置关联服务的端口（默认 8080）
 ACTION="${SUPD_ACTION:-greet}"
-ARG1="${1:-}"
 PORT="${SERVICE_PORT:-8080}"
 
 case "$ACTION" in
     greet)
-        echo "Hello, ${ARG1:-World}! Greetings from demo-action."
+        echo "Hello, World! Greetings from demo-action."
         ;;
     status)
         echo "=== Service Status ==="

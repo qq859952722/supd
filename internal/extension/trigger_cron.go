@@ -130,7 +130,7 @@ func (ct *CronTrigger) executeRetry(ctx context.Context, extName, actionID strin
 		return
 	}
 
-	resolvedActionID, actionArgs := FindActionByID(extEntry.Meta, actionID)
+	resolvedActionID := FindActionByID(extEntry.Meta, actionID)
 	workDir := buildWorkDir(ct.scheduler.dispatcher.baseDir, extEntry)
 
 	// REQ-D-004: 每次重试生成新的 run_id（由 Executor.Execute 内部 uuid.New() 生成）
@@ -138,7 +138,6 @@ func (ct *CronTrigger) executeRetry(ctx context.Context, extName, actionID strin
 		EventType:     "on_schedule",
 		TriggerSource: "schedule", // A-04-003 修复：使用规格枚举值，不使用 "schedule_retry"
 		ActionID:      resolvedActionID,
-		ActionArgs:    actionArgs,
 		ServiceName:   svcName,
 		WorkDir:       workDir,
 	}

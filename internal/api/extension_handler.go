@@ -72,9 +72,11 @@ type ExtensionDetail struct {
 
 // RunExtensionRequest POST /api/extensions/{name}/run body
 // N-03-01 修复：支持 dry_run 字段（REQ-F-037 A.2）
+// Env 字段：运行时临时环境变量（仅本次执行，不持久化到 env.yaml）
 type RunExtensionRequest struct {
-	Action string `json:"action"`
-	DryRun bool   `json:"dry_run,omitempty"`
+	Action string            `json:"action"`
+	DryRun bool              `json:"dry_run,omitempty"`
+	Env    map[string]string `json:"env,omitempty"`
 }
 
 // ExtensionImportPreviewResponse 扩展导入预览响应（§2.12.5 两阶段导入）
@@ -362,7 +364,7 @@ func (s *Server) handleRunExtension(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := s.extProvider.RunExtension(r.Context(), name, req.Action, "", req.DryRun)
+	result, err := s.extProvider.RunExtension(r.Context(), name, req.Action, "", req.DryRun, req.Env)
 	if err != nil {
 		respondError(w, errors.ErrExtensionFailed, err.Error())
 		return
@@ -858,7 +860,7 @@ func (s *Server) handleRunServiceExtension(w http.ResponseWriter, r *http.Reques
 		req.DryRun = true
 	}
 
-	result, err := s.extProvider.RunExtension(r.Context(), extName, req.Action, svcName, req.DryRun)
+	result, err := s.extProvider.RunExtension(r.Context(), extName, req.Action, svcName, req.DryRun, req.Env)
 	if err != nil {
 		respondError(w, errors.ErrExtensionFailed, err.Error())
 		return

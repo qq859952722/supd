@@ -36,8 +36,9 @@ type TriggerContext struct {
 	RestartCount int
 	// ActionID action id
 	ActionID string
-	// ActionArgs action 的 args
-	ActionArgs []string
+	// TempEnv 运行时临时环境变量（仅本次执行，不持久化）
+	// 由前端"运行时参数编辑抽屉"传入，覆盖 env.yaml 同名变量
+	TempEnv map[string]string
 	// WorkDir 工作目录
 	// REQ-F-022: 扩展执行时的工作目录，非空时优先使用；为空时使用 Executor.baseDir
 	WorkDir string
@@ -100,9 +101,10 @@ func BuildSupdEnv(runID, extName string, tc TriggerContext) []string {
 }
 
 // BuildCommand 构造扩展执行命令
-// REQ-F-016, 2.2.5 第3步: <runtime 路径> entry args... 或 entry args...
-// runtime 为空时直接 entry args...，runtime 不为空时 runtimePath entry args...
-func BuildCommand(runtime string, runtimePath string, entry string, args []string) []string {
+// REQ-F-016, 2.2.5 第3步: <runtime 路径> entry 或 entry
+// runtime 为空时直接 entry，runtime 不为空时 runtimePath entry
+// args 参数已删除：统一用 SUPD_ACTION 环境变量区分 action
+func BuildCommand(runtime string, runtimePath string, entry string) []string {
 	var cmd []string
 
 	if runtime != "" {
@@ -110,7 +112,6 @@ func BuildCommand(runtime string, runtimePath string, entry string, args []strin
 	}
 
 	cmd = append(cmd, entry)
-	cmd = append(cmd, args...)
 
 	return cmd
 }

@@ -207,8 +207,8 @@ async function actionCheckUpdate() {
   }
 }
 
-async function actionInstall(actionArgs) {
-  const tag = actionArgs && actionArgs.length > 0 ? actionArgs[0] : CURRENT_TAG;
+async function actionInstall() {
+  const tag = tjs.env.INSTALL_TAG || CURRENT_TAG;
   console.log(`::progress:: 5 "安装指定版本: ${tag}"`);
 
   const release = await getReleaseByTag(tag);
@@ -249,8 +249,6 @@ async function actionInstallLatest() {
 // 主入口
 // ────────────────────────────────────────────────────────────
 const action = tjs.env.SUPD_ACTION || 'check-update';
-// action args 通过命令行传递（tjs.args = ['tjs','run','run.js', ...args]）
-const actionArgs = tjs.args.slice(3);
 
 console.log(`qbittorrent-updater 启动 (action=${action})`);
 console.log(`服务目录: ${SERVICE_DIR}`);
@@ -261,7 +259,7 @@ try {
       await actionCheckUpdate();
       break;
     case 'install':
-      await actionInstall(actionArgs);
+      await actionInstall();
       break;
     case 'install-latest':
       await actionInstallLatest();

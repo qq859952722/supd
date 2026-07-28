@@ -107,10 +107,47 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-28 | 镜像构建问题修复 | Debian 删除无效 shadow 包；手动 Alpine job 改为 alpine:3.20 内编译 musl tjs 并检查 ld-musl | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
 | 2026-07-28 | WASI 成品落地与调用修复 | Skill 内置 zstd/bsdtar WASI 成品；tjs v26.6.0 真实验证；修正 preopens、退出码和 transmission-updater 调用 | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
 | 2026-07-28 | 审计修复 + 运行状态测试 + v0.0.37 | 修复 10-binary-updater-ext 4 处缺陷（action/env、Buffer、exit_status、async getArch）+ transmission-updater exit_status；28 项运行测试全通过（D/A/B/C/E 五组） | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
+| 2026-07-28 | 扩展传参机制重构 + 删除 Action.Args | 删除 Action.Args 死代码（后端12文件+前端+规格+Skill文档）；新增运行时参数编辑抽屉（Drawer + EnvParamsDrawer），支持「保存」持久化/「运行」仅本次生效（TempEnv） | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-28 审计修复 + 运行状态测试 + v0.0.37）
+## 八、最近会话重点（2026-07-28 扩展传参机制重构 + 删除 Action.Args）
+
+### 背景：扩展传参三渠道梳理
+
+| 渠道 | 说明 | 状态 |
+|------|------|------|
+| `Action.Args` | meta.yaml 写死的 CLI 参数 | ❌ 死代码（19 个扩展均未使用），与 SUPD_ACTION 重复 → **已删除** |
+| `SUPD_ACTION` | supd 自动注入的环境变量 | ✅ 实际使用的 action 区分方式 |
+| `env.yaml` | 用户环境变量，前端 EnvTab 管理 | ✅ 保留，新增运行时临时编辑能力 |
+
+### 删除 Action.Args（后端 + 前端 + 规格 + 文档）
+
+- **后端 12 文件**：`config/extension.go` 删除 `Action.Args` 字段；`run_context.go` 删除 `ActionArgs`、新增 `TempEnv`、`BuildCommand` 移除 args 参数；`dispatcher.go` `FindActionByID` 简化为单返回值、`executeWithConcurrency` 合并 TempEnv；`trigger_on_demand.go`/`trigger_cron.go`/`cron_scheduler.go` 移除 actionArgs；`api/interfaces.go`+`extension_handler.go`+`extension_provider.go` `RunExtension` 签名新增 env 参数；`reload_classifier.go` 删除 Args 比较
+- **前端**：`ExtensionDetail.tsx` 删除 ConfigTab"参数"输入框；`ServiceDetail.tsx` 同步
+- **规格/文档**：需求规格说明_v1.5.md §2.2.3/§2.2.5/§2.2.17；Skill 02_extension_spec.md、06_tjs_runtime_guide.md、examples/README.md；qbittorrent-updater/run.js（tjs.args → SUPD_ACTION）；demo-action/meta.yaml
+
+### 新增运行时参数编辑抽屉
+
+- **新建** `web/src/components/ui/Drawer.tsx`（右侧滑入，非阻塞）+ `web/src/components/EnvParamsDrawer.tsx`
+- **抽屉行为**：action 按钮旁"编辑参数"图标打开抽屉 → 加载 env.yaml 变量为可编辑文本框 → 「保存」持久化到 env.yaml / 「运行」仅本次生效（通过 `TempEnv` 传入，不修改 env.yaml）
+- **TaskToast** `runExtension` 新增 `env?: Record<string, string>` 参数
+- **TempEnv 覆盖顺序**：`os.Environ → mergedEnv（4层 env.yaml）→ TempEnv（用户临时）→ supdEnv（SUPD_*）`，确保覆盖 env.yaml 同名变量但不覆盖 SUPD_* 保护变量
+
+### 验证
+
+- `go build ./...` ✅、`go vet ./...` ✅、`go test ./... -count=1` ✅
+- `cd web && pnpm build` ✅（16.93s）
+- 全项目无 ActionArgs/actionArgs/cli_args/SUPD_ACTION_ARGS 残留
+
+### 遗留事项
+
+- 端到端 UI 验证待下次会话启动 supd 实测（抽屉打开、保存、运行、临时 Env 覆盖）
+- 版本升级未执行（待用户确认是否本轮发版）
+
+---
+
+## 附：2026-07-28 审计修复 + 运行状态测试 + v0.0.37
 
 ### 审计修复（5 处）
 

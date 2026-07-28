@@ -1567,7 +1567,7 @@ func TestCoreExtensionProvider_RunExtension_NoExecutor(t *testing.T) {
 	p := &CoreExtensionProvider{
 		Discovery: &watch.DiscoveryResult{},
 	}
-	_, err := p.RunExtension(context.Background(), "ext1", "run", "", false)
+	_, err := p.RunExtension(context.Background(), "ext1", "run", "", false, nil)
 	if err == nil {
 		t.Errorf("RunExtension with nil Executor: expected error, got nil")
 	}
@@ -1582,7 +1582,7 @@ func TestCoreExtensionProvider_RunExtension_NotFound(t *testing.T) {
 		},
 		Executor: &extension.Executor{}, // 非 nil 占位
 	}
-	_, err := p.RunExtension(context.Background(), "nonexistent", "run", "", false)
+	_, err := p.RunExtension(context.Background(), "nonexistent", "run", "", false, nil)
 	if err == nil {
 		t.Errorf("RunExtension on missing ext: expected error, got nil")
 	}
@@ -1603,7 +1603,7 @@ func TestCoreExtensionProvider_RunExtension_DryRun(t *testing.T) {
 		Discovery: discovery,
 		Executor:  &extension.Executor{}, // dryRun 路径仅检查 nil
 	}
-	result, err := p.RunExtension(context.Background(), "ext1", "run", "", true)
+	result, err := p.RunExtension(context.Background(), "ext1", "run", "", true, nil)
 	if err != nil {
 		t.Fatalf("RunExtension dryRun: %v", err)
 	}

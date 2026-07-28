@@ -26,6 +26,7 @@ import { DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/Dialog'
 import { SkeletonCard } from '@/components/ui/Skeleton'
 import { toast } from '@/components/ui/Toast'
 import { useTaskToast } from '@/components/ui/TaskToast'
+import { EnvParamsDrawer } from '@/components/EnvParamsDrawer'
 import { useHTTPProbe, type ProbedPortInfo } from '@/lib/http-probe'
 import { getErrorMessage } from '@/lib/error-utils'
 import {
@@ -56,6 +57,7 @@ import {
   Pencil,
   ToggleRight,
   ToggleLeft,
+  Settings2,
 } from 'lucide-react'
 
 // 类型定义
@@ -143,9 +145,11 @@ interface ServiceExtensionSummary {
     supd_lifecycle?: Array<{ event: string; action: string }>
   }
   // 动作列表
-  actions?: Array<{ id: string; label?: string; button_style?: string; args?: string[] }>
+  actions?: Array<{ id: string; label?: string; button_style?: string }>
   // 并发策略
   concurrency?: string
+  // env.yaml 路径（非空表示有环境变量可编辑）
+  env_path?: string
 }
 
 // E-09-001: 扩展创建/编辑可视化表单数据
@@ -236,6 +240,10 @@ export function ServiceDetail() {
   // 编辑扩展时保存原有完整配置（防止完整更新丢失 triggers/actions/ui 等字段）
   const [extFormOriginal, setExtFormOriginal] = useState<Record<string, unknown> | null>(null)
   const [showExtDeleteDialog, setShowExtDeleteDialog] = useState<string | null>(null)
+  // 运行时参数编辑抽屉状态
+  const [envDrawerExt, setEnvDrawerExt] = useState<string | null>(null)
+  const [envDrawerAction, setEnvDrawerAction] = useState<string | undefined>(undefined)
+  const [envDrawerPath, setEnvDrawerPath] = useState<string | undefined>(undefined)
 
   // E-01-002 修复：区分加载态与错误态，避免404时永远显示 skeleton
   const { data: service, isLoading, isError } = useQuery({
@@ -1216,32 +1224,65 @@ export function ServiceDetail() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div className="flex flex-wrap gap-1 max-w-xs">
+                          <div className="flex flex-wrap items-center gap-1 max-w-xs">
                             {actionList.length > 0 ? (
                               actionList.map((act) => (
-                                <Button
-                                  key={act.id}
-                                  variant={actionButtonVariant(act.button_style)}
-                                  size="sm"
-                                  onClick={() => runExtensionWithLog(ext.name, act.id)}
-                                  disabled={!ext.enabled}
-                                  title={ext.enabled ? `运行 action: ${act.id}` : '扩展已禁用'}
-                                >
-                                  <Play className="h-3 w-3" />
-                                  {act.label || act.id}
-                                </Button>
+                                <div key={act.id} className="flex items-center gap-0.5">
+                                  <Button
+                                    variant={actionButtonVariant(act.button_style)}
+                                    size="sm"
+                                    onClick={() => runExtensionWithLog(ext.name, act.id)}
+                                    disabled={!ext.enabled}
+                                    title={ext.enabled ? `运行 action: ${act.id}` : '扩展已禁用'}
+                                  >
+                                    <Play className="h-3 w-3" />
+                                    {act.label || act.id}
+                                  </Button>
+                                  {ext.env_path && ext.enabled && (
+                                    <Button
+                                      variant="default"
+                                      size="sm"
+                                      className="px-1.5"
+                                      onClick={() => {
+                                        setEnvDrawerExt(ext.name)
+                                        setEnvDrawerAction(act.id)
+                                        setEnvDrawerPath(ext.env_path)
+                                      }}
+                                      title="编辑运行参数"
+                                    >
+                                      <Settings2 className="h-3 w-3" />
+                                    </Button>
+                                  )}
+                                </div>
                               ))
                             ) : (
-                              <Button
-                                variant="primary"
-                                size="sm"
-                                onClick={() => runExtensionWithLog(ext.name)}
-                                disabled={!ext.enabled}
-                                title={ext.enabled ? '运行扩展' : '扩展已禁用'}
-                              >
-                                <Play className="h-3 w-3" />
-                                运行
-                              </Button>
+                              <div className="flex items-center gap-0.5">
+                                <Button
+                                  variant="primary"
+                                  size="sm"
+                                  onClick={() => runExtensionWithLog(ext.name)}
+                                  disabled={!ext.enabled}
+                                  title={ext.enabled ? '运行扩展' : '扩展已禁用'}
+                                >
+                                  <Play className="h-3 w-3" />
+                                  运行
+                                </Button>
+                                {ext.env_path && ext.enabled && (
+                                  <Button
+                                    variant="default"
+                                    size="sm"
+                                    className="px-1.5"
+                                    onClick={() => {
+                                      setEnvDrawerExt(ext.name)
+                                      setEnvDrawerAction(undefined)
+                                      setEnvDrawerPath(ext.env_path)
+                                    }}
+                                    title="编辑运行参数"
+                                  >
+                                    <Settings2 className="h-3 w-3" />
+                                  </Button>
+                                )}
+                              </div>
                             )}
                           </div>
                         </TableCell>
@@ -1943,6 +1984,18 @@ export function ServiceDetail() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* 运行时参数编辑抽屉 — 服务级扩展 */}
+      {envDrawerExt && (
+        <EnvParamsDrawer
+          open={!!envDrawerExt}
+          onOpenChange={(v) => { if (!v) setEnvDrawerExt(null) }}
+          extensionName={envDrawerExt}
+          serviceName={serviceName}
+          envPath={envDrawerPath}
+          action={envDrawerAction}
+        />
       )}
     </div>
   )

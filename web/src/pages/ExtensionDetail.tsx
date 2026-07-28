@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { toast } from '@/components/ui/Toast'
 import { useTaskToast } from '@/components/ui/TaskToast'
+import { EnvParamsDrawer } from '@/components/EnvParamsDrawer'
 import { MonacoEditor } from '@/components/editor/MonacoEditor'
 import { t } from '@/lib/i18n'
 import { getErrorMessage } from '@/lib/error-utils'
@@ -45,6 +46,7 @@ import {
   Eraser,
   ChevronDown,
   ChevronRight,
+  Settings2,
 } from 'lucide-react'
 
 export interface TaskHistory {
@@ -77,7 +79,6 @@ interface ExtensionAction {
   label?: string
   icon?: string
   button_style?: 'primary' | 'default' | 'danger'
-  cli_args?: string[]
   enabled?: boolean
 }
 
@@ -85,6 +86,11 @@ function OverviewTab({ ext, name }: { ext: Record<string, unknown>; name: string
   const queryClient = useQueryClient()
   const { runExtension } = useTaskToast()
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [showEnvDrawer, setShowEnvDrawer] = useState(false)
+  const [drawerAction, setDrawerAction] = useState<string | undefined>(undefined)
+
+  // 检查是否有 env.yaml（env_path 非空即认为有环境变量）
+  const hasEnv = !!ext.env_path
 
   // E-02 修复：silent=true 避免与 onError 重复 toast，提取后端错误消息
   const toggleMutation = useMutation({
@@ -204,26 +210,52 @@ function OverviewTab({ ext, name }: { ext: Record<string, unknown>; name: string
               sortedActions
                 .filter((a) => a.enabled !== false)
                 .map((action) => (
-                  <Button
-                    key={action.id}
-                    variant={action.button_style ?? 'default'}
-                    size="sm"
-                    onClick={() => runExtension({ extensionName: name, action: action.id })}
-                  >
-                    <Play className="h-4 w-4" />
-                    {action.label ?? action.id}
-                  </Button>
+                  <div key={action.id} className="flex items-center gap-1">
+                    <Button
+                      variant={action.button_style ?? 'default'}
+                      size="sm"
+                      onClick={() => runExtension({ extensionName: name, action: action.id })}
+                    >
+                      <Play className="h-4 w-4" />
+                      {action.label ?? action.id}
+                    </Button>
+                    {/* 编辑参数按钮：仅当扩展有 env.yaml 时显示 */}
+                    {hasEnv && (
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={() => { setDrawerAction(action.id); setShowEnvDrawer(true) }}
+                        title="编辑运行参数"
+                        className="px-2"
+                      >
+                        <Settings2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
                 ))
             ) : (
               /* 没有 actions 时显示默认"运行"按钮 */
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => runExtension({ extensionName: name })}
-              >
-                <Play className="h-4 w-4" />
-                {t.extension.run}
-              </Button>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => runExtension({ extensionName: name })}
+                >
+                  <Play className="h-4 w-4" />
+                  {t.extension.run}
+                </Button>
+                {hasEnv && (
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => { setDrawerAction(undefined); setShowEnvDrawer(true) }}
+                    title="编辑运行参数"
+                    className="px-2"
+                  >
+                    <Settings2 className="h-3.5 w-3.5" />
+                  </Button>
+                )}
+              </div>
             )}
             {/* §2.2.16: 试运行模式 — 执行扩展但不产生实际副作用（用于测试） */}
             <Button
@@ -274,6 +306,17 @@ function OverviewTab({ ext, name }: { ext: Record<string, unknown>; name: string
           </div>
         </div>
       )}
+
+      {/* 运行时参数编辑抽屉 — 仅当扩展有 env.yaml 时可用 */}
+      {hasEnv && (
+        <EnvParamsDrawer
+          open={showEnvDrawer}
+          onOpenChange={setShowEnvDrawer}
+          extensionName={name}
+          envPath={ext.env_path ? String(ext.env_path) : undefined}
+          action={drawerAction}
+        />
+      )}
     </div>
   )
 }
@@ -311,7 +354,7 @@ interface ExtConfigForm {
   concurrency: string
   ui_show_logs: boolean
   ui_button_style: string
-  actions: Array<{ id: string; label: string; button_style: string; args: string }>
+  actions: Array<{ id: string; label: string; button_style: string }>
   triggers_on_demand: boolean
   triggers_on_schedule: Array<{ cron: string; action: string }>
   triggers_service_lifecycle: Array<{ event: string; action: string }>
@@ -400,11 +443,11 @@ function parseExtConfig(yaml: string): ExtConfigForm {
           if (gids.length) form.run_as_groups = gids.join(', ')
         } else if (currentSection === 'actions') {
           // 解析 actions 列表
-          let curAction: { id: string; label: string; button_style: string; args: string } | null = null
+          let curAction: { id: string; label: string; button_style: string } | null = null
           for (const bl of blockLines) {
             const bt = bl.trim()
             if (bt.startsWith('- ')) {
-              curAction = { id: '', label: '', button_style: '', args: '' }
+              curAction = { id: '', label: '', button_style: '' }
               form.actions.push(curAction)
               const rest = bt.slice(2).trim()
               if (rest.startsWith('id:')) curAction.id = String(parseYamlValue(rest.slice(3).trim()))
@@ -415,7 +458,6 @@ function parseExtConfig(yaml: string): ExtConfigForm {
               if (k === 'id') curAction.id = String(parseYamlValue(v))
               else if (k === 'label') curAction.label = String(parseYamlValue(v))
               else if (k === 'button_style') curAction.button_style = String(parseYamlValue(v))
-              else if (k === 'args') curAction.args = String(parseYamlValue(v))
             }
           }
         } else if (currentSection === 'triggers') {
@@ -511,7 +553,6 @@ function serializeExtConfig(form: ExtConfigForm): string {
       lines.push(`  - id: ${yamlStr(act.id)}`)
       if (act.label) lines.push(`    label: ${yamlStr(act.label)}`)
       if (act.button_style) lines.push(`    button_style: ${yamlStr(act.button_style)}`)
-      if (act.args) lines.push(`    args: ${yamlStr(act.args)}`)
     }
   }
 
@@ -865,7 +906,7 @@ function ConfigTab({ name, configPath }: { name: string; configPath?: string }) 
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle>Actions (动作按钮)</CardTitle>
-                <Button variant="default" size="sm" onClick={() => updateForm({ actions: [...form.actions, { id: '', label: '', button_style: 'default', args: '' }] })}>
+                <Button variant="default" size="sm" onClick={() => updateForm({ actions: [...form.actions, { id: '', label: '', button_style: 'default' }] })}>
                   <Plus className="h-3.5 w-3.5" /> 添加
                 </Button>
               </div>
@@ -880,18 +921,15 @@ function ConfigTab({ name, configPath }: { name: string; configPath?: string }) 
                       <div className="col-span-3">
                         <Input value={act.id} onChange={(e) => { const a = [...form.actions]; a[idx] = { ...act, id: e.target.value }; updateForm({ actions: a }) }} placeholder="ID" className="h-7 text-xs font-mono" />
                       </div>
-                      <div className="col-span-3">
+                      <div className="col-span-4">
                         <Input value={act.label} onChange={(e) => { const a = [...form.actions]; a[idx] = { ...act, label: e.target.value }; updateForm({ actions: a }) }} placeholder="标签" className="h-7 text-xs" />
                       </div>
-                      <div className="col-span-3">
+                      <div className="col-span-4">
                         <Select className="w-full" value={act.button_style} onChange={(e) => { const a = [...form.actions]; a[idx] = { ...act, button_style: e.target.value }; updateForm({ actions: a }) }} options={[
                           { value: 'primary', label: 'primary' },
                           { value: 'default', label: 'default' },
                           { value: 'danger', label: 'danger' },
                         ]} />
-                      </div>
-                      <div className="col-span-2">
-                        <Input value={act.args} onChange={(e) => { const a = [...form.actions]; a[idx] = { ...act, args: e.target.value }; updateForm({ actions: a }) }} placeholder="参数" className="h-7 text-xs font-mono" />
                       </div>
                       <div className="col-span-1 flex justify-center">
                         <Button variant="danger" size="sm" onClick={() => updateForm({ actions: form.actions.filter((_, i) => i !== idx) })}>

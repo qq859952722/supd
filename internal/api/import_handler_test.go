@@ -64,7 +64,7 @@ func (m *mockExtensionProvider) SaveExtensionEnv(name string, envData *config.En
 	return nil
 }
 
-func (m *mockExtensionProvider) RunExtension(ctx context.Context, name, actionID, service string, dryRun bool) (*extension.RunResult, error) {
+func (m *mockExtensionProvider) RunExtension(ctx context.Context, name, actionID, service string, dryRun bool, env map[string]string) (*extension.RunResult, error) {
 	return &extension.RunResult{}, nil
 }
 

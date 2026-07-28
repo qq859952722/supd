@@ -284,7 +284,7 @@ func (p *CoreExtensionProvider) SaveExtensionEnv(name string, envData *config.En
 	return os.WriteFile(envPath, data, 0644)
 }
 
-func (p *CoreExtensionProvider) RunExtension(ctx context.Context, name string, actionID string, service string, dryRun bool) (*extension.RunResult, error) {
+func (p *CoreExtensionProvider) RunExtension(ctx context.Context, name string, actionID string, service string, dryRun bool, env map[string]string) (*extension.RunResult, error) {
 	if p.Executor == nil {
 		return nil, fmt.Errorf("extension executor not configured")
 	}
@@ -298,7 +298,7 @@ func (p *CoreExtensionProvider) RunExtension(ctx context.Context, name string, a
 		return nil, fmt.Errorf("extension %s has no meta", name)
 	}
 
-	resolvedActionID, actionArgs := extension.FindActionByID(info.Meta, actionID)
+	resolvedActionID := extension.FindActionByID(info.Meta, actionID)
 	svcName := info.Service
 
 	// 预生成 run_id — 异步执行模式：
@@ -325,7 +325,7 @@ func (p *CoreExtensionProvider) RunExtension(ctx context.Context, name string, a
 		EventType:     "on_demand",
 		TriggerSource: "webui",
 		ActionID:      resolvedActionID,
-		ActionArgs:    actionArgs,
+		TempEnv:       env, // 运行时临时环境变量（仅本次执行，不持久化）
 		ServiceName:   svcName,
 		ServiceDir:    serviceDir,
 		ServiceSpec:   serviceSpec,

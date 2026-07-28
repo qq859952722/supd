@@ -93,14 +93,13 @@ func (s *CronScheduler) AddJob(extName, actionID, schedule string, retryCfg *Ret
 			return
 		}
 
-		resolvedActionID, actionArgs := FindActionByID(extEntry.Meta, actionID)
+		resolvedActionID := FindActionByID(extEntry.Meta, actionID)
 		workDir := buildWorkDir(s.dispatcher.baseDir, extEntry)
 
 		tc := TriggerContext{
 			EventType:     "on_schedule",
 			TriggerSource: "schedule",
 			ActionID:      resolvedActionID,
-			ActionArgs:    actionArgs,
 			ServiceName:   svcName,
 			WorkDir:       workDir,
 		}

@@ -42,20 +42,20 @@ func (t *OnDemandTrigger) Trigger(ctx context.Context, extName, actionID, trigge
 		return nil, fmt.Errorf("extension %s: on_demand trigger not enabled", extName)
 	}
 
-	// REQ-D-004: 验证 action 存在，并获取 action args
-	// triggers 中的 action 字段引用 actions 的 id，触发时使用对应 action 的 args
-	resolvedActionID, actionArgs := FindActionByID(extEntry.Meta, actionID)
+	// REQ-D-004: 验证 action 存在
+	// triggers 中的 action 字段引用 actions 的 id，触发时使用对应 action
+	resolvedActionID := FindActionByID(extEntry.Meta, actionID)
 	if actionID != "" && resolvedActionID != actionID {
 		return nil, fmt.Errorf("extension %s: action %s not found", extName, actionID)
 	}
 
 	// REQ-D-004: 精确触发指定扩展，直接执行
-	return t.triggerDirect(ctx, extEntry, resolvedActionID, actionArgs, svcName, triggerUser, triggerSource)
+	return t.triggerDirect(ctx, extEntry, resolvedActionID, svcName, triggerUser, triggerSource)
 }
 
 // triggerDirect 直接执行指定扩展的 on_demand 触发
 // REQ-D-004: 精确触发指定扩展，不经过 Dispatcher 的通用匹配逻辑
-func (t *OnDemandTrigger) triggerDirect(ctx context.Context, extEntry *watch.ExtensionEntry, actionID string, actionArgs []string, svcName, triggerUser, triggerSource string) (*RunResult, error) {
+func (t *OnDemandTrigger) triggerDirect(ctx context.Context, extEntry *watch.ExtensionEntry, actionID string, svcName, triggerUser, triggerSource string) (*RunResult, error) {
 	workDir := buildWorkDir(t.dispatcher.baseDir, extEntry)
 
 	// A-05-001 修复：TriggerSource 使用调用方传入的值（webui/cli），不再硬编码 "on_demand"
@@ -65,7 +65,6 @@ func (t *OnDemandTrigger) triggerDirect(ctx context.Context, extEntry *watch.Ext
 		TriggerSource: triggerSource,
 		TriggerUser:   triggerUser,
 		ActionID:      actionID,
-		ActionArgs:    actionArgs,
 		ServiceName:   svcName,
 		WorkDir:       workDir,
 	}

@@ -13,8 +13,8 @@ ui:
   button_style: primary
   icon: refresh
 
-# 三个 action：仅检查 / 仅安装（用默认版本，run.js 回退到 CURRENT_TAG） / 检查并安装最新版
-# 注意：按规格 §2.2.3，actions[].args 仅支持字符串数组，且明确禁止对象格式（id/label/type/default）；参数由扩展脚本自行解析，非暂不支持
+# 三个 action：仅检查 / 仅安装（通过 INSTALL_TAG 环境变量指定版本） / 检查并安装最新版
+# action 区分通过 SUPD_ACTION 环境变量，安装版本通过 env.yaml 的 INSTALL_TAG 指定
 actions:
   - id: check-update
     label: 检查更新

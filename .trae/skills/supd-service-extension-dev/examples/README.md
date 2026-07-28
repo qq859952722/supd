@@ -8,7 +8,7 @@
 |---|---|---|---|
 | 01 | `01-simple-service/` | 简单服务 | `http_check` readiness、Python HTTP 服务、stop/logging 配置 |
 | 02 | `02-complex-service/` | 复杂服务 | `tcp_check` readiness、`autostart`、command 数组、tags、`workdir` |
-| 03 | `03-on-demand-ext/` | on_demand 扩展 | 手动触发、多 action（greet/status）、action args、`button_style` |
+| 03 | `03-on-demand-ext/` | on_demand 扩展 | 手动触发、多 action（greet/status）、`SUPD_ACTION` 区分 action、`button_style` |
 | 04 | `04-scheduled-ext/` | on_schedule 扩展 | cron 定时触发（每分钟）、单 action |
 | 05 | `05-service-lifecycle-ext/` | service_lifecycle 扩展 | `post_ready`/`on_failure`/`pre_stop` 三种生命周期钩子 |
 | 06 | `06-supd-lifecycle-ext/` | supd_lifecycle 扩展 | `pre_start`/`post_ready`/`pre_shutdown` 钩子、parallel 并发、stdout 协议 |
