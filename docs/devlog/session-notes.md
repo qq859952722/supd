@@ -11,7 +11,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：⭐ 优秀（满分 100），1000+ 单元测试通过（Go + 前端），零竞态；staticcheck/go vet 零警告
-- **当前版本**：v0.0.36（版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.0.37（版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -106,16 +106,39 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-28 | WASM 工具推荐 + Debian 镜像变体 | WASI 兼容 WASM 工具调研与 Skill 文档更新；新增 Dockerfile.debian（bookworm-slim）；CI 支持双变体构建（Alpine+Debian） | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
 | 2026-07-28 | 镜像构建问题修复 | Debian 删除无效 shadow 包；手动 Alpine job 改为 alpine:3.20 内编译 musl tjs 并检查 ld-musl | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
 | 2026-07-28 | WASI 成品落地与调用修复 | Skill 内置 zstd/bsdtar WASI 成品；tjs v26.6.0 真实验证；修正 preopens、退出码和 transmission-updater 调用 | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
+| 2026-07-28 | 审计修复 + 运行状态测试 + v0.0.37 | 修复 10-binary-updater-ext 4 处缺陷（action/env、Buffer、exit_status、async getArch）+ transmission-updater exit_status；28 项运行测试全通过（D/A/B/C/E 五组） | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-28 WASI 成品落地与调用修复）
+## 八、最近会话重点（2026-07-28 审计修复 + 运行状态测试 + v0.0.37）
 
-- **镜像修复**：Debian 删除无效 `shadow` 包；手动 Alpine job 改为 `alpine:3.20` 内编译 musl tjs，缓存 key 区分变体并硬检查 `ld-musl`。
-- **Skill 成品**：新增 `zstd.wasm`（Zstandard 1.5.7）和 `bsdtar.wasm`（libarchive 3.8.7 + zstd），总计约 1.9 MiB；固定上游提交、SHA-256 和第三方许可证。
-- **本地真实验证**：从源码编译 txiki.js v26.6.0；zstd 33000 B 压缩往返一致，bsdtar 成功列出并解包 `.tar.zst` 且内容一致。
-- **语义修复**：指南改为按 WASI Preview1 ABI/imports 判断兼容性，明确显式 `preopens` 和退出码检查；`transmission-updater` 同步修复文件授权与非零退出码误判。
-- **回归验证**：Go build/vet/test、前端 build、扩展校验、`git diff --check`、全工作区 diagnostics 均通过；本机无 Docker daemon，未执行镜像实际构建。
+### 审计修复（5 处）
+
+| 编号 | 文件 | 修复 |
+|------|------|------|
+| F1 | `examples/10-binary-updater-ext/run.js` | `tjs.args[2]` → `tjs.env.SUPD_ACTION`（args[2] 取到的是脚本路径而非 action） |
+| F2 | `examples/10-binary-updater-ext/run.js` | `Buffer.concat` → `TextDecoder` 累加（tjs v26.6.0 无 Buffer 全局） |
+| F3 | `examples/10-binary-updater-ext/run.js` | `status !== 0` → `status.exit_status !== 0`（proc.wait 返回 `{exit_status, term_signal}`） |
+| F4 | `examples/10-binary-updater-ext/run.js` | `getArch()` 改 async + 读 `/proc/cpuinfo` 支持 aarch64；调用处加 `await` |
+| F5 | `dev_workspace/transmission/extensions/transmission-updater/run.js` | `status.exitCode` → `status.exit_status`（同 F3） |
+
+### 运行状态测试（28 项全通过）
+
+测试方案：`tmp/audit_fix_test_plan.md`（5 组）
+
+- **D 组**（回归）：go build/vet/test、pnpm build 16.4s、zstd 压缩往返（24000→34 B）、bsdtar 解包 .tar/.tar.zst ✅
+- **A 组**（10-binary-updater-ext 单元，11 项）：未设 action → "未知 action" +exit 1；check-update 缺 SERVICE_DIR → 报错；不可达 API → ::result:: failure；getArch 在 x86_64 正确；Buffer 全局不存在；proc.wait 返回 `{exit_status:7}` ✅
+- **B 组**（transmission-updater 单元，4 项）：check-update 输出 ::progress:: + ::result:: 协议；实际调用 GitHub API 返回 v4.1.3；runCmd 执行 `sh -c 'exit 3'` 返回 exitCode=3 ✅
+- **C 组**（端到端，3 项）：supd API 触发 tjs-test-ext success；触发 transmission-updater-test 返回 v4.1.3 warning；触发 binary-updater-test 验证 F1/F2 修复在 supd 注入环境变量下正确生效 ✅
+- **E 组**（协议检查，6 项）：binary-updater-test 输出 `::progress::N\|msg` + `::result::{json}`；transmission-updater-test 输出 `::progress:: N "msg"` + `::result:: status "msg"`；日志非空 ✅
+
+### 关键技术点
+
+- **tjs v26.6.0 的 proc.wait() 返回值结构**：`{exit_status: number|null, term_signal: number|null}`，**不是** Node.js 风格的 `exitCode`。误用字段名会导致 `undefined ?? 0 === 0`，将所有失败误判为成功。
+- **tjs v26.6.0 无 Buffer 全局**：`Buffer.concat`/`Buffer.from` 等不可用，必须用 `TextDecoder` 累加字符串或 `Uint8Array` 直接拼接。
+- **supd 扩展 action 注入**：通过 `SUPD_ACTION` 环境变量（非 CLI 参数），`SUPD_SERVICE_DIR` 自动注入给服务级扩展。
+- **bsdtar WASM 限制**：WASI 平台不支持 `archive_read_disk`，bsdtar.wasm 仅能**列出/解包**归档，不能创建归档。supd 扩展使用场景（解压远端下载的 .tar.xz/.zip）正好匹配。
+- **测试用临时扩展已清理**：transmission-updater-test（全局）和 binary-updater-test（tcp-echo 服务级）已从 test_workdir 移除。
 
 ### R-09 规格偏差处理（同日续）
 - **偏差一**：`ui.show_logs`/`ui.button_style` 代码已实现但规格未记录 → 已写入需求规格说明_v1.5.md L451-454

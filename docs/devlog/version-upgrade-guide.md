@@ -184,6 +184,7 @@ git push origin vX.Y.Z
 | 2026-07-26 | v0.0.34 | 服务详情页基本信息与元数据补充（显示名称、版本号与描述，补充 i18n 支持） |
 | 2026-07-28 | v0.0.35 | R-01/R-02 资源采集降级路径修复（NSpid 精确映射 + 完整 CPU/内存指标）；R-03/R-05 transmission-updater 改用 curl 流式落盘 + 按需依赖校验 + 严格架构识别；R-08 buildStopConfigs nil 防御 |
 | 2026-07-28 | v0.0.36 | 服务打包支持多 profile 规则文件（`package.<name>.yaml`，命名规范区分迁移/共享等场景）；前端导出对话框支持默认导出与按规则文件导出；Skill 优化：新增 `bin/`+`data/` 目录规范、`tjs.open` 流式下载代码段、二进制更新扩展示例（check-update/update/force-update） |
+| 2026-07-28 | v0.0.37 | 审计修复 `10-binary-updater-ext` 与 `transmission-updater` 运行时缺陷：`tjs.args[2]`→`tjs.env.SUPD_ACTION`、`Buffer.concat`→`TextDecoder` 累加、`proc.wait()` 返回值改用 `exit_status` 字段、`getArch()` 改为 async 并支持 aarch64；28 项运行状态测试全通过（D/A/B/C/E 五组） |
 
 
 

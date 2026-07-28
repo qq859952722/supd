@@ -43,7 +43,7 @@ async function runCmd(args, options = {}) {
   });
   const [stdout, stderr] = await Promise.all([readStream(proc.stdout), readStream(proc.stderr)]);
   const status = await proc.wait();
-  return { stdout, stderr, exitCode: status.exitCode ?? 0 };
+  return { stdout, stderr, exitCode: status.exit_status ?? 0 };
 }
 
 /** 使用 curl 直接流式下载到临时文件，成功后原子替换目标文件 */

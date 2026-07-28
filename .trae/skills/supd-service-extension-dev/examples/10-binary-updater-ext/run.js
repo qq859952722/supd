@@ -30,10 +30,15 @@ function result(ok, msg, data) {
 }
 
 /** 获取当前架构对应的资产标识 */
-function getArch() {
-  // tjs.system.cpus 是 Getter 属性
-  const arch = tjs.system.cpus?.[0]?.model ? 'x86_64' : 'x86_64';
-  // 简化：实际应通过 tjs.platform 或 uname 判断
+async function getArch() {
+  // 优先读 /proc/cpuinfo 判断 ARM 架构，回退到 x86_64
+  try {
+    const content = await tjs.readFile('/proc/cpuinfo');
+    const cpuinfo = typeof content === 'string' ? content : new TextDecoder().decode(content);
+    if (cpuinfo.includes('aarch64') || cpuinfo.includes('ARM') || cpuinfo.includes('Architecture: 8')) {
+      return 'aarch64';
+    }
+  } catch (e) {}
   return 'x86_64';
 }
 
@@ -49,20 +54,22 @@ async function extractFromArchive(archivePath, memberName, destPath) {
     readStream(proc.stderr),
   ]);
   const status = await proc.wait();
-  if (status !== 0) {
-    throw new Error(`tar 解压失败 (exit ${status}): ${stderr}`);
+  if (status.exit_status !== 0) {
+    throw new Error(`tar 解压失败 (exit ${status.exit_status}): ${stderr}`);
   }
 }
 
 async function readStream(stream) {
   const reader = stream.getReader();
-  const chunks = [];
+  const decoder = new TextDecoder();
+  let result = '';
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    chunks.push(value);
+    result += decoder.decode(value, { stream: true });
   }
-  return new TextDecoder().decode(Buffer.concat(chunks));
+  result += decoder.decode();
+  return result;
 }
 
 // ========== 流式下载（内存与文件大小无关） ==========
@@ -193,7 +200,7 @@ async function performUpdate(action) {
   progress(10, `开始下载 v${remoteVer}`);
   const downloadUrl = DOWNLOAD_URL_TEMPLATE
     .replace('{version}', remoteVer)
-    .replace('{arch}', getArch());
+    .replace('{arch}', await getArch());
 
   await downloadStream(downloadUrl, tmpArchive, {
     maxBytes: MAX_BYTES,
@@ -283,12 +290,13 @@ async function fileExists(p) {
 
 // ========== 主入口 ==========
 
-const action = tjs.args[2] || '';
+const action = tjs.env.SUPD_ACTION || '';
 log(`binary-updater 启动, action: ${action}`);
 
 try {
   if (action === 'check-update') {
     const serviceDir = tjs.env.SUPD_SERVICE_DIR;
+    if (!serviceDir) throw new Error('SUPD_SERVICE_DIR 未设置');
     const binPath = path.join(serviceDir, 'bin', BINARY_NAME);
     progress(50, '获取版本信息');
     const localVer = await getLocalVersion(binPath);
