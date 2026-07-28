@@ -11,6 +11,7 @@
 ```
 <baseDir>/services/<service-name>/
 ├── service.yaml              # 必需：服务元数据与配置
+├── README.md                 # 必需：中文服务说明与运维指引，不得包含敏感信息
 ├── env.yaml                  # 可选：服务专属环境变量（必须使用 env: 包装层）
 ├── bin/                      # 必需：版本化、可替换的程序载荷
 │   ├── <service-binary>      #   服务主程序（command 应直接指向 ./bin/<binary>）
@@ -30,7 +31,22 @@
 └── package.share.yaml        # 可选：共享导出规则（仅 bin/ 和 extensions/）
 ```
 
-### 1.1 bin/ 与 data/ 的边界
+### 1.1 README.md 规范
+
+每个生成的服务根目录**必须**创建 `README.md`，使用中文 Markdown，供部署、维护和交接使用。至少应以一级标题覆盖以下内容：
+
+1. `# 服务名称与版本`：服务名称、版本和一句话用途。
+2. `# 目录结构与权限边界`：说明目录结构，以及 `bin/`、`data/` 的读写和权限边界。
+3. `# 启动方式与就绪检测`：说明启动命令、必要前置条件与 readiness 检测方式。
+4. `# 配置与环境变量`：列出非敏感变量；敏感变量只能说明名称和用途，不能写入密钥值。
+5. `# 服务级扩展与 Actions`：列出服务级扩展及其 actions；没有时明确说明。
+6. `# 数据持久化与升级更新`：说明持久化位置，以及升级或更新时的保留、迁移和回滚要点。
+7. `# 常用运维操作`：给出启动、停止、重启与查看日志的方法。
+8. `# 安全与备份注意事项`：说明最小权限、敏感数据保护和备份建议。
+
+README **不得**包含真实密码、token、私钥或任何运行期敏感数据。
+
+### 1.2 bin/ 与 data/ 的边界
 
 | 文件类型 | 目录 | 原因 |
 |---|---|---|
@@ -44,10 +60,10 @@
 | 临时下载包、解压目录 | 系统临时目录（`tjs.tmpDir`） | 成功或失败后均清理 |
 | 服务日志 | supd 日志目录 | 不放入服务目录 |
 
-### 1.2 权限隔离
+### 1.3 权限隔离
 
 ```
-service.yaml、env.yaml、extensions/、package.*.yaml   管理员/supd 所有
+service.yaml、README.md、env.yaml、extensions/、package.*.yaml   管理员/supd 所有
 bin/                                                    root 或 supd 所有，服务用户只读和执行
 data/                                                   服务运行用户所有，可读写
 ```
@@ -57,7 +73,7 @@ data/                                                   服务运行用户所有
 - 如需调整属主，只处理 `data/`，**禁止** `chown -R <serviceDir>`（会让服务用户获得修改 `bin/` 和扩展脚本的权限）。
 - `bin/` 目录 `0755`，二进制 `0755`。
 
-### 1.3 command 指向
+### 1.4 command 指向
 
 `command` 应直接指向 `./bin/<binary>`，不增加只做转发的 `start.sh`。如需指定配置目录，通过命令行参数指向 `./data/config/`。
 
@@ -72,7 +88,7 @@ command:
 command: [./start.sh]
 ```
 
-### 1.4 可更新性评估
+### 1.5 可更新性评估
 
 开发服务时应明确标注是否支持二进制手动更新：
 
@@ -80,7 +96,7 @@ command: [./start.sh]
 - **不支持**：二进制由系统包管理器维护、下载页需浏览器交互、安装修改系统依赖等。
 - **暂不确定**：需要用户提供更新源/版本规则。
 
-### 1.5 打包导出规则
+### 1.6 打包导出规则
 
 服务支持多份打包规则文件（`package.<profile>.yaml`），详见需求规格说明 §2.12.2。
 
@@ -233,6 +249,7 @@ pending → starting → up → ready → stopping → down
 ## 5. service.yaml 检查清单
 
 - [ ] `name` 匹配 `^[a-z][a-z0-9-]*$` 且与所在目录名完全一致
+- [ ] 服务根目录包含中文 `README.md`，覆盖服务信息、目录权限、启动就绪、配置环境、扩展 actions、持久化升级、运维及安全备份，且不含敏感数据
 - [ ] `command` 为非空字符串数组，相对路径处于服务目录内
 - [ ] `readiness` 类型在 `fd_notify`/`tcp_check`/`http_check`/`script` 内
 - [ ] `readiness.type: script` 时，配置键名为 `check:` 而不是 `command:`

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -368,8 +369,15 @@ func TestRunExtRun_Success(t *testing.T) {
 	_, mux := newCLITestServer(t)
 	mux.HandleFunc("/api/extensions/ext1/run", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := readAll(r)
-		if !contains(string(body), `"action_id":"default"`) {
-			t.Errorf("run body = %s, 期望包含 action_id:default", body)
+		var payload map[string]any
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("unmarshal run body: %v", err)
+		}
+		if payload["action"] != "default" {
+			t.Errorf("action = %#v, want default", payload["action"])
+		}
+		if _, ok := payload["action_id"]; ok {
+			t.Errorf("run body must not contain action_id: %s", body)
 		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -387,12 +395,28 @@ func TestRunExtRun_WithEnv(t *testing.T) {
 	_, mux := newCLITestServer(t)
 	mux.HandleFunc("/api/extensions/ext1/run", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := readAll(r)
-		s := string(body)
-		if !contains(s, `"action_id":"default"`) {
-			t.Errorf("run body 缺少 action_id: %s", s)
+		var payload struct {
+			Action string            `json:"action"`
+			Env    map[string]string `json:"env"`
 		}
-		if !contains(s, `"FOO":"bar"`) || !contains(s, `"BAZ":"qux"`) {
-			t.Errorf("run body 缺少 env_overrides: %s", s)
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("unmarshal run body: %v", err)
+		}
+		if payload.Action != "default" {
+			t.Errorf("action = %q, want default", payload.Action)
+		}
+		if payload.Env["FOO"] != "bar" || payload.Env["BAZ"] != "qux" {
+			t.Errorf("env = %#v, want FOO=bar and BAZ=qux", payload.Env)
+		}
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(body, &raw); err != nil {
+			t.Fatalf("unmarshal raw run body: %v", err)
+		}
+		if _, ok := raw["action_id"]; ok {
+			t.Errorf("run body must not contain action_id: %s", body)
+		}
+		if _, ok := raw["env_overrides"]; ok {
+			t.Errorf("run body must not contain env_overrides: %s", body)
 		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))

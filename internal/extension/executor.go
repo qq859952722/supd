@@ -68,7 +68,7 @@ func (e *Executor) buildExecContext(runID string, meta *config.ExtensionMeta, tc
 	envSlice = append(envSlice, mergedEnv...)
 	envSlice = append(envSlice, supdEnv...)
 
-	// Step 3: 构造命令：<runtime 路径> entry args... 或 entry args...
+	// Step 3: 构造命令：<runtime 路径> entry 或 entry
 	// REQ-F-028, REQ-F-029: runtime 别名解析（三层来源：config > scan > builtin）
 	runtimePath := meta.Runtime
 	if meta.Runtime != "" && (e.runtimes != nil || e.discoveredRuntimes != nil) {

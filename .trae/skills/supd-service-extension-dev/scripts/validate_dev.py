@@ -28,6 +28,16 @@ ALLOWED_SIGNALS = {"HUP", "INT", "QUIT", "USR1", "USR2", "PIPE", "ALRM", "CHLD"}
 VALID_SERVICE_LIFECYCLE_EVENTS = {"pre_start", "post_ready", "on_failure", "pre_stop"}
 VALID_SUPD_LIFECYCLE_EVENTS = {"pre_start", "post_ready", "pre_shutdown"}
 MAX_TIMEOUT_SECONDS = 1800
+README_REQUIRED_SECTIONS = (
+    "服务名称与版本",
+    "目录结构与权限边界",
+    "启动方式与就绪检测",
+    "配置与环境变量",
+    "服务级扩展与 Actions",
+    "数据持久化与升级更新",
+    "常用运维操作",
+    "安全与备份注意事项",
+)
 
 
 def log_pass(msg):
@@ -88,6 +98,20 @@ def validate_service(service_dir):
     if not service_yaml.exists():
         log_fail("未找到 service.yaml 文件")
         return False
+
+    valid = True
+    readme = service_dir / "README.md"
+    if not readme.exists():
+        log_fail("服务根目录缺少必需的 README.md")
+        valid = False
+    else:
+        readme_content = readme.read_text(encoding="utf-8")
+        for section in README_REQUIRED_SECTIONS:
+            if not re.search(rf"^#\s+{re.escape(section)}\s*$", readme_content, re.MULTILINE):
+                log_fail(f"README.md 缺少必需一级标题: {section}")
+                valid = False
+        if valid:
+            log_pass("README.md 包含服务规范要求的一级标题")
 
     content = service_yaml.read_text(encoding="utf-8")
 
@@ -154,7 +178,7 @@ def validate_service(service_dir):
 
     # 6. 目录布局建议（bin/ + data/ 规范，仅 warning 不 fail）
     check_service_layout(service_dir, content)
-    return True
+    return valid
 
 
 def check_service_layout(service_dir, service_yaml_content):
@@ -167,7 +191,7 @@ def check_service_layout(service_dir, service_yaml_content):
         # 检查根目录是否有散落的二进制或脚本
         root_files = [f for f in service_dir.iterdir()
                       if f.is_file() and f.name not in
-                      ("service.yaml", "env.yaml") and not f.name.startswith("package.")]
+                      ("service.yaml", "env.yaml", "README.md") and not f.name.startswith("package.")]
         if root_files:
             log_warn(f"根目录有散落文件 {len(root_files)} 个，建议移入 bin/（程序）或 data/（数据）")
             for f in root_files[:5]:
@@ -314,14 +338,16 @@ def main():
     is_ext = (target_dir / "meta.yaml").exists()
 
     if is_svc:
-        validate_service(target_dir)
+        valid = validate_service(target_dir)
     elif is_ext:
-        validate_extension(target_dir)
+        valid = validate_extension(target_dir)
     else:
         log_fail("目标目录下既无 service.yaml 也无 meta.yaml")
         sys.exit(1)
 
     run_supd_validate(target_dir)
+    if not valid:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

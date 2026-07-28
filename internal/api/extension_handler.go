@@ -24,18 +24,18 @@ import (
 // ExtensionSummary 扩展列表项
 // REQ-2.2.14: 扩展列表展示含状态、运行历史、触发时机
 type ExtensionSummary struct {
-	Name         string             `json:"name"`
-	Version      string             `json:"version"`
-	Description  string             `json:"description,omitempty"`
-	Enabled      bool               `json:"enabled"`
-	DisplayState string             `json:"display_state"`
-	TriggerType  string             `json:"trigger_type"`
-	Service      string             `json:"service,omitempty"`
-	RunCount     int                `json:"run_count"`
-	SuccessCount int                `json:"success_count"`
-	FailCount    int                `json:"fail_count"`
-	LastRunAt    string             `json:"last_run_at,omitempty"`
-	LastStatus   string             `json:"last_status,omitempty"`
+	Name         string `json:"name"`
+	Version      string `json:"version"`
+	Description  string `json:"description,omitempty"`
+	Enabled      bool   `json:"enabled"`
+	DisplayState string `json:"display_state"`
+	TriggerType  string `json:"trigger_type"`
+	Service      string `json:"service,omitempty"`
+	RunCount     int    `json:"run_count"`
+	SuccessCount int    `json:"success_count"`
+	FailCount    int    `json:"fail_count"`
+	LastRunAt    string `json:"last_run_at,omitempty"`
+	LastStatus   string `json:"last_status,omitempty"`
 	// 完整触发器配置，便于前端展示所有触发条件（on_demand/on_schedule/service_lifecycle/supd_lifecycle）
 	Triggers *config.Triggers `json:"triggers,omitempty"`
 	// 动作列表，便于前端展示可执行的操作按钮
@@ -45,6 +45,7 @@ type ExtensionSummary struct {
 	// 运行时和入口（便于前端快速识别扩展用途）
 	Runtime string `json:"runtime,omitempty"`
 	Entry   string `json:"entry,omitempty"`
+	EnvPath string `json:"env_path,omitempty"`
 	// ConfigErrors 配置错误列表（meta.yaml 解析失败或 trigger.action 引用不存在时填充）
 	// R-06 修复：暴露给前端用于在列表显示错误诊断图标，避免"扩展消失且无提示"
 	ConfigErrors []string `json:"config_errors,omitempty"`
@@ -52,22 +53,22 @@ type ExtensionSummary struct {
 
 // ExtensionDetail 扩展详情
 type ExtensionDetail struct {
-	Name             string                `json:"name"`
-	Version          string                `json:"version"`
-	Description      string                `json:"description,omitempty"`
-	Enabled          bool                  `json:"enabled"`
-	Config           *config.ExtensionMeta `json:"config,omitempty"`
-	DisplayState     string                `json:"display_state"`
-	TriggerType      string                `json:"trigger_type,omitempty"`
-	Concurrency      string                `json:"concurrency,omitempty"`
-	RunCount         int                   `json:"run_count"`
-	SuccessCount     int                   `json:"success_count"`
-	FailCount        int                   `json:"fail_count"`
-	Actions          []config.Action       `json:"actions,omitempty"`
-	ConfigErrors     []string              `json:"config_errors,omitempty"`
-	ConfigPath       string                `json:"config_path,omitempty"`
-	EnvPath          string                `json:"env_path,omitempty"`
-	Service          string                `json:"service,omitempty"`
+	Name         string                `json:"name"`
+	Version      string                `json:"version"`
+	Description  string                `json:"description,omitempty"`
+	Enabled      bool                  `json:"enabled"`
+	Config       *config.ExtensionMeta `json:"config,omitempty"`
+	DisplayState string                `json:"display_state"`
+	TriggerType  string                `json:"trigger_type,omitempty"`
+	Concurrency  string                `json:"concurrency,omitempty"`
+	RunCount     int                   `json:"run_count"`
+	SuccessCount int                   `json:"success_count"`
+	FailCount    int                   `json:"fail_count"`
+	Actions      []config.Action       `json:"actions,omitempty"`
+	ConfigErrors []string              `json:"config_errors,omitempty"`
+	ConfigPath   string                `json:"config_path,omitempty"`
+	EnvPath      string                `json:"env_path,omitempty"`
+	Service      string                `json:"service,omitempty"`
 }
 
 // RunExtensionRequest POST /api/extensions/{name}/run body
@@ -111,6 +112,7 @@ func (s *Server) handleListExtensions(w http.ResponseWriter, r *http.Request) {
 			FailCount:    ext.FailCount,
 			LastRunAt:    ext.LastRunAt,
 			LastStatus:   ext.LastStatus,
+			EnvPath:      s.stripWorkdirPrefix(ext.EnvPath),
 			ConfigErrors: ext.ConfigErrors,
 		}
 		// D-05-001 设计说明：当 ext.Meta 为 nil（meta.yaml 解析失败）时，
@@ -657,6 +659,7 @@ func (s *Server) handleListServiceExtensions(w http.ResponseWriter, r *http.Requ
 				FailCount:    ext.FailCount,
 				LastRunAt:    ext.LastRunAt,
 				LastStatus:   ext.LastStatus,
+				EnvPath:      s.stripWorkdirPrefix(ext.EnvPath),
 				ConfigErrors: ext.ConfigErrors,
 			}
 			if ext.Meta != nil {
@@ -858,6 +861,27 @@ func (s *Server) handleRunServiceExtension(w http.ResponseWriter, r *http.Reques
 	// dry_run 支持通过 query string 传递（规格 §2.2.16）：?dry_run=true
 	if q := r.URL.Query().Get("dry_run"); q == "true" || q == "1" {
 		req.DryRun = true
+	}
+
+	info, ok := s.extProvider.GetExtension(extName)
+	if !ok || info.Service != svcName {
+		respondError(w, errors.ErrExtensionNotFound, "extension not found")
+		return
+	}
+	if req.Action != "" && info.Meta != nil {
+		found := false
+		for _, a := range info.Meta.Actions {
+			if a.ID == req.Action {
+				found = true
+				break
+			}
+		}
+		if !found {
+			respondFieldErrors(w, errors.ErrInvalidRequest,
+				fmt.Sprintf("action %q not found in extension %s", req.Action, extName),
+				errors.FieldError{Field: "action", Message: fmt.Sprintf("unknown action: %s", req.Action)})
+			return
+		}
 	}
 
 	result, err := s.extProvider.RunExtension(r.Context(), extName, req.Action, svcName, req.DryRun, req.Env)

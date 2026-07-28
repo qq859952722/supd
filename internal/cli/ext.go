@@ -110,7 +110,7 @@ func runExtRun(cmd *cobra.Command, args []string) error {
 
 	name := args[0]
 	body := map[string]any{
-		"action_id": extAction,
+		"action": extAction,
 	}
 	if len(extEnv) > 0 {
 		envMap := make(map[string]string)
@@ -120,7 +120,7 @@ func runExtRun(cmd *cobra.Command, args []string) error {
 				envMap[parts[0]] = parts[1]
 			}
 		}
-		body["env_overrides"] = envMap
+		body["env"] = envMap
 	}
 
 	var result map[string]any

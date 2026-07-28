@@ -11,7 +11,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：⭐ 优秀（满分 100），1000+ 单元测试通过（Go + 前端），零竞态；staticcheck/go vet 零警告
-- **当前版本**：v0.0.37（版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.0.38（版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -108,10 +108,19 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-28 | WASI 成品落地与调用修复 | Skill 内置 zstd/bsdtar WASI 成品；tjs v26.6.0 真实验证；修正 preopens、退出码和 transmission-updater 调用 | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
 | 2026-07-28 | 审计修复 + 运行状态测试 + v0.0.37 | 修复 10-binary-updater-ext 4 处缺陷（action/env、Buffer、exit_status、async getArch）+ transmission-updater exit_status；28 项运行测试全通过（D/A/B/C/E 五组） | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
 | 2026-07-28 | 扩展传参机制重构 + 删除 Action.Args | 删除 Action.Args 死代码（后端12文件+前端+规格+Skill文档）；新增运行时参数编辑抽屉（Drawer + EnvParamsDrawer），支持「保存」持久化/「运行」仅本次生效（TempEnv） | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
+| 2026-07-28 | 扩展参数运行测试 + Skill README 规范 + v0.0.38 | 修复 CLI 契约、相对 env_path、服务级未知 action 回退；TempEnv/保存/CLI E2E 与完整回归通过；Skill 强制 8 节 README | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-28 扩展传参机制重构 + 删除 Action.Args）
+## 八、最近会话重点（2026-07-28 扩展参数运行测试 + Skill README 规范 + v0.0.38）
+
+### 本次完成
+
+- **Skill README 规范**：生成服务时必须创建中文 README，包含服务版本、目录权限、启动就绪、配置环境、扩展 Actions、持久化升级、运维、安全备份 8 个一级标题；校验器正反例通过。
+- **审计修复**：CLI 请求统一为 `action`/`env`；扩展列表返回相对 `env_path`；服务级端点增加扩展归属和 action 校验，未知 action 返回 400；规格附录同步实际 API 字段。
+- **真实运行验证**：supd/web-demo 健康且 ready；greet/status action、TempEnv 临时覆盖不落盘、SUPD_* 保护、文件 API 保存、CLI 含等号 env 均通过；测试数据已清理。
+- **完整回归**：go build/vet/test、pnpm build、git diff --check 全通过；v0.0.38 ldflags 版本注入验证通过。
+- **发版状态**：README 与版本升级指南已更新至 v0.0.38，待提交、推送 main 和 annotated tag。
 
 ### 背景：扩展传参三渠道梳理
 

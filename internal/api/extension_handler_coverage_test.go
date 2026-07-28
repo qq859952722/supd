@@ -14,8 +14,8 @@ import (
 	"testing"
 
 	"github.com/supdorg/supd/internal/config"
-	"github.com/supdorg/supd/internal/extension"
 	"github.com/supdorg/supd/internal/errors"
+	"github.com/supdorg/supd/internal/extension"
 )
 
 // ---- fake ExtensionProvider（嵌入接口以满足契约，仅覆盖测试所需方法）----
@@ -29,6 +29,9 @@ type fakeExtensionProvider struct {
 	saveEnvErr error
 	runErr     error
 	runResult  *extension.RunResult
+	runAction  string
+	runService string
+	runEnv     map[string]string
 	statusErr  error
 	statusVal  map[string]any
 }
@@ -63,6 +66,9 @@ func (f *fakeExtensionProvider) SaveExtensionEnv(name string, envData *config.En
 }
 
 func (f *fakeExtensionProvider) RunExtension(ctx context.Context, name string, actionID string, service string, dryRun bool, env map[string]string) (*extension.RunResult, error) {
+	f.runAction = actionID
+	f.runService = service
+	f.runEnv = env
 	return f.runResult, f.runErr
 }
 
@@ -358,7 +364,7 @@ func TestCreateExtension(t *testing.T) {
 func TestUpdateExtension(t *testing.T) {
 	fp := &fakeExtensionProvider{
 		exts: map[string]*ExtensionInfo{
-			"ext-a": {Name: "ext-a", Version: "1.0", Enabled: true, Meta: &config.ExtensionMeta{Name: "ext-a", Entry: "run.sh"}},
+			"ext-a":   {Name: "ext-a", Version: "1.0", Enabled: true, Meta: &config.ExtensionMeta{Name: "ext-a", Entry: "run.sh"}},
 			"ext-nil": {Name: "ext-nil", Version: "1.0", Enabled: true, Meta: nil},
 		},
 	}
@@ -711,6 +717,7 @@ func TestServiceScopedExtensionHandlers(t *testing.T) {
 		runResult: &extension.RunResult{},
 	}
 	server := newExtensionTestServer(t, fp)
+	fp.exts["ext-a"].EnvPath = filepath.Join(server.pathValidator.baseDir, "services", "svc-a", "extensions", "ext-a", "env.yaml")
 
 	// list（仅返回 svc-a 的扩展）
 	resp := doAPICall(t, server, http.MethodGet, "/api/services/svc-a/extensions", nil)
@@ -721,6 +728,9 @@ func TestServiceScopedExtensionHandlers(t *testing.T) {
 	json.Unmarshal(resp.Body.Bytes(), &list)
 	if len(list) != 1 || list[0].Name != "ext-a" {
 		t.Errorf("svc-a ext list = %+v, want [ext-a]", list)
+	}
+	if len(list) == 1 && list[0].EnvPath != "services/svc-a/extensions/ext-a/env.yaml" {
+		t.Errorf("svc-a ext env_path = %q", list[0].EnvPath)
 	}
 
 	// get（service 匹配）→ 200
@@ -761,10 +771,26 @@ func TestServiceScopedExtensionHandlers(t *testing.T) {
 		t.Errorf("delete svc ext: expected 204, got %d", resp.Code)
 	}
 
-	// run（空 body 允许）→ 200
-	resp = doAPICall(t, server, http.MethodPost, "/api/services/svc-a/extensions/ext-a/run", []byte(""))
+	// run：action 与临时环境变量透传给 provider
+	runBody := []byte(`{"action":"a","env":{"FOO":"temporary"}}`)
+	resp = doAPICall(t, server, http.MethodPost, "/api/services/svc-a/extensions/ext-a/run", runBody)
 	if resp.Code != http.StatusOK {
 		t.Errorf("run svc ext: expected 200, got %d (body: %s)", resp.Code, resp.Body.String())
+	}
+	if fp.runAction != "a" || fp.runService != "svc-a" || fp.runEnv["FOO"] != "temporary" {
+		t.Errorf("run svc ext args = action:%q service:%q env:%v", fp.runAction, fp.runService, fp.runEnv)
+	}
+
+	// 不存在的 action 必须拒绝，不能静默回退到首个 action
+	resp = doAPICall(t, server, http.MethodPost, "/api/services/svc-a/extensions/ext-a/run", []byte(`{"action":"missing"}`))
+	if resp.Code != http.StatusBadRequest {
+		t.Errorf("run svc ext unknown action: expected 400, got %d (body: %s)", resp.Code, resp.Body.String())
+	}
+
+	// 服务不匹配时按不存在处理
+	resp = doAPICall(t, server, http.MethodPost, "/api/services/other/extensions/ext-a/run", []byte(`{"action":"a"}`))
+	if resp.Code != http.StatusNotFound {
+		t.Errorf("run svc ext mismatch: expected 404, got %d (body: %s)", resp.Code, resp.Body.String())
 	}
 }
 
