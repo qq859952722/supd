@@ -203,7 +203,7 @@ jobs:
             debian:bookworm-slim bash -c '
               set -e
               apt-get update && apt-get install --no-install-recommends -y \
-                build-essential cmake ninja-build \
+                build-essential cmake ninja-build file \
                 git ca-certificates \
                 libcurl4-openssl-dev libffi-dev libssl-dev zlib1g-dev
               git clone --recursive --depth 1 --branch "${TJS_VERSION}" \

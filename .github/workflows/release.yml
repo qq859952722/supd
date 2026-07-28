@@ -165,7 +165,7 @@ jobs:
               set -e
               echo "=== 安装编译依赖（Debian）==="
               apt-get update && apt-get install --no-install-recommends -y \
-                build-essential cmake ninja-build \
+                build-essential cmake ninja-build file \
                 git ca-certificates \
                 libcurl4-openssl-dev libffi-dev libssl-dev zlib1g-dev
 
