@@ -866,3 +866,135 @@ await tjs.writeFile('/tmp/tjs-demo.txt', encoder.encode('hello from tjs\n'));
 console.log('::progress:: 100 "完成"');
 console.log('::result:: success "tjs demo done"');
 ```
+
+---
+
+## 11. WASM 工具使用指南
+
+tjs 内置 WebAssembly 全局 API 和 `tjs:wasi` 模块，可加载并执行 WASI 编译的 `.wasm` 文件。
+
+> **兼容条件**：模块必须使用 tjs 支持的 WASI Preview 1 ABI（通常导入 `wasi_snapshot_preview1`），且所需 WebAssembly 特性受 tjs 内置 WAMR 支持。产物可以来自 wasi-sdk、Rust `wasm32-wasip1`、Zig、TinyGo 等工具链。普通 Emscripten npm 包通常依赖配套 JS glue，不能把其中的 `.wasm` 单独交给 `tjs:wasi` 执行。
+>
+> `wasm-objdump -x tool.wasm` 可用于查看 imports，但不能仅凭出现 `env` 就断定模块来自 Emscripten。实际兼容性取决于 `wasi.getImportObject()` 与调用方能否满足模块的全部 imports。
+
+### 11.1 WASM 调用模板
+
+```javascript
+import { WASI } from 'tjs:wasi';
+
+// 1. 读取 .wasm 文件
+const wasmPath = '/etc/supd/runtimes/example.wasm';
+const wasmBytes = await tjs.readFile(wasmPath);
+
+// 2. 创建 WASI 实例。文件型 CLI 必须显式授权目录。
+const wasi = new WASI({
+  version: 'wasi_snapshot_preview1',
+  args: ['example', '--input', '/work/input.dat'], // args[0] = 程序名
+  env: tjs.env,
+  preopens: {
+    '/work': '/实际宿主目录', // guest 路径 -> host 路径
+  },
+  returnOnExit: true,
+});
+
+// 3. 编译并实例化
+const { instance } = await WebAssembly.instantiate(wasmBytes, wasi.getImportObject());
+
+// 4. 启动并检查退出码
+const exitCode = wasi.start(instance);
+if (exitCode !== 0) throw new Error(`WASM 工具退出码 ${exitCode}`);
+```
+
+**库模式 WASM**（导出自定义函数而非 `_start`）：
+
+```javascript
+const { instance } = await WebAssembly.instantiate(wasmBytes, wasi.getImportObject());
+// 不调用 wasi.start()，直接调用导出函数
+const result = instance.exports.my_function(...args);
+```
+
+### 11.2 Skill 内置成品（必要时直接使用）
+
+Skill 已随附两个经过 **txiki.js v26.6.0 本地实测**的 WASI CLI，位于 `assets/wasm/`。开发扩展时可直接复制到扩展目录，或上传到 supd 的 `runtimes/`，无需重新编译。
+
+| 文件 | 能力 | 版本与体积 | SHA-256 |
+|------|------|------------|---------|
+| `zstd.wasm` | `.zst` 压缩/解压 | Zstandard 1.5.7，682032 B | `fd3a74f1588a347638543955e848efc4c4b77616fe50c47d19e909b2ee24a4fa` |
+| `bsdtar.wasm` | 创建/列出/解包 tar；此裁剪版仅内置 zstd filter，适合 `.tar.zst` | bsdtar/libarchive 3.8.7，1240004 B | `e13ebb15ca0971f6629a6313bc043c532dd9be3a0e6bb0b7f8a395de835ad0c0` |
+
+固定来源为 [haskell-wasm/bsdtar-wasm@012117d](https://github.com/haskell-wasm/bsdtar-wasm/commit/012117de366c13285036f37b4fcd9a59d1a06fbb)。两个模块均只导入 `wasi_snapshot_preview1`，无 Node、DOM 或 Emscripten JS glue 依赖；启用了 `simd128`。第三方许可见同目录 `THIRD_PARTY_LICENSES.txt`。
+
+**直接复制和部署**：
+
+```bash
+# 在 Skill 根目录执行；也可只复制其中一个
+cp assets/wasm/zstd.wasm /etc/supd/runtimes/zstd.wasm
+cp assets/wasm/bsdtar.wasm /etc/supd/runtimes/bsdtar.wasm
+```
+
+#### zstd.wasm 调用示例
+
+```javascript
+import { WASI } from 'tjs:wasi';
+
+const hostDir = tjs.env.SUPD_SERVICE_DIR;
+const wasi = new WASI({
+  version: 'wasi_snapshot_preview1',
+  args: ['zstd', '-d', '-f', '/work/package.zst', '-o', '/work/package'],
+  env: tjs.env,
+  preopens: { '/work': hostDir },
+  returnOnExit: true,
+});
+const bytes = await tjs.readFile('/etc/supd/runtimes/zstd.wasm');
+const { instance } = await WebAssembly.instantiate(bytes, wasi.getImportObject());
+const exitCode = wasi.start(instance);
+if (exitCode !== 0) throw new Error(`zstd.wasm 解压失败：${exitCode}`);
+```
+
+`bsdtar.wasm` 用法相同，只需将参数改成例如：
+
+```javascript
+args: ['bsdtar', '-xf', '/work/package.tar.zst', '-C', '/work/output']
+```
+
+本地验收已完成：`zstd.wasm` 对 33000 B 文本压缩后解压逐字节一致；`bsdtar.wasm` 成功列出并解包 `.tar.zst`，且校验了解包文件内容。两项测试均由本地源码编译的 tjs v26.6.0 执行。
+
+**不要直接使用**只从 npm 包中取出的 `7z-wasm`、`jq-wasm`、`sevenzip-wasm`、`ffmpeg.wasm` 等文件；这些项目通常需要其配套 Emscripten JS glue。`rockwotj/jq-wasi` 的 Release 只有 libjq 静态库，并非可直接 `wasi.start()` 的 jq CLI 成品。
+
+### 11.3 自编译 WASI 工具
+
+推荐使用 [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) 将 C/Rust 工具编译为 .wasm：
+
+```bash
+# 安装 wasi-sdk（以 v25 为例）
+wget https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-linux.tar.gz
+tar xf wasi-sdk-25.0-x86_64-linux.tar.gz
+export WASI_SDK_PATH=/opt/wasi-sdk-25.0
+
+# 编译 C 程序为 WASI .wasm
+${WASI_SDK_PATH}/bin/clang \
+  --sysroot=${WASI_SDK_PATH}/share/wasi-sysroot \
+  -O2 -o tool.wasm tool.c
+
+# 编译 Rust 程序（需安装 wasm32-wasip1 target）
+rustup target add wasm32-wasip1
+cargo build --target wasm32-wasip1 --release
+# 产物在 target/wasm32-wasip1/release/tool.wasm
+```
+
+### 11.4 WASM 文件部署
+
+WASM 文件部署到 supd 容器内的 `/etc/supd/runtimes/` 目录：
+
+1. **构建时内置**：在 Dockerfile 中 `COPY` 或 `curl` 下载到 `/etc/supd/runtimes/`
+2. **运行时上传**：通过 supd API `POST /api/runtimes/upload?name=tool.wasm` 上传
+3. **直接复制**：`docker cp tool.wasm <container>:/etc/supd/runtimes/tool.wasm`
+
+### 11.5 WASM 调用注意事项
+
+- **路径约定**：共享 WASM 工具放在 `/etc/supd/runtimes/<name>.wasm`；扩展私有工具也可随扩展部署，并用绝对路径读取
+- **stdin/stdout/stderr**：默认使用宿主 fd 0/1/2。`console.log('::result:: ...')` 是扩展脚本向 supd 上报结果的协议，不是 WASI stdout 的自动转换
+- **文件系统访问**：WASI 采用能力模型，`preopens` 默认为空。必须只映射工具实际需要的宿主目录，不能把宿主进程可访问的全部文件系统视为自动可见
+- **退出码**：tjs v26.6.0 默认 `returnOnExit: true`，`wasi.start(instance)` 返回退出码。必须检查返回值；设置 `returnOnExit: false` 会让当前 tjs 进程直接按该代码退出
+- **CLI/库模式**：带 `_start` 的命令模块调用 `start()`；库模式需要模块导出可直接调用的函数，并自行满足额外 imports
+- **体积控制**：引入成品前记录版本、来源、许可证、大小和 SHA-256，并在目标 tjs 版本上做真实输入输出测试

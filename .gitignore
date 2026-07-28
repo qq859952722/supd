@@ -4,7 +4,12 @@ Thumbs.db
 *.db
 
 # IDEs and editors
-.trae/
+.trae/*
+# 项目内维护的 supd Skill 及其已验证 WASM 成品需要纳入版本控制
+!.trae/skills/
+.trae/skills/*
+!.trae/skills/supd-service-extension-dev/
+!.trae/skills/supd-service-extension-dev/**
 .idea/
 .vscode/
 *.suo

@@ -219,14 +219,21 @@ async function extractArchive(archivePath, extractDir, type) {
       console.log(`[WASM] 检测到共享 WASM 解压模块: ${wasmPath}`);
       const wasiModule = await import('tjs:wasi');
       const WASI = wasiModule.WASI;
+      const archiveDir = archivePath.slice(0, archivePath.lastIndexOf('/')) || '/';
       const wasi = new WASI({
         version: 'wasi_snapshot_preview1',
         args: ['archive-extract', archivePath, extractDir],
         env: tjs.env,
+        preopens: {
+          [archiveDir]: archiveDir,
+          [extractDir]: extractDir,
+        },
+        returnOnExit: true,
       });
       const wasmBytes = await tjs.readFile(wasmPath);
       const { instance } = await WebAssembly.instantiate(wasmBytes, wasi.getImportObject());
-      wasi.start(instance);
+      const exitCode = wasi.start(instance);
+      if (exitCode !== 0) throw new Error(`WASM 解压退出码 ${exitCode}`);
       console.log('[WASM] 归档包解压成功');
       return;
     } catch (e) {

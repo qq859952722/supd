@@ -27,7 +27,7 @@ description: "supd服务与扩展开发指南。当用户要求开发、修改�
 - 🔄 **热重载与修改规则**: `references/03_modification_matrix.md` (修改配置后何时生效)
 - 🌐 **在线开发与 API**: `references/04_online_dev_guide.md` (SSH 调试与 HTTP 导入导出)
 - ⚠️ **环境变量 (`env.yaml`)**: `references/05_env_spec.md` (极其容易出错，**必读**)
-- 🚀 **tjs 运行时开发**: `references/06_tjs_runtime_guide.md` (当 `runtime: tjs` 时**必读**)
+- 🚀 **tjs 运行时开发**: `references/06_tjs_runtime_guide.md` (当 `runtime: tjs` 时**必读**；`assets/wasm/` 内含经 tjs v26.6.0 实测、可直接部署的 zstd/bsdtar WASI 工具)
 
 ---
 

@@ -17,6 +17,15 @@ on:
         description: "txiki.js 版本（默认 v26.6.0）"
         required: false
         default: "v26.6.0"
+      variant:
+        description: "镜像变体（alpine / debian / both）"
+        required: false
+        type: choice
+        options:
+          - alpine
+          - debian
+          - both
+        default: "alpine"
 
 env:
   REGISTRY: ghcr.io
@@ -24,12 +33,11 @@ env:
 
 jobs:
   # ────────────────────────────────────────────────────────────
-  # 矩阵 Job：在对应平台原生编译 tjs + 构建 Docker 镜像
-  # - ubuntu-latest       → linux/amd64
-  # - ubuntu-24.04-arm    → linux/arm64  (GitHub 原生 ARM64 runner)
+  # Alpine 变体：在对应平台原生编译 tjs + 构建 Docker 镜像
   # ────────────────────────────────────────────────────────────
-  build-platform:
-    name: "[${{ matrix.arch }}] 编译 tjs + 构建镜像"
+  build-alpine:
+    name: "[Alpine ${{ matrix.arch }}] 编译 tjs + 构建镜像"
+    if: inputs.variant == 'alpine' || inputs.variant == 'both'
     strategy:
       fail-fast: false
       matrix:
@@ -69,34 +77,39 @@ jobs:
         uses: actions/cache@v5
         with:
           path: /tmp/tjs-binary
-          key: tjs-${{ matrix.arch }}-${{ inputs.tjs_version }}
+          key: tjs-alpine-${{ matrix.arch }}-${{ inputs.tjs_version }}
 
-      # ── 仅在 cache miss 时安装依赖并编译 ──
-      - name: 安装 tjs 编译依赖
+      # ── 仅在 cache miss 时于 Alpine 容器内编译 ──
+      - name: 在 Alpine 容器中编译 txiki.js（确保 musl 兼容）
         if: steps.tjs-cache.outputs.cache-hit != 'true'
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build \
-            libcurl4-openssl-dev libtool libltdl-dev \
-            git ca-certificates
-
-      - name: 编译 txiki.js（${{ matrix.arch }}）
-        if: steps.tjs-cache.outputs.cache-hit != 'true'
-        run: |
-          TJS_VER="${{ inputs.tjs_version }}"
-          git clone --recursive --depth 1 --branch "${TJS_VER}" \
-            https://github.com/saghul/txiki.js.git /tmp/txiki-src
-          cd /tmp/txiki-src && make
-          TJS_BIN="$(find /tmp/txiki-src/build -name 'tjs' -type f | head -1)"
           mkdir -p /tmp/tjs-binary
-          cp "$TJS_BIN" /tmp/tjs-binary/tjs
-          chmod +x /tmp/tjs-binary/tjs
+          docker run --rm \
+            -e TJS_VERSION="${{ inputs.tjs_version }}" \
+            -v /tmp/tjs-binary:/output \
+            alpine:3.20 sh -c '
+              set -e
+              apk add --no-cache \
+                build-base cmake ninja \
+                git ca-certificates \
+                curl-dev libffi-dev openssl-dev zlib-dev linux-headers
+              git clone --recursive --depth 1 --branch "${TJS_VERSION}" \
+                https://github.com/saghul/txiki.js.git /tmp/txiki-src
+              cd /tmp/txiki-src && make
+              TJS_BIN="$(find build -name tjs -type f | head -1)"
+              "${TJS_BIN}" --version
+              cp "${TJS_BIN}" /output/tjs && chmod +x /output/tjs
+            '
 
       - name: 验证 tjs
         run: |
-          /tmp/tjs-binary/tjs --version
           file /tmp/tjs-binary/tjs
+          if file /tmp/tjs-binary/tjs | grep -q "ld-musl"; then
+            echo "✅ tjs 是 musl 链接"
+          else
+            echo "❌ tjs 不是 musl 链接"
+            exit 1
+          fi
 
       # ── 把编译好的 tjs 复制到 build context ──
       - name: 准备 tjs 到 build context
@@ -107,14 +120,13 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: 登录 GHCR
-        # 始终登录：即使 push=false 也需要写入 registry 构建缓存
         uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 构建并推送 ${{ matrix.arch }} 镜像
+      - name: 构建并推送 Alpine ${{ matrix.arch }} 镜像
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -131,18 +143,126 @@ jobs:
           build-args: |
             VERSION=${{ steps.ver.outputs.version }}
             BUILD_TIME=${{ github.run_id }}
-          # 使用 registry 缓存替代 GHA 缓存（与 release.yml 统一，共享 buildcache-<arch> tag）
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache-${{ matrix.arch }}
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache-${{ matrix.arch }},mode=max
 
   # ────────────────────────────────────────────────────────────
-  # 合并 manifest：将 amd64 + arm64 合并为单一多架构镜像
+  # Debian 变体：在 Debian 容器中编译 tjs（glibc 链接）+ 构建镜像
   # ────────────────────────────────────────────────────────────
-  create-manifest:
-    name: "合并 multi-arch manifest"
+  build-debian:
+    name: "[Debian ${{ matrix.arch }}] 编译 tjs + 构建镜像"
+    if: inputs.variant == 'debian' || inputs.variant == 'both'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            docker_platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            docker_platform: linux/arm64
+
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 确定版本
+        id: ver
+        run: |
+          INPUT="${{ inputs.version }}"
+          if [ -z "$INPUT" ]; then
+            echo "tag=latest"    >> "$GITHUB_OUTPUT"
+            echo "version=dev"   >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${INPUT}"  >> "$GITHUB_OUTPUT"
+            echo "version=${INPUT}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 查找 tjs 缓存（Debian/glibc 编译）
+        id: tjs-cache
+        uses: actions/cache@v5
+        with:
+          path: /tmp/tjs-binary
+          key: tjs-debian-${{ matrix.arch }}-${{ inputs.tjs_version }}
+
+      - name: 在 Debian 容器中编译 txiki.js（glibc 链接）
+        if: steps.tjs-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /tmp/tjs-binary
+          docker run --rm \
+            -e TJS_VERSION="${{ inputs.tjs_version }}" \
+            -v /tmp/tjs-binary:/output \
+            debian:bookworm-slim bash -c '
+              set -e
+              apt-get update && apt-get install --no-install-recommends -y \
+                build-essential cmake ninja-build \
+                git ca-certificates \
+                libcurl4-openssl-dev libffi-dev openssl-dev zlib1g-dev
+              git clone --recursive --depth 1 --branch "${TJS_VERSION}" \
+                https://github.com/saghul/txiki.js.git /tmp/txiki-src
+              cd /tmp/txiki-src && make
+              TJS_BIN="$(find build -name tjs -type f | head -1)"
+              "${TJS_BIN}" --version
+              cp "${TJS_BIN}" /output/tjs && chmod +x /output/tjs
+            '
+
+      - name: 验证 tjs
+        run: |
+          file /tmp/tjs-binary/tjs
+          if file /tmp/tjs-binary/tjs | grep -q "ld-linux"; then
+            echo "✅ tjs 是 glibc 链接"
+          else
+            echo "❌ tjs 不是 glibc 链接"
+            exit 1
+          fi
+
+      - name: 准备 tjs 到 build context
+        run: cp /tmp/tjs-binary/tjs ./tjs && chmod +x ./tjs
+
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 构建并推送 Debian ${{ matrix.arch }} 镜像
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.debian
+          target: runtime
+          platforms: ${{ matrix.docker_platform }}
+          push: ${{ inputs.push }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.tag }}-debian-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.repository.updated_at }}
+          build-args: |
+            VERSION=${{ steps.ver.outputs.version }}
+            BUILD_TIME=${{ github.run_id }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache-debian-${{ matrix.arch }}
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache-debian-${{ matrix.arch }},mode=max
+
+  # ────────────────────────────────────────────────────────────
+  # 合并 Alpine manifest：将 amd64 + arm64 合并为单一多架构镜像
+  # ────────────────────────────────────────────────────────────
+  create-manifest-alpine:
+    name: "合并 Alpine multi-arch manifest"
     runs-on: ubuntu-latest
-    needs: build-platform
-    if: inputs.push
+    needs: build-alpine
+    if: inputs.push && (inputs.variant == 'alpine' || inputs.variant == 'both')
     permissions:
       packages: write
 
@@ -163,7 +283,7 @@ jobs:
       - name: 设置 Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: 合并并推送 manifest
+      - name: 合并并推送 Alpine manifest
         run: |
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
           TAG="${{ steps.ver.outputs.tag }}"
@@ -171,9 +291,52 @@ jobs:
             --tag "${IMAGE}:${TAG}" \
             "${IMAGE}:${TAG}-amd64" \
             "${IMAGE}:${TAG}-arm64"
-          echo "✅ ${IMAGE}:${TAG} (amd64 + arm64，均含 tjs)"
+          echo "✅ ${IMAGE}:${TAG} (Alpine, amd64 + arm64, 均含 tjs)"
 
       - name: 验证 manifest
         run: |
           docker buildx imagetools inspect \
             "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.tag }}"
+
+  # ────────────────────────────────────────────────────────────
+  # 合并 Debian manifest
+  # ────────────────────────────────────────────────────────────
+  create-manifest-debian:
+    name: "合并 Debian multi-arch manifest"
+    runs-on: ubuntu-latest
+    needs: build-debian
+    if: inputs.push && (inputs.variant == 'debian' || inputs.variant == 'both')
+    permissions:
+      packages: write
+
+    steps:
+      - name: 确定标签
+        id: ver
+        run: |
+          INPUT="${{ inputs.version }}"
+          echo "tag=${INPUT:-latest}" >> "$GITHUB_OUTPUT"
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 设置 Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: 合并并推送 Debian manifest
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          TAG="${{ steps.ver.outputs.tag }}"
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${TAG}-debian" \
+            "${IMAGE}:${TAG}-debian-amd64" \
+            "${IMAGE}:${TAG}-debian-arm64"
+          echo "✅ ${IMAGE}:${TAG}-debian (Debian, amd64 + arm64, 均含 tjs)"
+
+      - name: 验证 manifest
+        run: |
+          docker buildx imagetools inspect \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.tag }}-debian"

@@ -239,14 +239,27 @@ triggers:
 ### 1. 拉取镜像
 
 ```bash
-# 自动选择当前平台架构（linux/amd64 或 linux/arm64）
+# Alpine 版（默认，轻量，~40MB）
 docker pull ghcr.io/qq859952722/supd:latest
+
+# Debian 版（glibc 兼容，工具更全，~120MB）
+docker pull ghcr.io/qq859952722/supd:debian
 
 # 或指定具体版本
 docker pull ghcr.io/qq859952722/supd:v0.0.36
+docker pull ghcr.io/qq859952722/supd:v0.0.36-debian
 ```
 
-> 也可从源码自行构建：`docker build -t supd:latest .`（多阶段：`node:24-alpine` → `golang:1.25-alpine` → `alpine:3.20`，最终以非 root 用户 `supd` 运行）。
+**镜像标签对照表**：
+
+| 标签 | 基础镜像 | 说明 |
+|------|---------|------|
+| `latest` | Alpine 3.20 | 默认轻量版，适合大多数场景 |
+| `vX.Y.Z` | Alpine 3.20 | 指定版本 Alpine 版 |
+| `debian` | Debian Bookworm Slim | 最新 Debian 版，glibc 兼容 |
+| `vX.Y.Z-debian` | Debian Bookworm Slim | 指定版本 Debian 版 |
+
+> 也可从源码自行构建：`docker build -t supd:latest .`（Alpine 版）或 `docker build -f Dockerfile.debian -t supd:debian .`（Debian 版）。
 
 ### 2. 启动容器
 

@@ -103,26 +103,19 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-27 | R-01/R-02、R-03/R-05、R-08 技术债闭环 | NSpid 精确映射与完整资源指标；curl 流式落盘与按需依赖校验；停止配置 nil 防御 | [notes/2026-07-27.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-27.md) |
 | 2026-07-28 | 代码审计 + 运行状态测试 + v0.0.35 发布 | 13 项运行测试全通过（资源 API/停止配置/tjs 扩展）；R-01～R-09 全部闭环 | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
 | 2026-07-28 | 多 profile 导出 + Skill 优化 + v0.0.36 | 服务打包支持多份 package.\<name\>.yaml 规则文件；bin/+data/ 目录规范；tjs.open 流式下载；二进制更新扩展示例 | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
+| 2026-07-28 | WASM 工具推荐 + Debian 镜像变体 | WASI 兼容 WASM 工具调研与 Skill 文档更新；新增 Dockerfile.debian（bookworm-slim）；CI 支持双变体构建（Alpine+Debian） | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
+| 2026-07-28 | 镜像构建问题修复 | Debian 删除无效 shadow 包；手动 Alpine job 改为 alpine:3.20 内编译 musl tjs 并检查 ld-musl | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
+| 2026-07-28 | WASI 成品落地与调用修复 | Skill 内置 zstd/bsdtar WASI 成品；tjs v26.6.0 真实验证；修正 preopens、退出码和 transmission-updater 调用 | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-28 多 profile 导出 + Skill 优化 + v0.0.36）
+## 八、最近会话重点（2026-07-28 WASI 成品落地与调用修复）
 
-- **任务**：优化 Skill（目录结构 + tjs 流式下载 + 二进制更新扩展）；需求文档和代码支持多份打包规则文件；审计 + 运行测试 + 升级版本
-- **Skill 优化**：
-  - 新增 `bin/`+`data/` 目录规范（控制面/业务载荷分离、权限隔离、command 指向）
-  - 发现 `tjs.open()` 返回 FileHandle 支持 `fh.write()` 自动推进位置，实现真正流式落盘（内存与文件大小无关），已在 txiki.js v26.6.0 源码+运行时双重验证
-  - 新增 `downloadStream()` 替代旧版全量内存 `downloadFile()`
-  - 修正 chown 建议：禁止 `chown -R <serviceDir>`，改为分别处理 bin/ 和 data/
-  - 新增 `examples/10-binary-updater-ext/`（check-update/update/force-update 三 action，放宽验证，原子替换+回滚）
-- **代码变更**：
-  - `internal/archive/packer.go`：新增 `PackDirWithProfile` + `matchPattern` + `shouldPackEntry` + `shouldSkipDirTree`
-  - `internal/config/package_profile.go`（新文件）：`LoadPackageProfile`/`ListPackageProfiles`/`ResolveExportProfile`
-  - `internal/api/export_handler.go`：导出支持 `?profile=<name>` 参数；新增 `GET /export-profiles` 端点
-  - `web/src/pages/ServiceDetail.tsx`：导出对话框（默认导出 + 按规则文件导出）
-  - 需求规格说明 §2.12.2 重写：多 profile 命名规范、模式匹配语义、两种导出方式
-- **运行测试**：export-profiles 端点返回正确 profile 列表；share/migrate profile 导出内容符合预期；不存在的 profile 返回 404
-- **版本**：v0.0.36
+- **镜像修复**：Debian 删除无效 `shadow` 包；手动 Alpine job 改为 `alpine:3.20` 内编译 musl tjs，缓存 key 区分变体并硬检查 `ld-musl`。
+- **Skill 成品**：新增 `zstd.wasm`（Zstandard 1.5.7）和 `bsdtar.wasm`（libarchive 3.8.7 + zstd），总计约 1.9 MiB；固定上游提交、SHA-256 和第三方许可证。
+- **本地真实验证**：从源码编译 txiki.js v26.6.0；zstd 33000 B 压缩往返一致，bsdtar 成功列出并解包 `.tar.zst` 且内容一致。
+- **语义修复**：指南改为按 WASI Preview1 ABI/imports 判断兼容性，明确显式 `preopens` 和退出码检查；`transmission-updater` 同步修复文件授权与非零退出码误判。
+- **回归验证**：Go build/vet/test、前端 build、扩展校验、`git diff --check`、全工作区 diagnostics 均通过；本机无 Docker daemon，未执行镜像实际构建。
 
 ### R-09 规格偏差处理（同日续）
 - **偏差一**：`ui.show_logs`/`ui.button_style` 代码已实现但规格未记录 → 已写入需求规格说明_v1.5.md L451-454

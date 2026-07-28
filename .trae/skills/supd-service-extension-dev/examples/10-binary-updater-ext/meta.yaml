@@ -1,0 +1,26 @@
+name: binary-updater
+version: "1.0.0"
+description: 二进制更新扩展 — 检测版本、流式下载、原子替换，支持 check-update / update / force-update
+runtime: tjs
+entry: ./run.js
+timeout: 600
+
+# 更新安装是串行操作，不允许并发
+concurrency: serialize
+
+# 更新扩展需要写入 bin/ 目录，通常需要 root 权限
+run_as: root
+
+actions:
+  - id: check-update
+    label: 检查更新
+    button_style: default
+  - id: update
+    label: 安装更新
+    button_style: primary
+  - id: force-update
+    label: 强制重新安装
+    button_style: danger
+
+triggers:
+  on_demand: true
