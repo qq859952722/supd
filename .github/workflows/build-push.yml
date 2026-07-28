@@ -95,7 +95,9 @@ jobs:
                 curl-dev libffi-dev openssl-dev zlib-dev linux-headers
               git clone --recursive --depth 1 --branch "${TJS_VERSION}" \
                 https://github.com/saghul/txiki.js.git /tmp/txiki-src
-              cd /tmp/txiki-src && make
+              cd /tmp/txiki-src
+              find . -name "*.c" -o -name "*.h" | xargs sed -i "/#pragma region/d; /#pragma endregion/d"
+              make
               TJS_BIN="$(find build -name tjs -type f | head -1)"
               "${TJS_BIN}" --version
               cp "${TJS_BIN}" /output/tjs && chmod +x /output/tjs
@@ -206,7 +208,9 @@ jobs:
                 libcurl4-openssl-dev libffi-dev libssl-dev zlib1g-dev
               git clone --recursive --depth 1 --branch "${TJS_VERSION}" \
                 https://github.com/saghul/txiki.js.git /tmp/txiki-src
-              cd /tmp/txiki-src && make
+              cd /tmp/txiki-src
+              find . -name "*.c" -o -name "*.h" | xargs sed -i "/#pragma region/d; /#pragma endregion/d"
+              make
               TJS_BIN="$(find build -name tjs -type f | head -1)"
               "${TJS_BIN}" --version
               cp "${TJS_BIN}" /output/tjs && chmod +x /output/tjs

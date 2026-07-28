@@ -91,6 +91,9 @@ jobs:
                 https://github.com/saghul/txiki.js.git /tmp/txiki-src
               cd /tmp/txiki-src
 
+              echo "=== 修复 GCC 不支持的 MSVC pragma ==="
+              find . -name "*.c" -o -name "*.h" | xargs sed -i "/#pragma region/d; /#pragma endregion/d"
+
               echo "=== 编译（耗时较长）==="
               make
 
@@ -170,6 +173,9 @@ jobs:
               git clone --recursive --depth 1 --branch "${TJS_VERSION}" \
                 https://github.com/saghul/txiki.js.git /tmp/txiki-src
               cd /tmp/txiki-src
+
+              echo "=== 修复 GCC 不支持的 MSVC pragma ==="
+              find . -name "*.c" -o -name "*.h" | xargs sed -i "/#pragma region/d; /#pragma endregion/d"
 
               echo "=== 编译（耗时较长）==="
               make
