@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"runtime/debug"
 
@@ -352,18 +353,28 @@ func (s *Server) setupRoutes() {
 }
 
 // Start 启动 HTTP 服务器。
-func (s *Server) Start() error {
+// addrReady 在 net.Listen 成功、Serve 开始前被调用一次，传入实际监听地址
+// （解决 :0 动态端口、IPv6 双栈显示等问题）。传 nil 表示不需要回调。
+// 返回值：Serve 退出时的错误（语义同原 ListenAndServe）。
+func (s *Server) Start(addrReady func(addr string)) error {
 	addr := ":7979"
 	if s.config != nil && s.config.Settings.HTTPListen != "" {
 		addr = s.config.Settings.HTTPListen
 	}
 
-	s.httpServer = &http.Server{
-		Addr:    addr,
-		Handler: s.router,
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	actual := ln.Addr().String()
+	if addrReady != nil {
+		addrReady(actual)
 	}
 
-	return s.httpServer.ListenAndServe()
+	s.httpServer = &http.Server{
+		Handler: s.router,
+	}
+	return s.httpServer.Serve(ln)
 }
 
 // Stop 优雅关闭 HTTP 服务器。

@@ -206,6 +206,11 @@ func runRun(cmd *cobra.Command, args []string) error {
 		slog.Warn("启动警告", "error", e)
 	}
 
+	// 启动摘要（第一段）：Bootstrap 完成后打印静态配置信息
+	summary := buildStartupSummary(Version, BuildTime, dir, cfgPath, logDir, runNoPID1, cfg, result.Discovery)
+	infof("%s", formatStartupSummary(summary))
+	logStartupSummary(summary)
+
 	// REQ-D-004: Bootstrap 完成后，用最终 Discovery 更新触发器
 	serviceLifecycleTrigger.SetDiscovery(result.Discovery)
 	supdLifecycleTrigger.SetDiscovery(result.Discovery)
@@ -236,7 +241,12 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 	// 在单独的 goroutine 中启动 HTTP 服务器
 	go func() {
-		if err := apiServer.Start(); err != nil {
+		if err := apiServer.Start(func(actual string) {
+			// 启动摘要（第二段）：HTTP 实际绑定后打印真实监听地址 + 可访问 URL 列表
+			urls := enumerateAccessURLs(actual)
+			infof("%s", formatListenSummary(actual, urls))
+			slog.Info("HTTP 服务器已监听", "addr", actual, "access_urls", urls)
+		}); err != nil {
 			slog.Error("HTTP 服务器异常退出", "error", err)
 			cancel()
 		}

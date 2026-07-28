@@ -1,10 +1,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/supdorg/supd/internal/config"
 	"github.com/supdorg/supd/internal/errors"
@@ -234,5 +237,112 @@ func TestAuthModes_RequestLevel(t *testing.T) {
 	nsr.ServeHTTP(nsrr, noneReq)
 	if nsrr.Code == http.StatusUnauthorized {
 		t.Errorf("none: 请求应跳过认证，实际 401")
+	}
+}
+
+// TestServer_Start_AddrReady 验证 Start 的 addrReady 回调返回实际监听地址。
+func TestServer_Start_AddrReady(t *testing.T) {
+	// 先占用一个已知端口，再让 supd Start 用同端口（确保能拿到实际地址）
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("预占端口失败: %v", err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+
+	s := NewServer(&config.Config{Settings: config.Settings{HTTPListen: addr}})
+
+	got := make(chan string, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- s.Start(func(actual string) {
+			got <- actual
+		})
+	}()
+
+	select {
+	case actual := <-got:
+		// 回调地址应与请求地址一致（host:port 形式）
+		if actual != addr {
+			t.Errorf("addrReady 回调 = %q, want %q", actual, addr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("addrReady 回调超时未触发")
+	}
+
+	// 关闭服务器
+	if err := s.Stop(context.Background()); err != nil {
+		t.Logf("Stop 返回: %v", err)
+	}
+	_ = errCh
+}
+
+// TestServer_Start_PortZero 验证 :0 动态端口场景下回调返回非 :0 的实际地址。
+func TestServer_Start_PortZero(t *testing.T) {
+	s := NewServer(&config.Config{Settings: config.Settings{HTTPListen: "127.0.0.1:0"}})
+
+	got := make(chan string, 1)
+	go func() {
+		_ = s.Start(func(actual string) {
+			got <- actual
+		})
+	}()
+
+	select {
+	case actual := <-got:
+		_, port, err := net.SplitHostPort(actual)
+		if err != nil {
+			t.Fatalf("回调地址 %q 无法拆分: %v", actual, err)
+		}
+		if port == "0" || port == "" {
+			t.Errorf("动态端口应为非 0 实际端口，got %q", actual)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal(":0 回调超时未触发")
+	}
+
+	_ = s.Stop(context.Background())
+}
+
+// TestServer_Start_NilCallback 验证传 nil 回调不 panic 且能正常服务。
+func TestServer_Start_NilCallback(t *testing.T) {
+	s := NewServer(&config.Config{Settings: config.Settings{HTTPListen: "127.0.0.1:0"}})
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- s.Start(nil)
+	}()
+
+	// 给一点时间让 Listen 完成（回调为 nil，无法精确同步，用轮询健康端点）
+	deadline := time.Now().Add(2 * time.Second)
+	var ok bool
+	for time.Now().Before(deadline) {
+		if s.httpServer != nil {
+			ok = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !ok {
+		t.Fatal("Start(nil) 未在超时内完成 Listen")
+	}
+
+	_ = s.Stop(context.Background())
+}
+
+// TestServer_Start_ListenError 验证端口占用时返回错误（语义同 ListenAndServe）。
+func TestServer_Start_ListenError(t *testing.T) {
+	// 占用一个端口不释放
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("预占端口失败: %v", err)
+	}
+	defer ln.Close()
+	addr := ln.Addr().String()
+
+	s := NewServer(&config.Config{Settings: config.Settings{HTTPListen: addr}})
+	err = s.Start(nil)
+	if err == nil {
+		t.Error("端口被占用时 Start 应返回错误，实际 nil")
 	}
 }

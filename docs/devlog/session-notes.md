@@ -109,18 +109,25 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-28 | 审计修复 + 运行状态测试 + v0.0.37 | 修复 10-binary-updater-ext 4 处缺陷（action/env、Buffer、exit_status、async getArch）+ transmission-updater exit_status；28 项运行测试全通过（D/A/B/C/E 五组） | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
 | 2026-07-28 | 扩展传参机制重构 + 删除 Action.Args | 删除 Action.Args 死代码（后端12文件+前端+规格+Skill文档）；新增运行时参数编辑抽屉（Drawer + EnvParamsDrawer），支持「保存」持久化/「运行」仅本次生效（TempEnv） | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
 | 2026-07-28 | 扩展参数运行测试 + Skill README 规范 + v0.0.38 | 修复 CLI 契约、相对 env_path、服务级未知 action 回退；TempEnv/保存/CLI E2E 与完整回归通过；Skill 强制 8 节 README | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
+| 2026-07-28 | supd 启动信息摘要（Startup Banner） | 两段式打印（Bootstrap后静态摘要 + HTTP绑定后实际监听地址+可访问URL枚举）；改造 `api.Server.Start` 为 net.Listen+Serve+addrReady 回调；双通道输出（stdout+slog）；20 个测试 | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-28 扩展参数运行测试 + Skill README 规范 + v0.0.38）
+## 八、最近会话重点（2026-07-28 supd 启动信息摘要 Startup Banner）
 
 ### 本次完成
 
-- **Skill README 规范**：生成服务时必须创建中文 README，包含服务版本、目录权限、启动就绪、配置环境、扩展 Actions、持久化升级、运维、安全备份 8 个一级标题；校验器正反例通过。
-- **审计修复**：CLI 请求统一为 `action`/`env`；扩展列表返回相对 `env_path`；服务级端点增加扩展归属和 action 校验，未知 action 返回 400；规格附录同步实际 API 字段。
-- **真实运行验证**：supd/web-demo 健康且 ready；greet/status action、TempEnv 临时覆盖不落盘、SUPD_* 保护、文件 API 保存、CLI 含等号 env 均通过；测试数据已清理。
-- **完整回归**：go build/vet/test、pnpm build、git diff --check 全通过；v0.0.38 ldflags 版本注入验证通过。
-- **发版状态**：README 与版本升级指南已更新至 v0.0.38，本地提交 `a7ac806` 已完成；GitHub 443 连续连接失败，main/tag 推送与 CI 触发待网络恢复（见 blockers.md）。
+- **设计方案**（`tmp/startup_banner_design.md`）：两段式打印，严格遵守规格 §2.8.3 的 11 步启动顺序，不新增步骤/配置字段/CLI flag；双通道输出（stdout `infof` + slog 持久化）；安全红线 `auth_token` 仅打印布尔。
+- **改造 `api.Server.Start`**（`internal/api/server.go`）：签名增加 `addrReady func(string)` 回调；内部改 `net.Listen`+`Serve` 替代 `ListenAndServe`，解决 `:0` 动态端口与 IPv6 双栈 `[::]:port` 实际地址获取问题。生产调用方仅 `run.go:239` 一处。
+- **新增 `internal/cli/startup_summary.go`**：`buildStartupSummary`/`formatStartupSummary`/`formatListenSummary`/`logStartupSummary`/`enumerateAccessURLs`/`collectURLs`/`countAutostart`；IPv6 双栈时同时列出 IPv4+IPv6 地址（符合 NAS 用户习惯），跳过 link-local/未UP 网卡，loopback 排后去重。
+- **接入 `run.go`**：Bootstrap 成功后打印第一段（静态摘要），HTTP goroutine `addrReady` 回调打印第二段（实际监听+可访问 URL）。
+- **测试**：`startup_summary_test.go` 16 个 + `server_test.go` 追加 4 个，共 20 个新测试全通过；`go build/vet/test` 全绿。
+- **人工验证**：默认启动（IPv4+IPv6 地址列出）、`--quiet`（stdout 静默 slog 仍输出）、`--listen 127.0.0.1:9999`（配置值=实际绑定，仅该 IP）三场景通过。
+
+### 排查记录
+
+- 首次运行旧二进制无摘要 → `go build ./...` 不覆盖 `./supd`，需 `go build -o supd ./cmd/supd`。
+- 运行时 stdout 在摘要后停止 → 阻塞在 `supdLifecycleTrigger.OnPostReady(ctx)`（test_workdir 的 `supd-startup-hook` 扩展 `notify` action 执行约 3-5s），与摘要代码无关（注释摘要后仍阻塞），增加 timeout 即可观察完整输出。
 
 ### 背景：扩展传参三渠道梳理
 
