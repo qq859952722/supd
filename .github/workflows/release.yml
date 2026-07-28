@@ -164,7 +164,7 @@ jobs:
               apt-get update && apt-get install --no-install-recommends -y \
                 build-essential cmake ninja-build \
                 git ca-certificates \
-                libcurl4-openssl-dev libffi-dev openssl-dev zlib1g-dev
+                libcurl4-openssl-dev libffi-dev libssl-dev zlib1g-dev
 
               echo "=== 克隆 txiki.js ${TJS_VERSION} ==="
               git clone --recursive --depth 1 --branch "${TJS_VERSION}" \
