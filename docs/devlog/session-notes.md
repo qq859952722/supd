@@ -120,7 +120,7 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 - **审计修复**：CLI 请求统一为 `action`/`env`；扩展列表返回相对 `env_path`；服务级端点增加扩展归属和 action 校验，未知 action 返回 400；规格附录同步实际 API 字段。
 - **真实运行验证**：supd/web-demo 健康且 ready；greet/status action、TempEnv 临时覆盖不落盘、SUPD_* 保护、文件 API 保存、CLI 含等号 env 均通过；测试数据已清理。
 - **完整回归**：go build/vet/test、pnpm build、git diff --check 全通过；v0.0.38 ldflags 版本注入验证通过。
-- **发版状态**：README 与版本升级指南已更新至 v0.0.38，待提交、推送 main 和 annotated tag。
+- **发版状态**：README 与版本升级指南已更新至 v0.0.38，本地提交 `a7ac806` 已完成；GitHub 443 连续连接失败，main/tag 推送与 CI 触发待网络恢复（见 blockers.md）。
 
 ### 背景：扩展传参三渠道梳理
 
