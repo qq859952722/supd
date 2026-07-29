@@ -11,7 +11,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：⭐ 优秀（满分 100），1000+ 单元测试通过（Go + 前端），零竞态；staticcheck/go vet 零警告
-- **当前版本**：v0.0.38（版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.0.39（版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -110,56 +110,38 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-28 | 扩展传参机制重构 + 删除 Action.Args | 删除 Action.Args 死代码（后端12文件+前端+规格+Skill文档）；新增运行时参数编辑抽屉（Drawer + EnvParamsDrawer），支持「保存」持久化/「运行」仅本次生效（TempEnv） | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
 | 2026-07-28 | 扩展参数运行测试 + Skill README 规范 + v0.0.38 | 修复 CLI 契约、相对 env_path、服务级未知 action 回退；TempEnv/保存/CLI E2E 与完整回归通过；Skill 强制 8 节 README | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
 | 2026-07-28 | supd 启动信息摘要（Startup Banner） | 两段式打印（Bootstrap后静态摘要 + HTTP绑定后实际监听地址+可访问URL枚举）；改造 `api.Server.Start` 为 net.Listen+Serve+addrReady 回调；双通道输出（stdout+slog）；20 个测试 | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
+| 2026-07-29 | 启动摘要运行测试 + post_ready 异步修复 + v0.0.39 | post_ready 改异步执行避免阻塞启动摘要；端到端验证启动摘要/扩展生命周期/API/优雅关闭全通过；v0.0.39 推送 GitHub | [notes/2026-07-29.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-29.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-28 supd 启动信息摘要 Startup Banner）
+## 八、最近会话重点（2026-07-29 启动摘要运行测试 + post_ready 异步修复 + v0.0.39）
 
 ### 本次完成
 
-- **设计方案**（`tmp/startup_banner_design.md`）：两段式打印，严格遵守规格 §2.8.3 的 11 步启动顺序，不新增步骤/配置字段/CLI flag；双通道输出（stdout `infof` + slog 持久化）；安全红线 `auth_token` 仅打印布尔。
-- **改造 `api.Server.Start`**（`internal/api/server.go`）：签名增加 `addrReady func(string)` 回调；内部改 `net.Listen`+`Serve` 替代 `ListenAndServe`，解决 `:0` 动态端口与 IPv6 双栈 `[::]:port` 实际地址获取问题。生产调用方仅 `run.go:239` 一处。
-- **新增 `internal/cli/startup_summary.go`**：`buildStartupSummary`/`formatStartupSummary`/`formatListenSummary`/`logStartupSummary`/`enumerateAccessURLs`/`collectURLs`/`countAutostart`；IPv6 双栈时同时列出 IPv4+IPv6 地址（符合 NAS 用户习惯），跳过 link-local/未UP 网卡，loopback 排后去重。
-- **接入 `run.go`**：Bootstrap 成功后打印第一段（静态摘要），HTTP goroutine `addrReady` 回调打印第二段（实际监听+可访问 URL）。
-- **测试**：`startup_summary_test.go` 16 个 + `server_test.go` 追加 4 个，共 20 个新测试全通过；`go build/vet/test` 全绿。
-- **人工验证**：默认启动（IPv4+IPv6 地址列出）、`--quiet`（stdout 静默 slog 仍输出）、`--listen 127.0.0.1:9999`（配置值=实际绑定，仅该 IP）三场景通过。
+1. **post_ready 扩展异步执行修复**（`internal/cli/run.go`）
+   - 将 `supdLifecycleTrigger.OnPostReady(ctx)` 从 HTTP 服务器启动前的同步调用，改为 HTTP goroutine 启动后的 `go` 异步执行。
+   - 解决 post_ready 扩展（supd-startup-hook notify action 约 3s）阻塞启动摘要第二段与"supd 运行中"提示的问题。
+   - 规格 §2.8.3 要求 Step 8（HTTP）在 Step 11（post_ready）之前，异步满足此顺序；关机时 `WaitForAllRunning` 仍等待其完成。
 
-### 排查记录
+2. **端到端运行测试**（10 项全通过）
+   - 启动摘要两段式打印 ✅；IPv4+IPv6 双栈 URL 枚举 ✅
+   - post_ready 异步时序：HTTP 监听 26.601 → post_ready 26.603（2ms，不阻塞）✅
+   - pre_start / pre_shutdown 钩子执行 ✅；API system/status + services ✅
+   - 优雅关闭 exit 0 ✅；关机等待扩展任务结束 ✅
 
-- 首次运行旧二进制无摘要 → `go build ./...` 不覆盖 `./supd`，需 `go build -o supd ./cmd/supd`。
-- 运行时 stdout 在摘要后停止 → 阻塞在 `supdLifecycleTrigger.OnPostReady(ctx)`（test_workdir 的 `supd-startup-hook` 扩展 `notify` action 执行约 3-5s），与摘要代码无关（注释摘要后仍阻塞），增加 timeout 即可观察完整输出。
+3. **完整回归**：`go build/vet/test` 全绿（core 51.9s、extension 34.3s）；`pnpm build` 19.07s ✅
 
-### 背景：扩展传参三渠道梳理
+4. **版本升级 v0.0.39**：提交 `754600d`+`7e26d68`，标签推送 GitHub，CI Release 构建已触发。
 
-| 渠道 | 说明 | 状态 |
-|------|------|------|
-| `Action.Args` | meta.yaml 写死的 CLI 参数 | ❌ 死代码（19 个扩展均未使用），与 SUPD_ACTION 重复 → **已删除** |
-| `SUPD_ACTION` | supd 自动注入的环境变量 | ✅ 实际使用的 action 区分方式 |
-| `env.yaml` | 用户环境变量，前端 EnvTab 管理 | ✅ 保留，新增运行时临时编辑能力 |
+### 关键技术点
 
-### 删除 Action.Args（后端 + 前端 + 规格 + 文档）
-
-- **后端 12 文件**：`config/extension.go` 删除 `Action.Args` 字段；`run_context.go` 删除 `ActionArgs`、新增 `TempEnv`、`BuildCommand` 移除 args 参数；`dispatcher.go` `FindActionByID` 简化为单返回值、`executeWithConcurrency` 合并 TempEnv；`trigger_on_demand.go`/`trigger_cron.go`/`cron_scheduler.go` 移除 actionArgs；`api/interfaces.go`+`extension_handler.go`+`extension_provider.go` `RunExtension` 签名新增 env 参数；`reload_classifier.go` 删除 Args 比较
-- **前端**：`ExtensionDetail.tsx` 删除 ConfigTab"参数"输入框；`ServiceDetail.tsx` 同步
-- **规格/文档**：需求规格说明_v1.5.md §2.2.3/§2.2.5/§2.2.17；Skill 02_extension_spec.md、06_tjs_runtime_guide.md、examples/README.md；qbittorrent-updater/run.js（tjs.args → SUPD_ACTION）；demo-action/meta.yaml
-
-### 新增运行时参数编辑抽屉
-
-- **新建** `web/src/components/ui/Drawer.tsx`（右侧滑入，非阻塞）+ `web/src/components/EnvParamsDrawer.tsx`
-- **抽屉行为**：action 按钮旁"编辑参数"图标打开抽屉 → 加载 env.yaml 变量为可编辑文本框 → 「保存」持久化到 env.yaml / 「运行」仅本次生效（通过 `TempEnv` 传入，不修改 env.yaml）
-- **TaskToast** `runExtension` 新增 `env?: Record<string, string>` 参数
-- **TempEnv 覆盖顺序**：`os.Environ → mergedEnv（4层 env.yaml）→ TempEnv（用户临时）→ supdEnv（SUPD_*）`，确保覆盖 env.yaml 同名变量但不覆盖 SUPD_* 保护变量
-
-### 验证
-
-- `go build ./...` ✅、`go vet ./...` ✅、`go test ./... -count=1` ✅
-- `cd web && pnpm build` ✅（16.93s）
-- 全项目无 ActionArgs/actionArgs/cli_args/SUPD_ACTION_ARGS 残留
+- **dispatcher 不记录成功扩展运行**：supd.log 仅记失败（ERROR/WARN），成功运行仅写 `/tmp/supd-logs/extensions/<ext>/<run_id>.log`。排查 post_ready 是否执行需查扩展运行日志文件。
+- **v0.0.38 网络阻断已自动恢复**：上轮 v0.0.38 标签因网络超时未推送，本轮确认远程已有 v0.0.38 标签。
 
 ### 遗留事项
 
-- 端到端 UI 验证待下次会话启动 supd 实测（抽屉打开、保存、运行、临时 Env 覆盖）
-- 版本升级未执行（待用户确认是否本轮发版）
+- CI 构建结果待确认（v0.0.39 Release 工作流 in_progress）
+- 启动摘要第二段偶尔在"supd 运行中"之后打印（goroutine 调度时序，功能正确，UX 可接受）
 
 ---
 
