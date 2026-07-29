@@ -215,9 +215,6 @@ func runRun(cmd *cobra.Command, args []string) error {
 	serviceLifecycleTrigger.SetDiscovery(result.Discovery)
 	supdLifecycleTrigger.SetDiscovery(result.Discovery)
 
-	// REQ-D-004, 2.8.1 Step 11: 所有 autostart=true 的服务进入终态后触发 supd_lifecycle:post_ready
-	supdLifecycleTrigger.OnPostReady(ctx)
-
 	// Step 5: 创建并启动 HTTP API 服务器
 	// REQ-F-033 Step 8: 启动 HTTP 服务器
 	apiServer := api.NewServer(cfg)
@@ -251,6 +248,13 @@ func runRun(cmd *cobra.Command, args []string) error {
 			cancel()
 		}
 	}()
+
+	// REQ-D-004, 2.8.1 Step 11: 所有 autostart=true 的服务进入终态后触发 supd_lifecycle:post_ready
+	// 异步执行：规格 §2.8.3 要求 Step 8（HTTP）在 Step 11（post_ready）之前；
+	// post_ready 扩展失败不阻止 supd 启停（trigger 注释），异步不阻塞主 goroutine，
+	// 使启动摘要第二段与"运行中"提示立即可见，无需等待扩展执行完成。
+	// dispatcher/taskRecorder/TaskHistory 均有 mutex 保护，异步执行线程安全。
+	go supdLifecycleTrigger.OnPostReady(ctx)
 
 	// REQ-D-004: 启动 cron 调度器
 	cronScheduler.Start()
