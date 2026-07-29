@@ -186,6 +186,7 @@ git push origin vX.Y.Z
 | 2026-07-28 | v0.0.36 | 服务打包支持多 profile 规则文件（`package.<name>.yaml`，命名规范区分迁移/共享等场景）；前端导出对话框支持默认导出与按规则文件导出；Skill 优化：新增 `bin/`+`data/` 目录规范、`tjs.open` 流式下载代码段、二进制更新扩展示例（check-update/update/force-update） |
 | 2026-07-28 | v0.0.37 | 审计修复 `10-binary-updater-ext` 与 `transmission-updater` 运行时缺陷：`tjs.args[2]`→`tjs.env.SUPD_ACTION`、`Buffer.concat`→`TextDecoder` 累加、`proc.wait()` 返回值改用 `exit_status` 字段、`getArch()` 改为 async 并支持 aarch64；28 项运行状态测试全通过（D/A/B/C/E 五组） |
 | 2026-07-28 | v0.0.38 | 扩展运行时参数重构：删除 Action.Args，统一 SUPD_ACTION；新增临时 env 参数编辑与保存语义；修复 CLI 请求字段、服务级 env_path 和未知 action 静默回退；Skill 强制服务 README 规范 |
+| 2026-07-29 | v0.0.39 | supd 启动信息摘要（Startup Banner）：两段式打印（Bootstrap 后静态摘要 + HTTP 绑定后实际监听地址+可访问 URL 枚举）；改造 `api.Server.Start` 为 `net.Listen`+`Serve`+`addrReady` 回调；双通道输出（stdout+slog）；IPv4/IPv6 双栈地址枚举；post_ready 扩展改为异步执行避免阻塞启动摘要 |
 
 
 
