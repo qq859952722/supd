@@ -1,5 +1,79 @@
 package core
 
+import (
+	"context"
+	"log/slog"
+	"sync"
+)
+
+// DependencyCoordinator 在依赖进入可依赖终态后，去重拉起满足条件的下游服务。
+type DependencyCoordinator struct {
+	graph    *DependencyGraph
+	canStart func(string) bool
+	start    func(context.Context, string) error
+	mu       sync.Mutex
+	enabled  bool
+	starting map[string]struct{}
+}
+
+func NewDependencyCoordinator(graph *DependencyGraph, canStart func(string) bool, start func(context.Context, string) error) *DependencyCoordinator {
+	return &DependencyCoordinator{graph: graph, canStart: canStart, start: start, starting: make(map[string]struct{})}
+}
+
+func (c *DependencyCoordinator) Enable() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.enabled = true
+	c.mu.Unlock()
+}
+
+func (c *DependencyCoordinator) OnServiceDependable(ctx context.Context, serviceName string) {
+	if c == nil || c.graph == nil || c.canStart == nil || c.start == nil {
+		return
+	}
+	for _, name := range c.graph.GetDependents(serviceName) {
+		c.tryStart(ctx, name)
+	}
+}
+
+func (c *DependencyCoordinator) tryStart(ctx context.Context, name string) {
+	c.mu.Lock()
+	if !c.enabled {
+		c.mu.Unlock()
+		return
+	}
+	if _, exists := c.starting[name]; exists || !c.canStart(name) {
+		c.mu.Unlock()
+		return
+	}
+	c.starting[name] = struct{}{}
+	c.mu.Unlock()
+
+	go func() {
+		defer func() {
+			c.mu.Lock()
+			delete(c.starting, name)
+			c.mu.Unlock()
+		}()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		if !c.canStart(name) {
+			return
+		}
+		if err := c.start(ctx, name); err != nil {
+			slog.Warn("dependency recovery start failed", "service", name, "error", err)
+		}
+	}()
+}
+
 // DependencyGraph 依赖图
 // REQ-F-005: 拓扑排序+循环检测+自引用+自动重算
 type DependencyGraph struct {

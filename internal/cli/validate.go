@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,7 +12,8 @@ import (
 
 // REQ-F-039: validate 命令 — 校验配置
 var (
-	validateOutputJSON bool
+	validateOutputFormat = string(OutputTable)
+	validateOutputJSON   bool // 测试兼容；CLI 使用 validateOutputFormat
 )
 
 var validateCmd = &cobra.Command{
@@ -29,11 +29,11 @@ var validateCmd = &cobra.Command{
   # 以 JSON 格式输出（便于脚本处理）
   supd validate -o json`,
 	Args: maximumNArgs(1),
-	RunE:  runValidate,
+	RunE: runValidate,
 }
 
 func init() {
-	validateCmd.Flags().BoolVarP(&validateOutputJSON, "output", "o", false, "以 JSON 格式输出结果")
+	validateCmd.Flags().StringVarP(&validateOutputFormat, "output", "o", string(OutputTable), "输出格式 (table|json)")
 }
 
 // ValidateResult 校验结果结构
@@ -47,6 +47,14 @@ type ValidateResult struct {
 // runValidate 执行 validate 命令
 // REQ-F-039: supd validate / supd validate <path> / supd validate -o json
 func runValidate(cmd *cobra.Command, args []string) error {
+	formatValue := validateOutputFormat
+	if validateOutputJSON {
+		formatValue = string(OutputJSON)
+	}
+	format, err := parseOutputFormat(formatValue)
+	if err != nil {
+		return err
+	}
 	var cfgPath string
 
 	if len(args) > 0 {
@@ -62,9 +70,10 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	extraCount := validateServicesAndExtensions(workDir, &result)
 	result.Valid = len(result.Errors) == 0
 
-	if validateOutputJSON {
-		data, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Println(string(data))
+	if format == OutputJSON {
+		if err := writeJSON(outputWriter(cmd), result); err != nil {
+			return err
+		}
 	} else {
 		if result.Valid {
 			infof("%s: 校验通过", result.File)

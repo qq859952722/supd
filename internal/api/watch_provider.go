@@ -22,6 +22,17 @@ func (p *CoreWatchProvider) SetDiscovery(d *watch.DiscoveryResult) {
 	p.Discovery = d
 }
 
+func (p *CoreWatchProvider) Enabled() bool {
+	return p != nil && p.Watcher != nil && p.Watcher.Enabled()
+}
+
+func (p *CoreWatchProvider) Reason() string {
+	if p == nil || p.Watcher == nil {
+		return "watcher unavailable"
+	}
+	return p.Watcher.Reason()
+}
+
 func (p *CoreWatchProvider) ReloadConfig() error {
 	disc := watch.NewDiscovery(p.BaseDir, p.LogDir)
 	newDiscovery := disc.Scan()

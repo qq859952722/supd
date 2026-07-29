@@ -17,7 +17,6 @@ type OsFileProvider struct {
 	BaseDir       string
 	PathValidator *PathValidator
 	HistoryDir    string // /var/lib/supd/history
-	LogDir        string // 日志目录（添加到文件树根目录作为虚拟节点）
 	// MaxVersions 文件历史版本上限
 	// O-05-002 修复：从 config.Settings.FileHistoryVersions 读取，替代硬编码 50
 	MaxVersions int
@@ -40,52 +39,6 @@ func (p *OsFileProvider) FileTree(basePath string) ([]FileTreeNode, error) {
 		return nil, err
 	}
 
-	// H-03-003 配套修复：根目录 config.yaml 通过文件 API 拒绝访问（含 auth_token 等敏感信息），
-	// 文件树中也应隐藏，避免用户点击后遇到 FILE_ACCESS_DENIED 错误。
-	// 全局配置通过 GET/PUT /api/settings 端点编辑（settings_handler.go）。
-	// 仅过滤根目录的 config.yaml，不影响 services/*/config.yaml 等。
-	if basePath == "" {
-		filtered := nodes[:0]
-		for _, n := range nodes {
-			if !n.IsDir && n.Name == "config.yaml" {
-				continue
-			}
-			filtered = append(filtered, n)
-		}
-		nodes = filtered
-	}
-
-	// 请求根目录时，添加日志目录虚拟节点（如果配置了 LogDir 且不在 baseDir 下）
-	if basePath == "" && p.LogDir != "" {
-		logDirAbs, _ := filepath.Abs(p.LogDir)
-		baseDirAbs, _ := filepath.Abs(p.BaseDir)
-		if !strings.HasPrefix(logDirAbs, baseDirAbs) {
-			if info, err := os.Stat(logDirAbs); err == nil && info.IsDir() {
-				// 日志目录在 baseDir 外：移除 baseDir 下可能存在的同名旧 logs 目录
-				// 避免用户看到空的旧日志目录而困惑
-				filtered := nodes[:0]
-				for _, n := range nodes {
-					if n.Name == "logs" {
-						continue // 跳过 baseDir 下的 logs 目录
-					}
-					filtered = append(filtered, n)
-				}
-				nodes = filtered
-
-				// 添加虚拟 logs 节点指向实际日志目录
-				logChildren, err := p.buildTree(logDirAbs)
-				if err == nil {
-					nodes = append(nodes, FileTreeNode{
-						Name:     "logs",
-						Path:     logDirAbs,
-						IsDir:    true,
-						Children: logChildren,
-					})
-				}
-			}
-		}
-	}
-
 	return nodes, nil
 }
 
@@ -97,9 +50,13 @@ func (p *OsFileProvider) buildTree(dir string) ([]FileTreeNode, error) {
 
 	var nodes []FileTreeNode
 	for _, entry := range entries {
+		entryPath := filepath.Join(dir, entry.Name())
+		if p.PathValidator != nil && p.PathValidator.tierOf(entryPath) == tierForbidden {
+			continue
+		}
 		node := FileTreeNode{
 			Name:  entry.Name(),
-			Path:  filepath.Join(dir, entry.Name()),
+			Path:  entryPath,
 			IsDir: entry.IsDir(),
 		}
 		if entry.IsDir() {
@@ -124,17 +81,62 @@ func (p *OsFileProvider) ReadFile(path string) ([]byte, error) {
 }
 
 func (p *OsFileProvider) WriteFile(path string, content []byte) error {
-	// 先保存历史版本
-	p.saveHistory(path)
-	return os.WriteFile(path, content, 0644)
+	return p.atomicWrite(path, content)
 }
 
 func (p *OsFileProvider) CreateFile(path string, content []byte) error {
+	return p.atomicWrite(path, content)
+}
+
+func (p *OsFileProvider) atomicWrite(path string, content []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
+		return fmt.Errorf("create parent directory: %w", err)
 	}
-	return os.WriteFile(path, content, 0644)
+
+	perm := os.FileMode(0644)
+	if info, err := os.Stat(path); err == nil {
+		perm = info.Mode().Perm()
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat target file: %w", err)
+	}
+
+	tmp, err := os.CreateTemp(dir, ".supd-tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temporary file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	closed := false
+	defer func() {
+		if !closed {
+			_ = tmp.Close()
+		}
+		_ = os.Remove(tmpPath)
+	}()
+
+	if err := tmp.Chmod(perm); err != nil {
+		return fmt.Errorf("set temporary file permissions: %w", err)
+	}
+	if _, err := tmp.Write(content); err != nil {
+		return fmt.Errorf("write temporary file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("sync temporary file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		closed = true
+		return fmt.Errorf("close temporary file: %w", err)
+	}
+	closed = true
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("replace target file: %w", err)
+	}
+
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
+	return nil
 }
 
 func (p *OsFileProvider) CreateDir(path string) error {
@@ -256,7 +258,7 @@ func (p *OsFileProvider) RollbackFile(path string, version int) error {
 		return fmt.Errorf("history version %d not found: %w", version, err)
 	}
 
-	return os.WriteFile(path, data, 0644)
+	return p.atomicWrite(path, data)
 }
 
 func (p *OsFileProvider) ValidateFile(path string, content []byte) ([]ValidationError, error) {
@@ -295,16 +297,27 @@ func strictValidateByFileName(path string, content []byte) error {
 	switch base {
 	case "service.yaml":
 		var sc config.ServiceConfig
-		return config.StrictUnmarshal(content, &sc, config.DefaultSafeYAMLOptions)
+		if err := config.StrictUnmarshal(content, &sc, config.DefaultSafeYAMLOptions); err != nil {
+			return err
+		}
+		return config.ValidateService(&sc)
 	case "meta.yaml":
 		var em config.ExtensionMeta
-		return config.StrictUnmarshal(content, &em, config.DefaultSafeYAMLOptions)
+		if err := config.StrictUnmarshal(content, &em, config.DefaultSafeYAMLOptions); err != nil {
+			return err
+		}
+		config.SetExtensionDefaults(&em)
+		return config.ValidateExtension(&em)
 	case "env.yaml":
 		var ef config.EnvFile
 		return config.StrictUnmarshal(content, &ef, config.DefaultSafeYAMLOptions)
 	case "config.yaml":
 		var cfg config.Config
-		return config.StrictUnmarshal(content, &cfg, config.DefaultSafeYAMLOptions)
+		if err := config.StrictUnmarshal(content, &cfg, config.DefaultSafeYAMLOptions); err != nil {
+			return err
+		}
+		config.SetDefaults(&cfg)
+		return config.ValidateConfig(&cfg)
 	}
 	return nil
 }

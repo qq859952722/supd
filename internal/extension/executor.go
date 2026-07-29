@@ -70,12 +70,14 @@ func (e *Executor) buildExecContext(runID string, meta *config.ExtensionMeta, tc
 
 	// Step 3: 构造命令：<runtime 路径> entry 或 entry
 	// REQ-F-028, REQ-F-029: runtime 别名解析（三层来源：config > scan > builtin）
-	runtimePath := meta.Runtime
-	if meta.Runtime != "" && (e.runtimes != nil || e.discoveredRuntimes != nil) {
+	runtimePath := ""
+	if meta.Runtime != "" {
 		registry := config.BuildRegistry(e.runtimes, e.discoveredRuntimes)
-		if rt, err := config.Resolve(registry, meta.Runtime); err == nil && rt.Available {
-			runtimePath = rt.AbsPath
+		rt, err := config.Resolve(registry, meta.Runtime)
+		if err != nil {
+			return nil, fmt.Errorf("extension %s runtime %q: %w", meta.Name, meta.Runtime, err)
 		}
+		runtimePath = rt.AbsPath
 	}
 	command := BuildCommand(meta.Runtime, runtimePath, meta.Entry)
 	if len(command) == 0 {
@@ -356,13 +358,10 @@ func (e *Executor) Execute(ctx context.Context, meta *config.ExtensionMeta, tc T
 		timeoutGuard.Stop()
 		// N-C-01 修复：race 场景 — timeout 与 ctx.Done 近似同时触发时，
 		// 优先判定为 timeout/killed（避免误标为 canceled）
-		timedOut, hardKilled := timeoutGuard.Check()
+		timedOut, _ := timeoutGuard.Check()
 		if timedOut {
-			if hardKilled {
-				result.State = TaskKilled
-			} else {
-				result.State = TaskTimeout
-			}
+			// 终态按触发原因分类：超时即使升级为 SIGKILL 仍是 timeout。
+			result.State = TaskTimeout
 			wr = <-waitCh
 			result.ExitCode = wr.exitCode
 		} else {
@@ -390,13 +389,10 @@ func (e *Executor) Execute(ctx context.Context, meta *config.ExtensionMeta, tc T
 		// 进程退出，停止超时监控
 		timeoutGuard.Stop()
 		// Step 11 (part 1): 判定 timeout/killed/canceled 状态
-		timedOut, hardKilled := timeoutGuard.Check()
+		timedOut, _ := timeoutGuard.Check()
 		if timedOut {
-			if hardKilled {
-				result.State = TaskKilled
-			} else {
-				result.State = TaskTimeout
-			}
+			// SIGKILL 仅是终止手段；超时触发的终态始终是 timeout。
+			result.State = TaskTimeout
 			result.ExitCode = wr.exitCode
 		} else if wr.signaled {
 			if wr.sig == syscall.SIGKILL {

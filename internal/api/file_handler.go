@@ -27,7 +27,7 @@ const MaxReadFileSize = 10 * 1024 * 1024 // 10MB
 
 // FileTreeResponse 文件树响应
 type FileTreeResponse struct {
-	Path     string        `json:"path"`
+	Path     string         `json:"path"`
 	Children []FileTreeNode `json:"children"`
 }
 
@@ -39,8 +39,8 @@ type FileContentResponse struct {
 
 // FileHistoryResponse 文件历史响应
 type FileHistoryResponse struct {
-	Path     string         `json:"path"`
-	Versions []FileVersion  `json:"versions"`
+	Path     string        `json:"path"`
+	Versions []FileVersion `json:"versions"`
 }
 
 // ValidateFileRequest 文件校验请求
@@ -50,8 +50,17 @@ type ValidateFileRequest struct {
 
 // ValidateFileResponse 文件校验响应
 type ValidateFileResponse struct {
-	Valid   bool              `json:"valid"`
-	Errors  []ValidationError `json:"errors,omitempty"`
+	Valid  bool              `json:"valid"`
+	Errors []ValidationError `json:"errors,omitempty"`
+}
+
+// FileWriteResponse 文件保存响应；写盘成功不代表异步热重载已经完成。
+type FileWriteResponse struct {
+	Saved           bool              `json:"saved"`
+	ReloadState     string            `json:"reload_state"`
+	RequiresRestart string            `json:"requires_restart"`
+	Warnings        []string          `json:"warnings"`
+	Errors          []ValidationError `json:"errors"`
 }
 
 // MoveFileRequest 移动文件请求
@@ -160,12 +169,48 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.fileProvider.WriteFile(validatedPath, []byte(req.Content)); err != nil {
+	content := []byte(req.Content)
+	validationErrors, err := s.fileProvider.ValidateFile(validatedPath, content)
+	if err != nil {
+		respondError(w, errors.ErrInternal, fmt.Sprintf("validate failed: %v", err))
+		return
+	}
+	if len(validationErrors) > 0 {
+		respondJSON(w, http.StatusUnprocessableEntity, FileWriteResponse{
+			Saved:           false,
+			ReloadState:     "skipped",
+			RequiresRestart: "unknown",
+			Warnings:        []string{},
+			Errors:          validationErrors,
+		})
+		return
+	}
+
+	if err := s.fileProvider.WriteFile(validatedPath, content); err != nil {
 		respondError(w, errors.ErrFilePermission, err.Error())
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	reloadState := "skipped"
+	if isReloadableConfigFile(validatedPath) {
+		reloadState = "queued"
+	}
+	respondJSON(w, http.StatusOK, FileWriteResponse{
+		Saved:           true,
+		ReloadState:     reloadState,
+		RequiresRestart: "unknown",
+		Warnings:        []string{},
+		Errors:          []ValidationError{},
+	})
+}
+
+func isReloadableConfigFile(path string) bool {
+	switch strings.ToLower(filepath.Base(path)) {
+	case "service.yaml", "meta.yaml", "env.yaml", "config.yaml":
+		return true
+	default:
+		return false
+	}
 }
 
 // handleCreateFile POST /api/files
@@ -396,7 +441,7 @@ func (s *Server) handleValidateFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, ValidateFileResponse{
-		Valid:  true,
+		Valid: true,
 	})
 }
 
@@ -413,7 +458,7 @@ func (s *Server) handleSnapshotFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	validatedPath, err := s.pathValidator.Validate(path)
+	validatedPath, err := s.pathValidator.ValidateWritePath(path)
 	if err != nil {
 		respondError(w, errors.ErrFileAccessDenied, err.Error())
 		return
@@ -477,15 +522,10 @@ func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 组合最终路径并再次校验（防止 targetDir + filename 逃逸）
-	destPath := filepath.Clean(filepath.Join(validatedDir, safeName))
-	if !strings.HasPrefix(destPath, s.pathValidator.baseDir) {
-		respondError(w, errors.ErrFileAccessDenied, "resolved path is outside base directory")
-		return
-	}
-	// extraAllowed 路径下的上传也要拒绝（只读区域）
-	if s.pathValidator.IsReadOnly(destPath) {
-		respondError(w, errors.ErrFileAccessDenied, "target directory is read-only")
+	// 组合最终路径并再次校验，确保目标仍属于可写白名单。
+	destPath, err := s.pathValidator.ValidateWritePath(filepath.Join(validatedDir, safeName))
+	if err != nil {
+		respondError(w, errors.ErrFileAccessDenied, err.Error())
 		return
 	}
 

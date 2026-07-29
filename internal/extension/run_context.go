@@ -45,23 +45,31 @@ type TriggerContext struct {
 	// RunID 预先生成的 run_id，非空时 Execute 使用此值，为空时自动生成
 	// 用于异步执行场景：调用方预生成 run_id 并记录到 TaskManager，Execute 使用同一 run_id
 	RunID string
+	// TriggeredAt 原始触发时刻；零值时由执行器取当前时间兜底。
+	TriggeredAt time.Time
 }
 
+var shanghaiLocation = time.FixedZone("CST", 8*60*60)
+
 // BuildSupdEnv 构造 SUPD_* 上下文环境变量
-// REQ-F-016, 2.2.5: 13个变量，按适用场景注入
+// REQ-F-016, 2.2.5: 14个变量，按适用场景注入
 // 所有扩展：SUPD_EVENT/SUPD_TRIGGER_SOURCE/SUPD_TRIGGER_TIME/SUPD_TRIGGER_USER/SUPD_RUN_ID/SUPD_EXTENSION_NAME/SUPD_ACTION
 // lifecycle 触发时：额外注入 SUPD_PHASE
 // service_lifecycle 时：额外注入 SUPD_SERVICE/SUPD_SERVICE_PID
 // on_failure 时：额外注入 SUPD_SERVICE_EXIT_CODE/SUPD_SERVICE_SIGNAL/SUPD_SERVICE_RESTART_COUNT
 // 全局扩展在 service_lifecycle 触发时：注入 SUPD_SERVICE
 func BuildSupdEnv(runID, extName string, tc TriggerContext) []string {
-	env := make([]string, 0, 13)
+	env := make([]string, 0, 14)
+	triggeredAt := tc.TriggeredAt
+	if triggeredAt.IsZero() {
+		triggeredAt = time.Now()
+	}
 
 	// 所有场景都注入的变量
 	env = append(env,
 		fmt.Sprintf("SUPD_EVENT=%s", tc.EventType),
 		fmt.Sprintf("SUPD_TRIGGER_SOURCE=%s", tc.TriggerSource),
-		fmt.Sprintf("SUPD_TRIGGER_TIME=%s", time.Now().Format(time.RFC3339)),
+		fmt.Sprintf("SUPD_TRIGGER_TIME=%s", triggeredAt.In(shanghaiLocation).Format(time.RFC3339)),
 		fmt.Sprintf("SUPD_TRIGGER_USER=%s", tc.TriggerUser),
 		fmt.Sprintf("SUPD_RUN_ID=%s", runID),
 		fmt.Sprintf("SUPD_EXTENSION_NAME=%s", extName),
@@ -84,8 +92,7 @@ func BuildSupdEnv(runID, extName string, tc TriggerContext) []string {
 		}
 	}
 
-	// 服务级扩展（有 ServiceName）注入 SUPD_SERVICE_DIR，便于扩展定位服务目录
-	// 详见 docs/devlog/deviations.md DEV-009（规格外第14个环境变量，实用增强）
+	// 服务级扩展按规格 §2.2.5 注入 SUPD_SERVICE_DIR，便于扩展定位服务目录。
 	if tc.ServiceName != "" && tc.ServiceDir != "" {
 		env = append(env, fmt.Sprintf("SUPD_SERVICE_DIR=%s", tc.ServiceDir))
 	}

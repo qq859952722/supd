@@ -416,15 +416,52 @@ func (s *Server) handleExportExtension(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := validateExtensionForExport(extDir, info.ConfigPath); err != nil {
+		respondError(w, errors.ErrServiceConfigInvalid, fmt.Sprintf("extension export validation failed: %v", err))
+		return
+	}
+
 	// 设置响应头 — tar.gz
 	w.Header().Set("Content-Type", "application/gzip")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s.tar.gz", name))
 
-	// 打包整个扩展目录
-	if err := archive.PackDir(extDir, w); err != nil {
+	if err := archive.PackExtensionDir(extDir, w); err != nil {
 		slog.Error("导出扩展失败", "name", name, "error", err)
 		return
 	}
+}
+
+func validateExtensionForExport(extDir, metaPath string) error {
+	meta, err := config.LoadExtension(metaPath)
+	if err != nil {
+		return fmt.Errorf("load meta.yaml: %w", err)
+	}
+	if filepath.IsAbs(meta.Entry) || strings.Contains(meta.Entry, "..") {
+		return fmt.Errorf("entry must be a safe relative path: %s", meta.Entry)
+	}
+	entryPath := filepath.Join(extDir, meta.Entry)
+	info, err := os.Stat(entryPath)
+	if err != nil {
+		return fmt.Errorf("entry file %s: %w", meta.Entry, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("entry is not a regular file: %s", meta.Entry)
+	}
+	if envPath := filepath.Join(extDir, "env.yaml"); true {
+		if _, err := os.Stat(envPath); err == nil {
+			var env config.EnvFile
+			data, readErr := os.ReadFile(envPath)
+			if readErr != nil {
+				return fmt.Errorf("read env.yaml: %w", readErr)
+			}
+			if err := config.StrictUnmarshal(data, &env, config.DefaultSafeYAMLOptions); err != nil {
+				return fmt.Errorf("parse env.yaml: %w", err)
+			}
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("stat env.yaml: %w", err)
+		}
+	}
+	return nil
 }
 
 // handleImportExtension POST /api/extensions/import
@@ -562,59 +599,33 @@ func (s *Server) handleImportExtensionConfirm(w http.ResponseWriter, r *http.Req
 	unlockImport := acquireImportLock(targetDir)
 	defer unlockImport()
 
-	// 备份现有目录（若存在）— os.Rename 是同文件系统上的原子操作
-	var backupDir string
-	if _, err := os.Stat(targetDir); err == nil {
-		timestamp := time.Now().Format("20060102150405")
-		backupDir = fmt.Sprintf("%s.bak.%s", targetDir, timestamp)
-		if err := os.Rename(targetDir, backupDir); err != nil {
-			slog.Error("backup extension dir failed", "dir", targetDir, "error", err)
-			respondError(w, errors.ErrInternal, "failed to backup existing extension directory")
-			return
+	backupDir, err := executeImportTransaction(importTransactionConfig{
+		TargetDir: targetDir,
+		Reader:    file,
+		Name:      name,
+		KeepData:  false,
+		Validator: func(stagingDir string) error { return validateExtensionImport(stagingDir, name) },
+	})
+	if err != nil {
+		slog.Error("extension import transaction failed", "extension", name, "error", err)
+		code := importErrorCode(err)
+		message := fmt.Sprintf("import failed: %v", err)
+		if code == errors.ErrFileAccessDenied {
+			message = fmt.Sprintf("archive contains path traversal: %v", err)
 		}
-		slog.Info("extension directory backed up", "original", targetDir, "backup", backupDir)
-	}
-
-	// 创建新目录并解压
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		// 目录创建失败，尝试回滚
-		if backupDir != "" {
-			if rbErr := os.Rename(backupDir, targetDir); rbErr != nil {
-				slog.Error("rollback failed after mkdir failure", "error", rbErr)
-			}
-		}
-		respondError(w, errors.ErrInternal, "failed to create extension directory")
+		respondError(w, code, message)
 		return
 	}
-
-	// 解压 — multipart.File 实现 io.Reader，可直接传入
-	if err := archive.UnpackDir(file, targetDir); err != nil {
-		slog.Error("unpack extension archive failed", "dir", targetDir, "error", err)
-		// 解压失败，执行完整回滚
-		if removeErr := os.RemoveAll(targetDir); removeErr != nil {
-			slog.Error("cleanup partial extract failed", "error", removeErr)
-		}
-		if backupDir != "" {
-			if rbErr := os.Rename(backupDir, targetDir); rbErr != nil {
-				slog.Error("rollback backup failed", "backup", backupDir, "target", targetDir, "error", rbErr)
-			}
-		}
-		// H-03-002 修复：zip slip（路径穿越）返回 403 而非 500
-		if stderrors.Is(err, archive.ErrPathTraversal) {
-			respondError(w, errors.ErrFileAccessDenied, fmt.Sprintf("archive contains path traversal: %v", err))
-		} else {
-			respondError(w, errors.ErrInternal, fmt.Sprintf("failed to unpack extension archive: %v", err))
-		}
-		return
-	}
+	cleanupImportBackups(targetDir, 7*24*time.Hour)
 
 	slog.Info("extension imported successfully", "name", name, "service", service, "backup", backupDir)
 
 	// R-001 修复：导入成功后显式触发热重载，避免依赖 fsnotify 异步检测的延迟和漏事件风险
 	// 失败时不影响导入本身（导入已成功），仅记录 warn 日志
 	resp := map[string]any{
-		"name":    name,
-		"message": "extension imported, hot-reload triggered",
+		"name":       name,
+		"message":    "extension imported, hot-reload triggered",
+		"backup_dir": backupDir,
 	}
 	newDiscovery, errCount, errDetails := s.triggerReload()
 	if newDiscovery != nil {

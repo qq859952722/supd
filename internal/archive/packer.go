@@ -29,6 +29,12 @@ const (
 // 这些是临时/备份/日志文件，不应出现在导出包中。
 var forcedExcludes = []string{"*.bak", "*.tmp", "*.log", ".cache/"}
 
+// extensionForcedExcludes 是扩展专属排除项。扩展 data/ 属于可分发资源，不排除。
+var extensionForcedExcludes = []string{
+	"*.bak", "*.tmp", "*.log", ".cache/",
+	"__pycache__/", "node_modules/", ".git/", ".svn/",
+}
+
 // DefaultPackageProfile 内置默认打包规则：排除 data/ 目录（向后兼容）。
 // 当未提供 profile 且不存在 package.default.yaml 时使用。
 var DefaultPackageProfile = &config.PackageConfig{
@@ -76,32 +82,23 @@ func anyPatternMatch(patterns []string, relPath string) bool {
 //  3. profile 的 include/exclude/default 规则
 //  4. profile 为 nil 时使用 DefaultPackageProfile
 func shouldPackEntry(relPath string, profile *config.PackageConfig) bool {
-	// 1. 强制包含 service.yaml
-	if relPath == "service.yaml" {
+	return shouldPackEntryWithRules(relPath, profile, forcedExcludes, "service.yaml")
+}
+
+func shouldPackEntryWithRules(relPath string, profile *config.PackageConfig, forced []string, forceInclude string) bool {
+	if relPath == forceInclude {
 		return true
 	}
-
-	// 2. 强制排除垃圾文件
-	if anyPatternMatch(forcedExcludes, relPath) {
+	if anyPatternMatch(forced, relPath) {
 		return false
 	}
-
-	// 3. 确定 effective profile
 	if profile == nil {
 		profile = DefaultPackageProfile
 	}
-
-	// 4. 应用 profile 规则
 	if profile.Default == "exclude" {
-		// 默认排除模式：仅 include 匹配的路径包含
 		return anyPatternMatch(profile.Include, relPath)
 	}
-
-	// 默认包含模式：排除 exclude 匹配的路径
-	if anyPatternMatch(profile.Exclude, relPath) {
-		return false
-	}
-	return true
+	return !anyPatternMatch(profile.Exclude, relPath)
 }
 
 // shouldSkipDirTree 判断是否应跳过整个目录树（不遍历子条目）。
@@ -109,10 +106,13 @@ func shouldPackEntry(relPath string, profile *config.PackageConfig) bool {
 // 在 default: include 模式下，目录匹配 exclude 时跳过整棵子树（性能优化）。
 // 在 default: exclude 模式下，仅当没有任何 include 模式可能匹配子条目时跳过。
 func shouldSkipDirTree(relPath string, profile *config.PackageConfig) bool {
+	return shouldSkipDirTreeWithRules(relPath, profile, forcedExcludes)
+}
+
+func shouldSkipDirTreeWithRules(relPath string, profile *config.PackageConfig, forced []string) bool {
 	relPath = filepath.ToSlash(relPath)
 
-	// 强制排除的目录直接跳过
-	if anyPatternMatch(forcedExcludes, relPath) {
+	if anyPatternMatch(forced, relPath) {
 		return true
 	}
 
@@ -153,6 +153,16 @@ func PackDir(srcDir string, w io.Writer) error {
 // REQ-I-006: 服务导出为tar.gz格式，支持按 profile 过滤
 // C-01-001 修复：显式关闭 tar/gzip 写入器并检查错误，避免生成损坏的归档
 func PackDirWithProfile(srcDir string, w io.Writer, profile *config.PackageConfig) error {
+	return packDirWithRules(srcDir, w, profile, forcedExcludes, "service.yaml")
+}
+
+// PackExtensionDir 使用扩展专属规则打包：保留 data/，排除运行时与版本控制产物。
+func PackExtensionDir(srcDir string, w io.Writer) error {
+	profile := &config.PackageConfig{Default: "include"}
+	return packDirWithRules(srcDir, w, profile, extensionForcedExcludes, "meta.yaml")
+}
+
+func packDirWithRules(srcDir string, w io.Writer, profile *config.PackageConfig, forced []string, forceInclude string) error {
 	gw := gzip.NewWriter(w)
 	tw := tar.NewWriter(gw)
 
@@ -173,12 +183,12 @@ func PackDirWithProfile(srcDir string, w io.Writer, profile *config.PackageConfi
 		}
 
 		// 目录跳过优化：如果整个目录树都不需要打包，直接 SkipDir
-		if info.IsDir() && shouldSkipDirTree(relPath, profile) {
+		if info.IsDir() && shouldSkipDirTreeWithRules(relPath, profile, forced) {
 			return filepath.SkipDir
 		}
 
 		// 判断此条目是否应包含
-		if !shouldPackEntry(relPath, profile) {
+		if !shouldPackEntryWithRules(relPath, profile, forced, forceInclude) {
 			if info.IsDir() {
 				// 目录本身不打包，但仍需遍历子条目（default:exclude 模式下子条目可能被 include）
 				return nil
@@ -404,7 +414,7 @@ func unpackFromReader(r io.Reader, destDir, prefix string) error {
 			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 				return err
 			}
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY, os.FileMode(header.Mode))
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode))
 			if err != nil {
 				return err
 			}

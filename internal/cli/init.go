@@ -79,18 +79,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// 创建示例服务（5 个，覆盖 4 种 readiness + 3 种 restart policy + depends_on + signals + Docker SSH 集成）
-	if err := createExampleServices(dir); err != nil {
-		return err
-	}
-
-	// 创建示例扩展（4 个全局：3 个示例 + 1 个实用扩展；服务级扩展随 web-demo 创建）
-	if err := createExampleExtensions(dir); err != nil {
-		return err
-	}
-
+	// 默认初始化仅创建配置骨架；教学示例由用户从 examples/ 显式复制。
 	if !initDryRun {
 		infof("supd 工作目录已初始化: %s", dir)
+		infof("  services/ 与 extensions/ 保持为空；教学示例见仓库 examples/")
 	} else {
 		infof("(dry-run) supd 工作目录将初始化于: %s", dir)
 	}

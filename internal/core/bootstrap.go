@@ -24,6 +24,7 @@ type BootstrapConfig struct {
 	HTTPListen     string         // 覆盖 http_listen
 	LogLevel       string         // 覆盖 log_level（--log-level 标志）
 	EventPublisher EventPublisher // REQ-2.9.7: 事件发布器
+	LifecycleLocks *LifecycleLocks
 
 	// REQ-F-028: 运行时配置来源
 	Runtimes           map[string]string // config.yaml 声明的运行时别名映射
@@ -210,6 +211,10 @@ func (b *Bootstrap) Run(ctx context.Context) (*BootstrapResult, error) {
 		result.StateMachines[name] = sm
 	}
 
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+
 	// Step 9: 触发 supd_lifecycle:pre_start 扩展
 	// REQ-D-004, 2.8.1: supd 启动第9步，在启动 autostart 服务之前
 	// I-04-002 修复：移除上方重复的 Step 9 注释，步骤顺序统一为 9 → 10
@@ -390,6 +395,8 @@ func (b *Bootstrap) startAutostartServices(ctx context.Context) error {
 // REQ-F-033: 创建 Process → Logger → StateMachine → Readiness
 // 返回 (进程, 日志器, 重启引擎, cancelFunc, 错误)，进程/日志器/引擎/cancelFunc 在主 goroutine 中注册到 map
 func (b *Bootstrap) startService(ctx context.Context, name string, svcEntry *watch.ServiceEntry) (*Process, *logging.ServiceLogger, *RestartEngine, context.CancelFunc, error) {
+	unlock := b.cfg.LifecycleLocks.Lock(name)
+	defer unlock()
 	result := b.result
 	svcConfig := svcEntry.Config
 	sm := result.StateMachines[name]
@@ -397,10 +404,12 @@ func (b *Bootstrap) startService(ctx context.Context, name string, svcEntry *wat
 	// 构建命令（runtime 解析）
 	// REQ-F-028, REQ-F-029: runtime 别名解析
 	command := svcConfig.Command
-	if svcConfig.Runtime != "" && b.result.RuntimeRegistry != nil {
-		if rt, err := config.Resolve(b.result.RuntimeRegistry, svcConfig.Runtime); err == nil && rt.Available {
-			command = append([]string{rt.AbsPath}, command...)
+	if svcConfig.Runtime != "" {
+		rt, err := config.Resolve(b.result.RuntimeRegistry, svcConfig.Runtime)
+		if err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("service %s runtime %q: %w", name, svcConfig.Runtime, err)
 		}
+		command = append([]string{rt.AbsPath}, command...)
 	}
 
 	// 构建环境变量
@@ -491,7 +500,9 @@ func (b *Bootstrap) startService(ctx context.Context, name string, svcEntry *wat
 	// REQ-F-008: 创建重启策略引擎
 	// 引擎返回给主 goroutine 注册到 map，避免并发写 map
 	engine := BuildRestartEngine(b.result.Config, svcConfig)
-	engine.RecordStart()
+	if svcConfig.Readiness == nil {
+		engine.RecordStart()
+	}
 
 	// 启动 supervisor goroutine：等待进程退出+自动重启
 	// REQ-F-006: 每个服务一个专属 Wait goroutine（避免僵尸进程）
@@ -502,7 +513,7 @@ func (b *Bootstrap) startService(ctx context.Context, name string, svcEntry *wat
 
 	// readiness 检查
 	if svcConfig.Readiness != nil {
-		err := b.checkReadiness(ctx, name, svcConfig.Readiness, sm, proc, preChecker, workdir, env)
+		err := b.checkReadiness(ctx, name, svcConfig.Readiness, sm, proc, engine, preChecker, workdir, env)
 		return proc, svcLogger, engine, svcCancel, err
 	}
 
@@ -522,6 +533,7 @@ func (b *Bootstrap) checkReadiness(
 	readinessCfg *config.ReadinessConfig,
 	sm *StateMachine,
 	proc *Process,
+	engine *RestartEngine,
 	preChecker ReadinessChecker,
 	workdir string,
 	env []string,
@@ -541,7 +553,13 @@ func (b *Bootstrap) checkReadiness(
 	defer checker.Close()
 
 	interval := time.Duration(readinessCfg.IntervalSeconds) * time.Second
+	if interval <= 0 {
+		interval = time.Second
+	}
 	timeout := time.Duration(readinessCfg.TimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
 	checkCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -549,18 +567,18 @@ func (b *Bootstrap) checkReadiness(
 	defer ticker.Stop()
 
 	for {
+		if err := checker.Check(checkCtx); err == nil {
+			// REQ-F-004: 规则3 up→ready，readiness检查通过
+			sm.Transition(EventReadinessPassed)
+			engine.RecordStart()
+			if b.cfg.OnServicePostReady != nil {
+				b.cfg.OnServicePostReady(ctx, name, proc.PID())
+			}
+			return nil
+		}
 		select {
 		case <-ticker.C:
-			if err := checker.Check(checkCtx); err == nil {
-				// readiness 检查通过
-				// REQ-F-004: 规则3 up→ready，readiness检查通过
-				sm.Transition(EventReadinessPassed)
-				// REQ-D-004: service_lifecycle:post_ready — 服务进入 ready 状态后触发
-				if b.cfg.OnServicePostReady != nil {
-					b.cfg.OnServicePostReady(ctx, name, proc.PID())
-				}
-				return nil
-			}
+			continue
 		case <-proc.Done():
 			// 进程在 readiness 检查期间退出
 			// 不做状态转移，由 supervisor goroutine 处理重启逻辑
@@ -689,8 +707,9 @@ func (b *Bootstrap) writeServiceLog(name string, level, message string) {
 // M-04-001/TD-003 修复：抽取共享 RunSupervisor，此处为薄包装
 func (b *Bootstrap) superviseService(ctx context.Context, name string, svcEntry *watch.ServiceEntry, sm *StateMachine, proc *Process, engine *RestartEngine) {
 	callbacks := SupervisorCallbacks{
-		WriteServiceLog: b.writeServiceLog,
-		PublishEvent:    b.cfg.EventPublisher,
+		AcquireLifecycleLock: b.cfg.LifecycleLocks.Lock,
+		WriteServiceLog:      b.writeServiceLog,
+		PublishEvent:         b.cfg.EventPublisher,
 		OnFailure: func(fCtx context.Context, n string, exitCode, signal, restartCount, pid int) {
 			if b.cfg.OnServiceFailure != nil {
 				// 原行为：用 context.Background()，OnFailure 不受 supervisor ctx 影响
@@ -724,7 +743,7 @@ func (b *Bootstrap) superviseService(ctx context.Context, name string, svcEntry 
 			}
 			env := BuildServiceProcessEnv(b.cfg.BaseDir, n, b.result.Config.EnvFiles)
 			// 返回 error，供 RunSupervisor 区分进程退出 vs 超时
-			return b.checkReadiness(rCtx, n, entry.Config.Readiness, s, p, pre, workdir, env)
+			return b.checkReadiness(rCtx, n, entry.Config.Readiness, s, p, engine, pre, workdir, env)
 		},
 		Source: "cli",
 	}

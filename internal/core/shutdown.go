@@ -16,15 +16,21 @@ type ShutdownCoordinator struct {
 	depGraph       *DependencyGraph
 	stateMachines  map[string]*StateMachine // 服务名→状态机
 	stopConfigs    map[string]StopConfig    // 服务名→停止配置
-	graceSeconds   int                     // shutdown_grace_seconds（默认30秒）
+	graceSeconds   int                      // shutdown_grace_seconds（默认30秒）
 	shutdownCh     chan struct{}            // 关机请求信号channel，close表示已请求关机
-	shutdownOnce   sync.Once               // 确保只触发一次关机
+	shutdownOnce   sync.Once                // 确保只触发一次关机
 
 	// REQ-D-004: 生命周期触发回调（由 run.go 注入）
 	// supd_lifecycle:pre_shutdown — supd 退出第1步触发
 	runPreShutdown func(ctx context.Context) error
 	// service_lifecycle:pre_stop — 服务停止前触发，返回 runPreStop 闭包
-	preStopHook func(serviceName string, servicePID int) func() error
+	preStopHook          func(serviceName string, servicePID int) func() error
+	markDraining         func()
+	stopCron             func(context.Context)
+	waitExtensions       func(time.Duration) int
+	stopHTTP             func(context.Context) error
+	stopWatcher          func()
+	acquireLifecycleLock func(string) func()
 }
 
 // NewShutdownCoordinator 创建优雅退出协调器
@@ -54,6 +60,30 @@ func (sc *ShutdownCoordinator) SetPreShutdownHook(hook func(ctx context.Context)
 // REQ-D-004, 2.1.4: 服务停止前触发
 func (sc *ShutdownCoordinator) SetPreStopHook(hook func(serviceName string, servicePID int) func() error) {
 	sc.preStopHook = hook
+}
+
+func (sc *ShutdownCoordinator) SetDrainingHook(hook func()) {
+	sc.markDraining = hook
+}
+
+func (sc *ShutdownCoordinator) SetCronStopper(stop func(context.Context)) {
+	sc.stopCron = stop
+}
+
+func (sc *ShutdownCoordinator) SetExtensionWaiter(wait func(time.Duration) int) {
+	sc.waitExtensions = wait
+}
+
+func (sc *ShutdownCoordinator) SetHTTPStopper(stop func(context.Context) error) {
+	sc.stopHTTP = stop
+}
+
+func (sc *ShutdownCoordinator) SetWatcherStopper(stop func()) {
+	sc.stopWatcher = stop
+}
+
+func (sc *ShutdownCoordinator) SetLifecycleLockAcquirer(acquire func(string) func()) {
+	sc.acquireLifecycleLock = acquire
 }
 
 // GracefulShutdown 执行优雅关机流程
@@ -100,8 +130,13 @@ func (sc *ShutdownCoordinator) executeShutdown(ctx context.Context) error {
 		}
 	}
 
-	// Step 2: 标记"停止接受新请求"
-	// 由 run.go 中处理
+	// Step 2: 拒绝新业务请求和新调度任务。
+	if sc.markDraining != nil {
+		sc.markDraining()
+	}
+	if sc.stopCron != nil {
+		sc.stopCron(ctx)
+	}
 
 	// Step 3: 按依赖反序停止所有运行中的服务
 	// REQ-F-032: 每个服务执行完整停止流程，含pre_stop扩展，受各自的stop.timeout_seconds约束
@@ -109,15 +144,43 @@ func (sc *ShutdownCoordinator) executeShutdown(ctx context.Context) error {
 		slog.Warn("shutdown: error stopping services", "error", err)
 	}
 
-	// Step 4: 等待运行中扩展任务结束（最多30秒）
-	// 由 run.go 中等待扩展任务结束
-	// REQ-F-032: 等待扩展任务最多30秒
+	// Step 4: 等待运行中扩展任务结束（最多30秒，且不超过全局剩余预算）。
+	if sc.waitExtensions != nil {
+		timeout := remainingTimeout(ctx, 30*time.Second)
+		if timeout > 0 {
+			if still := sc.waitExtensions(timeout); still > 0 {
+				slog.Warn("shutdown: extension tasks still running", "count", still)
+			}
+		}
+	}
 
-	// Step 5: 关闭HTTP服务器
-	// 由 run.go 中关闭
+	// Step 5: 关闭HTTP服务器。
+	if sc.stopHTTP != nil {
+		timeout := remainingTimeout(ctx, 5*time.Second)
+		if timeout > 0 {
+			httpCtx, cancel := context.WithTimeout(ctx, timeout)
+			if err := sc.stopHTTP(httpCtx); err != nil {
+				slog.Warn("shutdown: http server stop failed", "error", err)
+			}
+			cancel()
+		}
+	}
 
-	// Step 6: 退出
+	// Step 6: 停止 watcher 并退出。
+	if sc.stopWatcher != nil {
+		sc.stopWatcher()
+	}
 	return nil
+}
+
+func remainingTimeout(ctx context.Context, limit time.Duration) time.Duration {
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining < limit {
+			return remaining
+		}
+	}
+	return limit
 }
 
 // stopServicesInOrder 按依赖反序停止服务
@@ -209,6 +272,12 @@ func (sc *ShutdownCoordinator) stopServiceLayer(ctx context.Context, layer []str
 // 状态变更：stopping → down
 // A-07-001 修复：starting 状态服务在关机时使用 ResetTo(StateDown) 绕过状态机规则
 func (sc *ShutdownCoordinator) stopSingleService(ctx context.Context, name string) error {
+	unlock := func() {}
+	if sc.acquireLifecycleLock != nil {
+		unlock = sc.acquireLifecycleLock(name)
+	}
+	defer unlock()
+
 	sm, ok := sc.stateMachines[name]
 	if !ok {
 		return fmt.Errorf("shutdown: state machine not found for service %s", name)

@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/supdorg/supd/internal/config"
 	"github.com/supdorg/supd/internal/extension"
@@ -146,6 +148,126 @@ func createImportTestServer(t *testing.T) (*Server, *mockExtensionProvider, stri
 }
 
 // --- 正常导入流程 ---
+
+func TestImportTransactionPreservesLocalDataAndBacksUpTarget(t *testing.T) {
+	baseDir := t.TempDir()
+	targetDir := filepath.Join(baseDir, "services", "svc")
+	if err := os.MkdirAll(filepath.Join(targetDir, "data"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(targetDir, "old.txt"), []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(targetDir, "data", "state"), []byte("local"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	archive := buildTarGz(t, map[string]string{"new.txt": "new"})
+	backupDir, err := executeImportTransaction(importTransactionConfig{
+		TargetDir: targetDir,
+		Reader:    bytes.NewReader(archive),
+		Name:      "svc",
+		KeepData:  true,
+	})
+	if err != nil {
+		t.Fatalf("executeImportTransaction: %v", err)
+	}
+	if backupDir == "" {
+		t.Fatal("expected complete backup directory")
+	}
+	if data, err := os.ReadFile(filepath.Join(backupDir, "old.txt")); err != nil || string(data) != "old" {
+		t.Fatalf("backup old content = %q, %v", data, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(targetDir, "data", "state")); err != nil || string(data) != "local" {
+		t.Fatalf("preserved data = %q, %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(targetDir, "old.txt")); !os.IsNotExist(err) {
+		t.Fatalf("old file should only remain in backup, stat err=%v", err)
+	}
+}
+
+func TestImportTransactionValidationFailureLeavesTargetUntouched(t *testing.T) {
+	baseDir := t.TempDir()
+	targetDir := filepath.Join(baseDir, "extensions", "ext")
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(targetDir, "old.txt"), []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	archive := buildTarGz(t, map[string]string{"new.txt": "new"})
+	_, err := executeImportTransaction(importTransactionConfig{
+		TargetDir: targetDir,
+		Reader:    bytes.NewReader(archive),
+		Name:      "ext",
+		Validator: func(string) error { return fmt.Errorf("invalid") },
+	})
+	if err == nil {
+		t.Fatal("expected validation failure")
+	}
+	if data, readErr := os.ReadFile(filepath.Join(targetDir, "old.txt")); readErr != nil || string(data) != "old" {
+		t.Fatalf("target changed after validation failure: %q, %v", data, readErr)
+	}
+	matches, _ := filepath.Glob(filepath.Join(filepath.Dir(targetDir), ".ext.staging-*"))
+	if len(matches) != 0 {
+		t.Fatalf("staging directories not cleaned: %v", matches)
+	}
+}
+
+func TestCleanupImportBackupsRemovesOnlyExpired(t *testing.T) {
+	baseDir := t.TempDir()
+	targetDir := filepath.Join(baseDir, "services", "svc")
+	oldBackup := targetDir + ".bak.old"
+	recentBackup := targetDir + ".bak.recent"
+	for _, dir := range []string{oldBackup, recentBackup} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldTime := time.Now().Add(-8 * 24 * time.Hour)
+	if err := os.Chtimes(oldBackup, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	cleanupImportBackups(targetDir, 7*24*time.Hour)
+	if _, err := os.Stat(oldBackup); !os.IsNotExist(err) {
+		t.Fatalf("expired backup still exists: %v", err)
+	}
+	if _, err := os.Stat(recentBackup); err != nil {
+		t.Fatalf("recent backup removed: %v", err)
+	}
+}
+
+func TestRecoverInterruptedImportsRestoresBackup(t *testing.T) {
+	baseDir := t.TempDir()
+	parentDir := filepath.Join(baseDir, "services")
+	targetDir := filepath.Join(parentDir, "svc")
+	backupDir := targetDir + ".bak.test"
+	stagingDir := filepath.Join(parentDir, ".svc.staging-test")
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(backupDir, "old.txt"), []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(stagingDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	markerPath := filepath.Join(parentDir, ".svc.importing")
+	if err := writeImportMarker(markerPath, importTransactionMarker{
+		TargetDir: targetDir, StagingDir: stagingDir, BackupDir: backupDir, Phase: "backup_moved",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	RecoverInterruptedImports(baseDir)
+	if data, err := os.ReadFile(filepath.Join(targetDir, "old.txt")); err != nil || string(data) != "old" {
+		t.Fatalf("backup not restored: %q, %v", data, err)
+	}
+	for _, path := range []string{stagingDir, markerPath, backupDir} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("recovery artifact still exists %s: %v", path, err)
+		}
+	}
+}
 
 // TestImportExtension_FullFlow 正常两阶段导入：预览 → 确认 → 验证扩展目录已创建
 func TestImportExtension_FullFlow(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/supdorg/supd/internal/config"
@@ -44,6 +45,8 @@ type DispatchRequest struct {
 	Discovery *watch.DiscoveryResult
 	// TriggerUser 触发者
 	TriggerUser string
+	// TriggeredAt 原始触发时刻；零值时 Dispatch 入口补当前时间。
+	TriggeredAt time.Time
 }
 
 // Dispatcher 触发调度器
@@ -140,6 +143,9 @@ type matchedExtension struct {
 //   - 同一服务内：先串行执行全局扩展（字母序），再串行执行服务级扩展（字母序）
 //   - 前一个失败不影响后一个执行
 func (d *Dispatcher) Dispatch(ctx context.Context, req DispatchRequest) []*RunResult {
+	if req.TriggeredAt.IsZero() {
+		req.TriggeredAt = time.Now()
+	}
 	// Step 1: 找到所有匹配的扩展
 	matched := findMatchingExtensions(req)
 	if len(matched) == 0 {
@@ -418,6 +424,7 @@ func (d *Dispatcher) executeForService(ctx context.Context, serviceName string, 
 			RestartCount:    req.RestartCount,
 			ActionID:        ext.actionID,
 			WorkDir:         workDir,
+			TriggeredAt:     req.TriggeredAt,
 		}
 
 		// REQ-F-022: 前一个失败不影响后一个执行

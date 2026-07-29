@@ -418,7 +418,7 @@ func TestValidateServicesAndExtensions_ValidExtension(t *testing.T) {
 	}
 	// ExtensionMeta.Entry 是 string（非 list），Triggers 是 struct（非 list）
 	content := `name: ext1
-version: "1.0"
+version: "1.0.0"
 description: test extension
 entry: run.sh
 timeout_seconds: 60

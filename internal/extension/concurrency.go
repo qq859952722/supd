@@ -13,6 +13,8 @@ import (
 // REQ-F-018, 2.2.7: 4种并发策略，锁定不可新增
 type ConcurrencyPolicy string
 
+const maxSerializeQueue = 16
+
 const (
 	// PolicyReplace 取消前任务，启动新任务（默认）
 	PolicyReplace ConcurrencyPolicy = "replace"
@@ -107,7 +109,7 @@ type ActionTracker struct {
 	policy          ConcurrencyPolicy
 	debounceMs      int
 	runningRuns     map[string]*runningTaskInfo // 正在运行的 run_id → 任务信息
-	pendingRun      *pendingRunInfo             // serialize 时的排队任务
+	pendingRuns     []*pendingRunInfo           // serialize 时的有界 FIFO 队列
 	debouncePending *debouncePendingInfo        // debounce 时的待执行任务
 	debouncer       *Debouncer                  // debounce 时的定时器
 	mu              sync.Mutex
@@ -230,27 +232,31 @@ func (t *ActionTracker) applySerialize(parentCtx context.Context, runID string, 
 		return result, err
 	}
 
-	// 有运行中的任务，将新任务放入 pendingRun
-	// 如果已有排队任务，取消前一个（只保留最后一个）
-	if t.pendingRun != nil {
-		t.pendingRun.resultCh <- applyResult{
-			result: &RunResult{
-				RunID: t.pendingRun.runID,
-				State: TaskCanceled,
-			},
-		}
+	// 有运行中的任务，按到达顺序进入有界 FIFO。
+	if len(t.pendingRuns) >= maxSerializeQueue {
+		t.mu.Unlock()
+		return &RunResult{RunID: runID, State: TaskFailed, ResultLevel: "error", ResultMsg: "serialize queue full"}, fmt.Errorf("serialize queue full")
 	}
-	t.pendingRun = &pendingRunInfo{
+	pending := &pendingRunInfo{
 		runID:     runID,
 		parentCtx: parentCtx,
 		execute:   execute,
 		resultCh:  resultCh,
 	}
+	t.pendingRuns = append(t.pendingRuns, pending)
 	t.mu.Unlock()
 
-	// 等待执行结果
-	ar := <-resultCh
-	return ar.result, ar.err
+	// 父 context 在执行前取消时，从队列移除并返回 canceled。
+	select {
+	case ar := <-resultCh:
+		return ar.result, ar.err
+	case <-parentCtx.Done():
+		if t.cancelPendingRun(pending) {
+			return &RunResult{RunID: runID, State: TaskCanceled}, nil
+		}
+		ar := <-resultCh
+		return ar.result, ar.err
+	}
 }
 
 // applyParallel 并行执行
@@ -374,26 +380,28 @@ func (t *ActionTracker) executeDebouncePending(parentCtx context.Context) {
 	pending.resultCh <- applyResult{result: result, err: err}
 }
 
-// startPendingRunLocked 启动排队的 serialize 任务
-// 必须在持有 t.mu 的情况下调用
-// 使用排队任务自身的 parentCtx 派生 context，确保父 context 取消时传播到排队任务
-//
-// A-04-001 修复说明（语义澄清）：
-// serialize 策略 pendingRun 为单指针，新触发会覆盖旧 pending（"last pending wins" 语义）。
-// 规格 §2.2.7 仅定义"排队，前任务完成后才跑新的"，未规定 pending 队列上限。
-// 当前实现的语义：
-//   - 同一 action 在运行中有 N 次新触发，仅最后一次会排队执行，前 N-1 次返回 TaskCanceled
-//   - 这与 debounce 的"最后一次生效"语义一致，避免无限堆积 pending 任务导致内存泄漏
-// 替代方案（pending 队列）的代价：需要限制队列长度（否则 OOM），且每次触发都要等待
-// N 次任务完成才能执行——违反"排队"的直觉（用户期望快速响应最新触发）。
-// 如规格 v1.6 需要队列语义，应显式定义 concurrency:serialize:N（N=队列上限）。
+// cancelPendingRun 在任务尚未执行时从 FIFO 队列移除。
+func (t *ActionTracker) cancelPendingRun(target *pendingRunInfo) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for i, pending := range t.pendingRuns {
+		if pending == target {
+			t.pendingRuns = append(t.pendingRuns[:i], t.pendingRuns[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// startPendingRunLocked 从 FIFO 队首启动下一个 serialize 任务。
+// 必须在持有 t.mu 的情况下调用。
 func (t *ActionTracker) startPendingRunLocked() {
-	if t.pendingRun == nil || len(t.runningRuns) > 0 {
+	if len(t.pendingRuns) == 0 || len(t.runningRuns) > 0 {
 		return
 	}
 
-	pending := t.pendingRun
-	t.pendingRun = nil
+	pending := t.pendingRuns[0]
+	t.pendingRuns = t.pendingRuns[1:]
 
 	// 从排队任务存储的 parentCtx 派生 context（而非 context.Background()）
 	ctx, cancel := context.WithCancel(pending.parentCtx)
@@ -469,16 +477,13 @@ func (t *ActionTracker) Stop() {
 		t.debouncer.Stop()
 	}
 
-	// 取消 serialize 的 pending 任务
-	if t.pendingRun != nil {
-		t.pendingRun.resultCh <- applyResult{
-			result: &RunResult{
-				RunID: t.pendingRun.runID,
-				State: TaskCanceled,
-			},
+	// 取消 serialize 的全部 pending 任务。
+	for _, pending := range t.pendingRuns {
+		pending.resultCh <- applyResult{
+			result: &RunResult{RunID: pending.runID, State: TaskCanceled},
 		}
-		t.pendingRun = nil
 	}
+	t.pendingRuns = nil
 
 	// 取消 debounce 的 pending 任务
 	if t.debouncePending != nil {
@@ -507,6 +512,7 @@ func (t *ActionTracker) HasRunning() bool {
 type ConcurrencyManager struct {
 	trackers map[string]*ActionTracker // key = "extName:actionID"
 	mu       sync.RWMutex
+	draining bool
 }
 
 // NewConcurrencyManager 创建 ConcurrencyManager
@@ -541,6 +547,20 @@ func (m *ConcurrencyManager) GetTracker(extName, actionID string, policy Concurr
 	tracker = NewActionTracker(policy, debounceMs)
 	m.trackers[key] = tracker
 	return tracker
+}
+
+// MarkDraining 标记关机阶段。调用方应在提交新扩展任务前检查 IsDraining。
+func (m *ConcurrencyManager) MarkDraining() {
+	m.mu.Lock()
+	m.draining = true
+	m.mu.Unlock()
+}
+
+// IsDraining 返回是否已进入关机阶段。
+func (m *ConcurrencyManager) IsDraining() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.draining
 }
 
 // CancelRun 取消指定 runID 的运行任务

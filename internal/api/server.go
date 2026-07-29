@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"runtime/debug"
+	"sync"
+	"sync/atomic"
 
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
@@ -24,29 +26,31 @@ type Server struct {
 	config     *config.Config
 
 	// 依赖注入接口（由 adapters.go 中的 Core*Provider 实现）
-	stateProvider       StateProvider
-	serviceOperator     ServiceOperator
-	extProvider         ExtensionProvider
-	taskProvider        TaskProvider
-	cronProvider        CronProvider
-	settingsProvider    SettingsProvider
-	runtimeProvider     RuntimeProvider
-	systemProvider      SystemProvider
-	fileProvider        FileProvider
-	authProvider        AuthProvider
-	logProvider         LogProvider
-	watchProvider       WatchProvider
+	stateProvider        StateProvider
+	serviceOperator      ServiceOperator
+	extProvider          ExtensionProvider
+	taskProvider         TaskProvider
+	cronProvider         CronProvider
+	settingsProvider     SettingsProvider
+	runtimeProvider      RuntimeProvider
+	systemProvider       SystemProvider
+	fileProvider         FileProvider
+	authProvider         AuthProvider
+	logProvider          LogProvider
+	watchProvider        WatchProvider
 	serviceHistoryGetter ServiceHistoryGetter
-	eventRing           *EventRingBuffer
-	longPollLimiter     *LongPollLimiter
-	pathValidator       *PathValidator
+	eventRing            *EventRingBuffer
+	longPollLimiter      *LongPollLimiter
+	pathValidator        *PathValidator
+	draining             atomic.Bool
+	httpServerMu         sync.RWMutex
 }
 
 // NewServer 创建并配置 API 服务器。
 func NewServer(cfg *config.Config) *Server {
 	s := &Server{
-		router:         chi.NewRouter(),
-		config:         cfg,
+		router:          chi.NewRouter(),
+		config:          cfg,
 		longPollLimiter: NewLongPollLimiter(GlobalLongPollLimit, PerClientLongPollLimit), // REQ-I-003: 长轮询并发限制器，全局50/单客户端5
 	}
 
@@ -121,6 +125,21 @@ func panicRecoverer(next http.Handler) http.Handler {
 }
 
 // setupMiddleware 配置全局中间件。
+// SetDraining 标记关机阶段；之后新的非只读 API 请求返回 503。
+func (s *Server) SetDraining() {
+	s.draining.Store(true)
+}
+
+func (s *Server) shutdownMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.draining.Load() && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			errors.WriteErrorResponse(w, errors.NewServiceError(errors.ErrServiceBusy, "supd 正在关机，暂不接受新请求"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) setupMiddleware() {
 	r := s.router
 
@@ -133,6 +152,7 @@ func (s *Server) setupMiddleware() {
 	// C-02-003 修复：使用自定义 panic 恢复中间件，返回 JSON 格式错误响应
 	// （替代 chi Recoverer 的纯文本 "Internal Server Error"）
 	r.Use(panicRecoverer)
+	r.Use(s.shutdownMiddleware)
 
 	// 认证中间件
 	if s.config != nil {
@@ -201,31 +221,31 @@ func (s *Server) setupRoutes() {
 			r.Post("/stop", s.handleStopAllServices)         // POST /api/services/stop (批量停止)
 
 			r.Route("/{name}", func(r chi.Router) {
-				r.Get("/", s.handleGetService)         // GET /api/services/{name}
-				r.Put("/", s.handleUpdateService)      // PUT /api/services/{name}
-				r.Delete("/", s.handleDeleteService)   // DELETE /api/services/{name}
+				r.Get("/", s.handleGetService)       // GET /api/services/{name}
+				r.Put("/", s.handleUpdateService)    // PUT /api/services/{name}
+				r.Delete("/", s.handleDeleteService) // DELETE /api/services/{name}
 
 				// 服务操作
-				r.Post("/start", s.handleStartService)   // POST /api/services/{name}/start
-				r.Post("/stop", s.handleStopService)     // POST /api/services/{name}/stop
-				r.Post("/restart", s.handleRestartService) // POST /api/services/{name}/restart
-				r.Post("/signal", s.handleSignalService) // POST /api/services/{name}/signal
+				r.Post("/start", s.handleStartService)              // POST /api/services/{name}/start
+				r.Post("/stop", s.handleStopService)                // POST /api/services/{name}/stop
+				r.Post("/restart", s.handleRestartService)          // POST /api/services/{name}/restart
+				r.Post("/signal", s.handleSignalService)            // POST /api/services/{name}/signal
 				r.Post("/force-stop", s.handleForceStopService)     // POST /api/services/{name}/force-stop
 				r.Post("/clear-failed", s.handleClearFailedService) // POST /api/services/{name}/clear-failed
 				r.Put("/config", s.handleUpdateServiceConfig)       // PUT /api/services/{name}/config
 				r.Put("/env", s.handleSaveServiceEnv)               // PUT /api/services/{name}/env
 
 				// 服务日志
-				r.Get("/logs", s.handleServiceLogs)         // GET /api/services/{name}/logs
-				r.Get("/logs/search", s.handleSearchLogs)   // GET /api/services/{name}/logs/search
+				r.Get("/logs", s.handleServiceLogs)       // GET /api/services/{name}/logs
+				r.Get("/logs/search", s.handleSearchLogs) // GET /api/services/{name}/logs/search
 
 				// 服务资源
 				r.Get("/resources", s.handleServiceResources) // GET /api/services/{name}/resources
 				r.Get("/processes", s.handleServiceProcesses) // GET /api/services/{name}/processes
 
 				// 服务历史
-				r.Get("/history", s.handleServiceHistory)  // GET /api/services/{name}/history
-				r.Get("/deaths", s.handleServiceDeaths)    // GET /api/services/{name}/deaths
+				r.Get("/history", s.handleServiceHistory) // GET /api/services/{name}/history
+				r.Get("/deaths", s.handleServiceDeaths)   // GET /api/services/{name}/deaths
 
 				// 服务导入导出
 				r.Get("/export", s.handleExportService)               // GET /api/services/{name}/export[?profile=<name>]
@@ -270,11 +290,11 @@ func (s *Server) setupRoutes() {
 				r.Delete("/", s.handleClearRuns)
 
 				r.Route("/{runID}", func(r chi.Router) {
-				r.Get("/", s.handleGetRun)
-				r.Get("/logs", s.handleGetRunLogs)
-				r.Delete("/logs", s.handleDeleteRunLogs)
-				r.Post("/cancel", s.handleCancelRun)
-			})
+					r.Get("/", s.handleGetRun)
+					r.Get("/logs", s.handleGetRunLogs)
+					r.Delete("/logs", s.handleDeleteRunLogs)
+					r.Post("/cancel", s.handleCancelRun)
+				})
 			})
 		})
 
@@ -367,22 +387,25 @@ func (s *Server) Start(addrReady func(addr string)) error {
 		return err
 	}
 	actual := ln.Addr().String()
+	server := &http.Server{Handler: s.router}
+	s.httpServerMu.Lock()
+	s.httpServer = server
+	s.httpServerMu.Unlock()
 	if addrReady != nil {
 		addrReady(actual)
 	}
-
-	s.httpServer = &http.Server{
-		Handler: s.router,
-	}
-	return s.httpServer.Serve(ln)
+	return server.Serve(ln)
 }
 
 // Stop 优雅关闭 HTTP 服务器。
 func (s *Server) Stop(ctx context.Context) error {
-	if s.httpServer == nil {
+	s.httpServerMu.RLock()
+	server := s.httpServer
+	s.httpServerMu.RUnlock()
+	if server == nil {
 		return nil
 	}
-	return s.httpServer.Shutdown(ctx)
+	return server.Shutdown(ctx)
 }
 
 // Router 返回底层 chi.Router，供外部使用（如静态文件服务）。

@@ -185,6 +185,11 @@ export default function ExtensionsPage() {
 
   const extensions = Array.isArray(data) ? data : []
   const serviceList = servicesData?.services ?? []
+  const versionError = createForm.version === ''
+    ? '版本不能为空'
+    : /^[0-9]+\.[0-9]+\.[0-9]+$/.test(createForm.version)
+      ? ''
+      : '版本格式必须为 X.Y.Z，如 1.0.0'
 
   // 分离全局扩展和服务扩展
   const globalExts = extensions.filter((e) => !e.service)
@@ -1019,7 +1024,7 @@ export default function ExtensionsPage() {
             <DialogFooter>
               <Button
                 variant="primary"
-                disabled={!createForm.name || !createForm.entry}
+                disabled={!createForm.name || !createForm.entry || versionError !== ''}
                 onClick={() => createMutation.mutate()}
               >
                 创建
@@ -1271,9 +1276,9 @@ function ExtensionLogDialog({ extName, onClose }: { extName: string; onClose: ()
           </button>
         </div>
         {/* 左右分栏内容 — 窄屏改纵向堆叠 */}
-        <div className="flex flex-col sm:flex-row flex-1 overflow-hidden">
+        <div className="flex flex-1 flex-row overflow-hidden">
           {/* 左侧：运行记录列表 */}
-          <div className="w-full sm:w-56 shrink-0 border-b sm:border-b-0 sm:border-r border-[var(--color-border-secondary)] overflow-auto bg-[var(--color-bg-tertiary)] max-h-[30vh] sm:max-h-none">
+          <div className="w-56 shrink-0 overflow-auto border-r border-[var(--color-border-secondary)] bg-[var(--color-bg-tertiary)]">
             {isLoading ? (
               <div className="flex items-center justify-center py-8 text-sm text-[var(--color-text-tertiary)]">
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />{t.common.loading}

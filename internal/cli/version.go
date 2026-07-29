@@ -2,6 +2,8 @@ package cli
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"runtime"
 
 	"github.com/spf13/cobra"
@@ -23,11 +25,12 @@ var versionCmd = &cobra.Command{
 
 // runVersion 执行 version 命令
 func runVersion(cmd *cobra.Command, args []string) error {
-	fmt.Printf("supd %s\n", Version)
-	fmt.Printf("  build time: %s\n", BuildTime)
-	fmt.Printf("  go version: %s\n", runtime.Version())
-	fmt.Printf("  os/arch:    %s/%s\n", runtime.GOOS, runtime.GOARCH)
-	return nil
+	var out io.Writer = os.Stdout
+	if cmd != nil {
+		out = cmd.OutOrStdout()
+	}
+	_, err := fmt.Fprintf(out, "supd %s\n  build time: %s\n  go version: %s\n  os/arch:    %s/%s\n", Version, BuildTime, runtime.Version(), runtime.GOOS, runtime.GOARCH)
+	return err
 }
 
 // SetVersionInfo 设置版本信息，由 main 包调用

@@ -115,7 +115,7 @@ function DialogContent({
 
 function DialogHeader({ className, children }: { className?: string; children: ReactNode }) {
   return (
-    <div className={cn('flex flex-col space-y-1.5 text-center sm:text-left mb-4', className)}>
+    <div className={cn('mb-4 flex flex-col space-y-1.5 text-left', className)}>
       {children}
     </div>
   )
@@ -139,7 +139,7 @@ function DialogDescription({ className, children }: { className?: string; childr
 
 function DialogFooter({ className, children }: { className?: string; children: ReactNode }) {
   return (
-    <div className={cn('flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2 mt-6', className)}>
+    <div className={cn('mt-6 flex flex-row justify-end space-x-2', className)}>
       {children}
     </div>
   )

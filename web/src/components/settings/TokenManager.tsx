@@ -55,7 +55,7 @@ export function TokenManager({ tokenConfigured, authMode }: TokenManagerProps) {
 
         {/* 重新生成提示 */}
         <div className="rounded-md border border-[var(--color-border-secondary)] bg-[var(--color-bg-tertiary)] px-3 py-2 text-sm text-[var(--color-text-secondary)]">
-          Token 重新生成请使用 CLI 命令：<code className="rounded bg-[var(--color-bg-secondary)] px-1 py-0.5 font-mono text-xs">supd token regenerate</code>
+          Token 重新生成请使用 CLI 命令：<code className="rounded bg-[var(--color-bg-secondary)] px-1 py-0.5 font-mono text-xs">supd token generate</code>。生成后需重启 supd 生效。
         </div>
 
         {/* 验证Token */}

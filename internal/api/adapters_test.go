@@ -296,8 +296,8 @@ func TestCoreHistoryGetter_WithStore(t *testing.T) {
 func TestCoreStateProvider_SetDiscovery_Nil(t *testing.T) {
 	// nil 参数 → no-op
 	p := &CoreStateProvider{
-		StateMachines:  map[string]*core.StateMachine{},
-		Discovery:      &watch.DiscoveryResult{},
+		StateMachines: map[string]*core.StateMachine{},
+		Discovery:     &watch.DiscoveryResult{},
 	}
 	p.SetDiscovery(nil)
 	if p.Discovery == nil {
@@ -409,10 +409,10 @@ func TestCoreStateProvider_ListServiceStates(t *testing.T) {
 // TestConfigAuthProvider_VerifyToken 验证常量时间 token 比较。
 func TestConfigAuthProvider_VerifyToken(t *testing.T) {
 	tests := []struct {
-		name     string
-		stored   string
-		input    string
-		want     bool
+		name   string
+		stored string
+		input  string
+		want   bool
 	}{
 		{"Correct", "secret-token", "secret-token", true},
 		{"Wrong", "secret-token", "wrong-token", false},
@@ -831,10 +831,14 @@ func TestCoreWatchProvider_ReloadConfig(t *testing.T) {
 // TestOsFileProvider_FileTree 验证 FileTree 返回根目录下的文件和子目录节点。
 func TestOsFileProvider_FileTree(t *testing.T) {
 	baseDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(baseDir, "file1.txt"), []byte("hello"), 0644); err != nil {
+	servicesDir := filepath.Join(baseDir, "services")
+	if err := os.MkdirAll(servicesDir, 0755); err != nil {
+		t.Fatalf("mkdir services: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(servicesDir, "file1.txt"), []byte("hello"), 0644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	subDir := filepath.Join(baseDir, "subdir")
+	subDir := filepath.Join(servicesDir, "subdir")
 	if err := os.MkdirAll(subDir, 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -843,7 +847,7 @@ func TestOsFileProvider_FileTree(t *testing.T) {
 	}
 
 	p := &OsFileProvider{BaseDir: baseDir, PathValidator: NewPathValidator(baseDir)}
-	nodes, err := p.FileTree("")
+	nodes, err := p.FileTree("services")
 	if err != nil {
 		t.Fatalf("FileTree: %v", err)
 	}
@@ -887,33 +891,28 @@ func TestOsFileProvider_FileTree_InvalidPath(t *testing.T) {
 	}
 }
 
-// TestOsFileProvider_FileTree_WithLogDir 验证 LogDir 在 BaseDir 外时被加入为虚拟节点。
-func TestOsFileProvider_FileTree_WithLogDir(t *testing.T) {
+// TestOsFileProvider_FileTree_HidesForbiddenRoots 验证内部目录和根文件不进入文件树。
+func TestOsFileProvider_FileTree_HidesForbiddenRoots(t *testing.T) {
 	baseDir := t.TempDir()
-	logDir := t.TempDir() // 在 baseDir 外
-	if err := os.MkdirAll(filepath.Join(logDir, "services"), 0755); err != nil {
-		t.Fatalf("mkdir: %v", err)
+	for _, name := range []string{"history", "script_tmp", ".supd"} {
+		if err := os.MkdirAll(filepath.Join(baseDir, name), 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", name, err)
+		}
 	}
-	if err := os.WriteFile(filepath.Join(logDir, "services", "current.log"), []byte("log"), 0644); err != nil {
-		t.Fatalf("write: %v", err)
+	if err := os.WriteFile(filepath.Join(baseDir, "config.yaml"), []byte("settings: {}"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(baseDir, "services"), 0755); err != nil {
+		t.Fatalf("mkdir services: %v", err)
 	}
 
-	p := &OsFileProvider{BaseDir: baseDir, PathValidator: NewPathValidator(baseDir), LogDir: logDir}
+	p := &OsFileProvider{BaseDir: baseDir, PathValidator: NewPathValidator(baseDir)}
 	nodes, err := p.FileTree("")
 	if err != nil {
 		t.Fatalf("FileTree: %v", err)
 	}
-	foundLogs := false
-	for _, n := range nodes {
-		if n.Name == "logs" {
-			foundLogs = true
-			if !n.IsDir {
-				t.Errorf("logs IsDir = false, want true")
-			}
-		}
-	}
-	if !foundLogs {
-		t.Errorf("expected 'logs' virtual node in tree")
+	if len(nodes) != 1 || nodes[0].Name != "services" {
+		t.Fatalf("tree nodes = %+v, want only services", nodes)
 	}
 }
 
@@ -1086,10 +1085,10 @@ func TestOsFileProvider_ValidateFile(t *testing.T) {
 	p := &OsFileProvider{BaseDir: baseDir, PathValidator: NewPathValidator(baseDir)}
 
 	tests := []struct {
-		name      string
-		path      string
-		content   []byte
-		wantErrs  int
+		name     string
+		path     string
+		content  []byte
+		wantErrs int
 	}{
 		{"ValidYAML", "/test.yaml", []byte("key: value\nlist:\n  - a\n  - b\n"), 0},
 		{"InvalidYAML", "/test.yaml", []byte("key: [unclosed\n"), 1},
@@ -1126,13 +1125,13 @@ func TestOsFileProvider_ValidateFile_StrictUnknownField(t *testing.T) {
 		{
 			name:     "ServiceYAML_UnknownField",
 			path:     "/services/demo/service.yaml",
-			content:  "name: demo\nversion: \"1.0\"\nunknown_field_xyz: value\ncommand: [\"sleep\"]\n",
+			content:  "name: demo\nversion: \"1.0.0\"\nunknown_field_xyz: value\ncommand: [\"sleep\"]\n",
 			wantErrs: 1,
 		},
 		{
 			name:     "ServiceYAML_Valid",
 			path:     "/services/demo/service.yaml",
-			content:  "name: demo\nversion: \"1.0\"\ncommand: [\"sleep\"]\n",
+			content:  "name: demo\nversion: \"1.0.0\"\ncommand: [\"sleep\"]\n",
 			wantErrs: 0,
 		},
 		{
@@ -1144,7 +1143,7 @@ func TestOsFileProvider_ValidateFile_StrictUnknownField(t *testing.T) {
 		{
 			name:     "MetaYAML_Valid",
 			path:     "/extensions/demo/meta.yaml",
-			content:  "name: demo\nversion: \"1.0\"\nentry: run.sh\n",
+			content:  "name: demo\nversion: \"1.0.0\"\nentry: run.sh\n",
 			wantErrs: 0,
 		},
 		{
@@ -1168,7 +1167,7 @@ func TestOsFileProvider_ValidateFile_StrictUnknownField(t *testing.T) {
 		{
 			name:     "ConfigYAML_Valid",
 			path:     "/config.yaml",
-			content:  "settings:\n  http_listen: \":8080\"\n",
+			content:  "settings:\n  http_listen: \":8080\"\n  auth_mode: none\n",
 			wantErrs: 0,
 		},
 		{
@@ -1267,11 +1266,11 @@ func TestConfigRuntimeProvider_ListRuntimes(t *testing.T) {
 func testBuildMeta(name string, withActions bool) *config.ExtensionMeta {
 	enabled := true
 	meta := &config.ExtensionMeta{
-		Name:     name,
-		Version:  "1.0.0",
-		Enabled:  &enabled,
-		Runtime:  "bash",
-		Entry:    "main.sh",
+		Name:    name,
+		Version: "1.0.0",
+		Enabled: &enabled,
+		Runtime: "bash",
+		Entry:   "main.sh",
 	}
 	if withActions {
 		meta.Actions = []config.Action{{ID: "run", Label: "Run"}}

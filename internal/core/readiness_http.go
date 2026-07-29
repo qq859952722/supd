@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/supdorg/supd/internal/config"
 )
@@ -14,7 +13,6 @@ import (
 type httpChecker struct {
 	url            string
 	expectedStatus int
-	intervalSeconds int
 }
 
 func newHTTPChecker(cfg *config.ReadinessConfig) (*httpChecker, error) {
@@ -26,51 +24,26 @@ func newHTTPChecker(cfg *config.ReadinessConfig) (*httpChecker, error) {
 		expectedStatus = 200
 	}
 	return &httpChecker{
-		url:             cfg.URL,
-		expectedStatus:  expectedStatus,
-		intervalSeconds: cfg.IntervalSeconds,
+		url:            cfg.URL,
+		expectedStatus: expectedStatus,
 	}, nil
 }
 
-// Check 循环发送HTTP GET，状态码匹配即返回nil
-// REQ-F-009: interval_seconds间隔循环检查，超时由ctx控制
+// Check 执行单次 HTTP 探测；重试间隔和总超时由调用方负责。
 func (h *httpChecker) Check(ctx context.Context) error {
-	interval := time.Duration(h.intervalSeconds) * time.Second
-	client := &http.Client{Timeout: interval}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.url, nil)
-		if err != nil {
-			// URL无效，等待后重试
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(interval):
-				continue
-			}
-		}
-
-		resp, err := client.Do(req)
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == h.expectedStatus {
-				return nil
-			}
-		}
-
-		// 等待interval或ctx取消
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(interval):
-		}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.url, nil)
+	if err != nil {
+		return err
 	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != h.expectedStatus {
+		return fmt.Errorf("readiness http_check: status %d, expected %d", resp.StatusCode, h.expectedStatus)
+	}
+	return nil
 }
 
 // Close http_check无需清理

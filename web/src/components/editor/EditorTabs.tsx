@@ -21,6 +21,14 @@ interface FileVersion {
   size: number
 }
 
+interface FileWriteResponse {
+  saved: boolean
+  reload_state: 'queued' | 'skipped'
+  requires_restart: 'unknown' | 'yes' | 'no'
+  warnings: string[]
+  errors: Array<{ line?: number; column?: number; message: string }>
+}
+
 interface TabContextMenuState {
   x: number
   y: number
@@ -51,15 +59,26 @@ export function EditorTabs() {
       updateTabContent(tabId, content)
       try {
         // silent=true 抑制全局 toast，由本地回调控制提示
-        await apiPut('/api/files?path=' + encodeURIComponent(tab.path), { content }, true)
+        const result = await apiPut<FileWriteResponse>('/api/files?path=' + encodeURIComponent(tab.path), { content }, true)
         markTabSaved(tabId)
-        toast.success(`已保存：${tab.name}`)
+        toast.success(result.reload_state === 'queued' ? `已保存，配置正在重新加载：${tab.name}` : `已保存：${tab.name}`)
       } catch {
         toast.error(`保存失败：${tab.name}`)
       }
     },
     [updateTabContent, markTabSaved],
   )
+
+  // REQ-2.3.1: 仅由用户显式创建版本快照，普通保存不创建历史。
+  const snapshotMutation = useMutation({
+    mutationFn: (path: string) =>
+      apiPost('/api/files/snapshot?path=' + encodeURIComponent(path), undefined, true),
+    onSuccess: (_data, path) => {
+      queryClient.invalidateQueries({ queryKey: ['file-versions', path] })
+      toast.success('快照已创建')
+    },
+    onError: (err: unknown) => { toast.error(getErrorMessage(err, '创建快照失败')) },
+  })
 
   // REQ-2.3.1: 版本回滚
   const rollbackMutation = useMutation({
@@ -249,7 +268,18 @@ export function EditorTabs() {
       {showVersions && activeTab && (
         <div className="shrink-0 border-t border-[var(--color-border-primary)] max-h-60 overflow-auto bg-[var(--color-bg-primary)]">
           <div className="p-3 space-y-2">
-            <h4 className="text-sm font-medium text-[var(--color-text-primary)]">{t.files.versionHistory}</h4>
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="text-sm font-medium text-[var(--color-text-primary)]">{t.files.versionHistory}</h4>
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => snapshotMutation.mutate(activeTab.path)}
+                disabled={snapshotMutation.isPending || activeTab.isDirty}
+                title={activeTab.isDirty ? '请先保存当前修改再创建快照' : '创建当前文件快照'}
+              >
+                创建快照
+              </Button>
+            </div>
             {versions && versions.length > 0 ? (
               versions.map((v) => (
                 <div

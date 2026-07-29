@@ -22,11 +22,12 @@ const (
 // REQ-F-028: 每个运行时包含别名、路径、来源、可用性
 // REQ-F-029: 可用性标记
 type RuntimeEntry struct {
-	Alias     string        // 运行时别名
-	Path      string        // 可执行文件路径（绝对路径或 PATH 查找示例名）
-	Source    RuntimeSource // 来源
-	Available bool          // 是否可用（路径存在 + 可执行）
-	AbsPath   string        // 解析后的绝对路径（PATH 查找后为完整路径）
+	Alias             string        // 运行时别名
+	Path              string        // 可执行文件路径（绝对路径或 PATH 查找示例名）
+	Source            RuntimeSource // 来源
+	Available         bool          // 是否可用（路径存在 + 可执行）
+	UnavailableReason string        // not_found / not_executable / ""
+	AbsPath           string        // 解析后的绝对路径（PATH 查找后为完整路径）
 }
 
 // RuntimeRegistry 运行时注册表。

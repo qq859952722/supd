@@ -13,11 +13,12 @@ import (
 
 // REQ-F-039: 全局 flags
 var (
-	cfgPath string
-	workDir string
-	verbose bool
-	quiet   bool
-	noColor bool
+	cfgPath     string
+	workDir     string
+	verbose     bool
+	quiet       bool
+	noColor     bool
+	showVersion bool
 )
 
 // REQ-F-039: rootCmd 是 CLI 根命令
@@ -35,6 +36,9 @@ var rootCmd = &cobra.Command{
 	},
 	// REQ-F-039: 默认行为等同 supd run
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if showVersion {
+			return runVersion(cmd, args)
+		}
 		return runCmd.RunE(cmd, args)
 	},
 	// P-02-001: 命令返回错误时不打印usage（仅打印错误消息）
@@ -50,6 +54,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "详细输出")
 	rootCmd.PersistentFlags().BoolVar(&quiet, "quiet", false, "静默")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "禁用彩色")
+	rootCmd.Flags().BoolVarP(&showVersion, "version", "v", false, "显示版本信息并退出")
 
 	// 注册所有子命令
 	rootCmd.AddCommand(initCmd)

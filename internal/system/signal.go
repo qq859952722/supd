@@ -35,6 +35,11 @@ func (h *SignalHandler) Start() {
 	signal.Notify(h.reloadCh, syscall.SIGHUP)
 }
 
+// StartReloadOnly 仅监听 SIGHUP。SIGTERM/SIGINT 由启动前创建的 signal.NotifyContext 统一处理。
+func (h *SignalHandler) StartReloadOnly() {
+	signal.Notify(h.reloadCh, syscall.SIGHUP)
+}
+
 // WaitShutdown 等待关闭信号（SIGTERM 或 SIGINT）
 func (h *SignalHandler) WaitShutdown() <-chan os.Signal {
 	return h.shutdownCh

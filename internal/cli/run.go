@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -123,9 +125,12 @@ func runRun(cmd *cobra.Command, args []string) error {
 			"note", "由父进程（如 systemd）管理生命周期")
 	}
 
-	// Step 3: 创建 context
-	ctx, cancel := context.WithCancel(context.Background())
+	// Step 3: 在 Bootstrap 前接管退出信号，使启动期也能进入正常关机流程。
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stopSignals()
+	ctx, cancel := context.WithCancel(signalCtx)
 	defer cancel()
+	lifecycleLocks := core.NewLifecycleLocks()
 
 	// Step 4: 运行 Bootstrap（11步启动流程）
 	// REQ-F-033, REQ-F-034: supd 启动流程
@@ -175,7 +180,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 		NoPID1:         runNoPID1,
 		HTTPListen:     runListen,
 		LogLevel:       runLogLevel,
-		EventPublisher: eventRing,    // BUG-02: 将 EventRingBuffer 注入 Bootstrap
+		EventPublisher: eventRing, // BUG-02: 将 EventRingBuffer 注入 Bootstrap
+		LifecycleLocks: lifecycleLocks,
 		Runtimes:       cfg.Runtimes, // REQ-F-028: 运行时配置来源
 		// REQ-D-004: 生命周期回调
 		OnServicePreStart: func(ctx context.Context, serviceName string) {
@@ -191,6 +197,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 			supdLifecycleTrigger.OnPreStart(ctx)
 		},
 	}
+	// 在 discovery/watcher 启动前恢复被异常中断的目录导入事务。
+	api.RecoverInterruptedImports(dir)
 	bootstrap := core.NewBootstrap(bsCfg)
 	result, err := bootstrap.Run(ctx)
 	if err != nil {
@@ -230,7 +238,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	// REQ-D-004: type: on_schedule — 定时触发
 	registerCronJobs(cronScheduler, result.Discovery)
 
-	svcOperator := injectProviders(apiServer, result, cfg, dir, logDir, eventRing, executor, cronScheduler, serviceLifecycleTrigger, supdLifecycleTrigger, dispatcher, taskMgr, ctx)
+	svcOperator := injectProviders(apiServer, result, cfg, dir, logDir, eventRing, executor, cronScheduler, serviceLifecycleTrigger, supdLifecycleTrigger, dispatcher, taskMgr, ctx, lifecycleLocks)
 	// REQ-F-002: 前端静态文件嵌入（非dev模式）
 	webFS := getWebFS()
 	if webFS != nil {
@@ -267,7 +275,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	// REQ-F-012: PID1 模式下的信号注册
 	// REQ-F-013: SIGHUP → 热重载，SIGTERM/SIGINT → 优雅退出
 	sigHandler := system.NewSignalHandler()
-	sigHandler.Start()
+	sigHandler.StartReloadOnly()
 	defer sigHandler.Stop()
 
 	// REQ-F-012: PID1 模式下启动僵尸进程回收（含 10s 周期 poll 兜底）
@@ -302,6 +310,25 @@ func runRun(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 	})
+	shutdownCoord.SetDrainingHook(func() {
+		apiServer.SetDraining()
+		dispatcher.GetConcurrencyManager().MarkDraining()
+	})
+	shutdownCoord.SetCronStopper(func(ctx context.Context) {
+		cronScheduler.Stop(ctx)
+	})
+	shutdownCoord.SetExtensionWaiter(func(timeout time.Duration) int {
+		return dispatcher.GetConcurrencyManager().WaitForAllRunning(timeout)
+	})
+	shutdownCoord.SetHTTPStopper(func(ctx context.Context) error {
+		return apiServer.Stop(ctx)
+	})
+	shutdownCoord.SetWatcherStopper(func() {
+		if result.Watcher != nil {
+			result.Watcher.Stop()
+		}
+	})
+	shutdownCoord.SetLifecycleLockAcquirer(lifecycleLocks.Lock)
 
 	// Watcher 事件处理 goroutine（SIGHUP 热重载）
 	// N-04-01/N-04-02: 传入 lifecycle triggers、cron scheduler、event ring 以便热重载后同步更新
@@ -315,9 +342,6 @@ func runRun(cmd *cobra.Command, args []string) error {
 	// Step 7: 等待信号
 	for {
 		select {
-		case <-sigHandler.WaitShutdown():
-			infof("收到退出信号，开始优雅退出...")
-			goto shutdown
 		case <-sigHandler.WaitReload():
 			// REQ-F-013: SIGHUP 触发配置热重载
 			// N-04-01/N-04-02: 通过 applyReload 统一处理，同步更新 triggers/cron 并发送事件
@@ -326,7 +350,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 				serviceLifecycleTrigger, supdLifecycleTrigger,
 				cronScheduler, eventRing, "sighup", apiServer, dispatcher, svcOperator)
 		case <-ctx.Done():
-			infof("HTTP 服务器异常，开始退出...")
+			infof("收到退出信号或服务器停止，开始退出...")
 			goto shutdown
 		}
 	}
@@ -346,42 +370,9 @@ shutdown:
 		time.Duration(shutdownGraceSeconds)*time.Second)
 	defer graceCancel()
 
-	// REQ-D-004: 停止 cron 调度器（受 graceCtx 约束，规格 §2.8.1 单一预算贯穿）
-	cronScheduler.Stop(graceCtx)
-
-	// B-04-002 修复：关机流程等待运行中的扩展任务结束（带超时），避免孤儿进程
-	// 规格 §2.2.9: supd 退出后所有运行任务清空；这里尽量等待扩展自行退出，超时则强制终止
-	// 规格 §2.8.1: 扩展任务等待 30 秒（A-07-001 修复：原 10s 与规格不一致，已对齐为 30s）
-	// P1-002: 扩展等待时长受 graceCtx 剩余时间约束，不超过 30s
-	if dispatcher.GetConcurrencyManager().HasAnyRunning() {
-		infof("等待运行中的扩展任务结束...")
-		extTimeout := 30 * time.Second
-		if deadline, ok := graceCtx.Deadline(); ok {
-			if remaining := time.Until(deadline); remaining < extTimeout {
-				extTimeout = remaining
-			}
-		}
-		if still := dispatcher.GetConcurrencyManager().WaitForAllRunning(extTimeout); still > 0 {
-			slog.Warn("关机时仍有扩展任务未结束，可能产生孤儿进程", "count", still)
-		}
-	}
-
-	// GracefulShutdown 复用 graceCtx（不再创建独立 deadline，受全局预算约束）
+	// ShutdownCoordinator 统一执行：pre_shutdown → draining/cron → 服务 → 扩展 → HTTP → watcher。
 	if err := shutdownCoord.GracefulShutdown(graceCtx); err != nil {
 		slog.Error("优雅退出出错", "error", err)
-	}
-
-	// P1-001 修复：HTTP Shutdown 必须有 deadline，防止无界等待
-	// 从 graceCtx 派生 5s 超时（如剩余时间不足 5s，使用剩余时间）
-	httpStopCtx, httpStopCancel := context.WithTimeout(graceCtx, 5*time.Second)
-	defer httpStopCancel()
-	if err := apiServer.Stop(httpStopCtx); err != nil {
-		slog.Error("关闭 HTTP 服务器出错", "error", err)
-	}
-
-	// 停止 watcher
-	if result.Watcher != nil {
-		result.Watcher.Stop()
 	}
 
 	infof("supd 已退出")
@@ -391,7 +382,7 @@ shutdown:
 // injectProviders 将 BootstrapResult 中的组件注入到 API Server
 // REQ-F-033 Step 8: HTTP 服务器依赖注入
 // taskMgr 在调用本函数前已创建并注入给 LifecycleTrigger（确保 Bootstrap 阶段触发的回调能记录历史）
-func injectProviders(server *api.Server, result *core.BootstrapResult, cfg *config.Config, baseDir string, logDir string, eventRing *api.EventRingBuffer, executor *extension.Executor, cronScheduler *extension.CronScheduler, serviceLifecycleTrigger *extension.ServiceLifecycleTrigger, supdLifecycleTrigger *extension.SupdLifecycleTrigger, dispatcher *extension.Dispatcher, taskMgr *extension.TaskManager, appCtx context.Context) *api.CoreServiceOperator {
+func injectProviders(server *api.Server, result *core.BootstrapResult, cfg *config.Config, baseDir string, logDir string, eventRing *api.EventRingBuffer, executor *extension.Executor, cronScheduler *extension.CronScheduler, serviceLifecycleTrigger *extension.ServiceLifecycleTrigger, supdLifecycleTrigger *extension.SupdLifecycleTrigger, dispatcher *extension.Dispatcher, taskMgr *extension.TaskManager, appCtx context.Context, lifecycleLocks *core.LifecycleLocks) *api.CoreServiceOperator {
 	startTime := time.Now()
 
 	pathValidator := api.NewPathValidator(baseDir)
@@ -419,9 +410,28 @@ func injectProviders(server *api.Server, result *core.BootstrapResult, cfg *conf
 		HistoryStore:            historyStore,
 		EventPublisher:          eventRing,             // 修复：API 启动的服务需要发布 service_died/exited 事件
 		RestartEngines:          result.RestartEngines, // 修复：共享重启引擎 map
+		LifecycleLocks:          lifecycleLocks,
 	}
 	// 从 Bootstrap 传递 cancel context（用于停止退避等待中的服务）
 	svcOperator.SetCancelFuncs(result.CancelFuncs)
+	dependencyCoordinator := core.NewDependencyCoordinator(result.DepGraph, svcOperator.CanAutoRecover, func(ctx context.Context, name string) error {
+		return svcOperator.StartService(name)
+	})
+	svcOperator.DependencyCoordinator = dependencyCoordinator
+	dependencyCoordinator.Enable()
+	for name, entry := range result.Discovery.Services {
+		if entry.Config == nil {
+			continue
+		}
+		stateMachine := result.StateMachines[name]
+		if stateMachine == nil {
+			continue
+		}
+		state := stateMachine.Current()
+		if (entry.Config.Readiness == nil && state == core.StateUp) || (entry.Config.Readiness != nil && state == core.StateReady) {
+			dependencyCoordinator.OnServiceDependable(appCtx, name)
+		}
+	}
 
 	server.SetProviders(
 		&api.CoreStateProvider{
@@ -468,7 +478,6 @@ func injectProviders(server *api.Server, result *core.BootstrapResult, cfg *conf
 			BaseDir:       baseDir,
 			PathValidator: pathValidator,
 			HistoryDir:    filepath.Join(baseDir, "history"),
-			LogDir:        logDir,
 			MaxVersions:   cfg.Settings.FileHistoryVersions,
 		},
 		&api.ConfigAuthProvider{

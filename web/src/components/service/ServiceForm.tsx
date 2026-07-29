@@ -467,6 +467,10 @@ const serviceFormSchema = z.object({
     .string()
     .min(1, '服务名称不能为空')
     .regex(/^[a-z][a-z0-9-]*$/, '服务名称需匹配 ^[a-z][a-z0-9-]*$（小写字母开头，仅含小写字母、数字、连字符）'),
+  version: z
+    .string()
+    .min(1, '版本不能为空')
+    .regex(/^[0-9]+\.[0-9]+\.[0-9]+$/, '版本格式必须为 X.Y.Z，如 1.0.0'),
   command: z.string().min(1, '启动命令不能为空'),
   readinessFd: intStr(0, 65535, 'FD '),
   readinessPort: intStr(1, 65535, '端口 '),
@@ -759,7 +763,7 @@ export function ServiceForm({ initial, onSubmit, onCancel, submitLabel = '提交
           />
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="版本">
+          <Field label="版本" required hint="格式 X.Y.Z" error={errors.version}>
             <Input
               value={form.version}
               onChange={(e) => set('version', e.target.value)}

@@ -18,15 +18,15 @@ import (
 func newFileTestServer(t *testing.T) (*Server, string) {
 	t.Helper()
 	baseDir := t.TempDir()
-	historyDir := filepath.Join(baseDir, ".filehistory")
-	if err := os.MkdirAll(historyDir, 0755); err != nil {
-		t.Fatalf("mkdir history: %v", err)
+	historyDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(baseDir, "services", "test"), 0755); err != nil {
+		t.Fatalf("mkdir writable tree: %v", err)
 	}
 	fp := &OsFileProvider{
-		BaseDir:     baseDir,
+		BaseDir:       baseDir,
 		PathValidator: NewPathValidator(baseDir),
-		HistoryDir:  historyDir,
-		MaxVersions: 10,
+		HistoryDir:    historyDir,
+		MaxVersions:   10,
 	}
 	cfg := &config.Config{Settings: config.Settings{AuthMode: "none"}}
 	server := NewServer(cfg)
@@ -39,8 +39,8 @@ func newFileTestServer(t *testing.T) (*Server, string) {
 func TestFileTree(t *testing.T) {
 	server, baseDir := newFileTestServer(t)
 
-	// 创建一个子目录与文件，供文件树展示
-	subDir := filepath.Join(baseDir, "conf.d")
+	// 创建一个白名单内子目录与文件，供文件树展示
+	subDir := filepath.Join(baseDir, "services", "test", "conf.d")
 	if err := os.MkdirAll(subDir, 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -55,9 +55,9 @@ func TestFileTree(t *testing.T) {
 	}
 
 	// 带 path 参数（子目录）的文件树
-	resp = doAPICall(t, server, http.MethodGet, "/api/files/tree?path=conf.d", nil)
+	resp = doAPICall(t, server, http.MethodGet, "/api/files/tree?path=services/test/conf.d", nil)
 	if resp.Code != http.StatusOK {
-		t.Fatalf("GET /api/files/tree?path=conf.d: expected 200, got %d (body: %s)", resp.Code, resp.Body.String())
+		t.Fatalf("GET /api/files/tree?path=services/test/conf.d: expected 200, got %d (body: %s)", resp.Code, resp.Body.String())
 	}
 
 	// 无效路径（含 ..）→ 403
@@ -70,7 +70,7 @@ func TestFileTree(t *testing.T) {
 // TestReadFile 覆盖 handleReadFile：成功、缺 path、文件不存在、超出读取上限
 func TestReadFile(t *testing.T) {
 	server, baseDir := newFileTestServer(t)
-	rel := "note.txt"
+	rel := "services/test/note.txt"
 	full := filepath.Join(baseDir, rel)
 	if err := os.WriteFile(full, []byte("hello supd"), 0644); err != nil {
 		t.Fatalf("write: %v", err)
@@ -95,15 +95,15 @@ func TestReadFile(t *testing.T) {
 		t.Errorf("GET /api/files (no path): expected 400, got %d", resp.Code)
 	}
 
-	// 文件不存在 → 404
-	resp = doAPICall(t, server, http.MethodGet, "/api/files?path=missing.txt", nil)
+	// 白名单内文件不存在 → 404
+	resp = doAPICall(t, server, http.MethodGet, "/api/files?path=services/test/missing.txt", nil)
 	if resp.Code != http.StatusNotFound {
-		t.Errorf("GET /api/files?path=missing.txt: expected 404, got %d", resp.Code)
+		t.Errorf("GET missing file: expected 404, got %d", resp.Code)
 	}
 
 	// 超出读取上限（>10MB）→ 413
 	big := make([]byte, MaxReadFileSize+1)
-	bigRel := "big.bin"
+	bigRel := "services/test/big.bin"
 	if err := os.WriteFile(filepath.Join(baseDir, bigRel), big, 0644); err != nil {
 		t.Fatalf("write big: %v", err)
 	}
@@ -116,12 +116,19 @@ func TestReadFile(t *testing.T) {
 // TestWriteFile 覆盖 handleWriteFile：成功、缺 path
 func TestWriteFile(t *testing.T) {
 	server, baseDir := newFileTestServer(t)
-	rel := "out.txt"
+	rel := "services/test/out.txt"
 	body, _ := json.Marshal(map[string]string{"content": "written"})
 
 	resp := doAPICall(t, server, http.MethodPut, "/api/files?path="+rel, body)
-	if resp.Code != http.StatusNoContent {
-		t.Fatalf("PUT /api/files: expected 204, got %d (body: %s)", resp.Code, resp.Body.String())
+	if resp.Code != http.StatusOK {
+		t.Fatalf("PUT /api/files: expected 200, got %d (body: %s)", resp.Code, resp.Body.String())
+	}
+	var writeResp FileWriteResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &writeResp); err != nil {
+		t.Fatalf("unmarshal write response: %v", err)
+	}
+	if !writeResp.Saved || writeResp.ReloadState != "skipped" || writeResp.RequiresRestart != "unknown" {
+		t.Fatalf("unexpected write response: %+v", writeResp)
 	}
 	got, err := os.ReadFile(filepath.Join(baseDir, rel))
 	if err != nil {
@@ -143,7 +150,7 @@ func TestCreateFile(t *testing.T) {
 	server, baseDir := newFileTestServer(t)
 
 	// 创建普通文件
-	rel := "new.txt"
+	rel := "services/test/new.txt"
 	body, _ := json.Marshal(map[string]string{"content": "created"})
 	resp := doAPICall(t, server, http.MethodPost, "/api/files?path="+rel, body)
 	if resp.Code != http.StatusCreated {
@@ -153,8 +160,8 @@ func TestCreateFile(t *testing.T) {
 		t.Errorf("file not created: %v", err)
 	}
 
-	// 创建目录
-	dirRel := "mydir"
+	// 在可写白名单内创建目录
+	dirRel := "services/test/mydir"
 	dirBody, _ := json.Marshal(map[string]any{"content": "", "is_dir": true})
 	resp = doAPICall(t, server, http.MethodPost, "/api/files?path="+dirRel, dirBody)
 	if resp.Code != http.StatusCreated {
@@ -175,7 +182,7 @@ func TestCreateFile(t *testing.T) {
 // TestDeleteFile 覆盖 handleDeleteFile：成功、文件不存在、缺 path
 func TestDeleteFile(t *testing.T) {
 	server, baseDir := newFileTestServer(t)
-	rel := "todelete.txt"
+	rel := "services/test/todelete.txt"
 	if err := os.WriteFile(filepath.Join(baseDir, rel), []byte("x"), 0644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -189,7 +196,7 @@ func TestDeleteFile(t *testing.T) {
 	}
 
 	// 删除不存在文件 → 404
-	resp = doAPICall(t, server, http.MethodDelete, "/api/files?path=ghost.txt", nil)
+	resp = doAPICall(t, server, http.MethodDelete, "/api/files?path=services/test/ghost.txt", nil)
 	if resp.Code != http.StatusNotFound {
 		t.Errorf("DELETE missing: expected 404, got %d", resp.Code)
 	}
@@ -204,8 +211,8 @@ func TestDeleteFile(t *testing.T) {
 // TestMoveFile 覆盖 handleMoveFile：成功、缺 destination、缺 path
 func TestMoveFile(t *testing.T) {
 	server, baseDir := newFileTestServer(t)
-	src := "src.txt"
-	dst := "dst.txt"
+	src := "services/test/src.txt"
+	dst := "services/test/dst.txt"
 	if err := os.WriteFile(filepath.Join(baseDir, src), []byte("moveme"), 0644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -236,31 +243,26 @@ func TestMoveFile(t *testing.T) {
 	}
 }
 
-// TestFileHistoryAndRollback 覆盖 handleFileHistory + handleRollbackFile：
-// 通过 PUT 写入两次产生历史版本，回滚到 v1 恢复旧内容
+// TestFileHistoryAndRollback 覆盖手动快照、普通保存不建历史和回滚。
 func TestFileHistoryAndRollback(t *testing.T) {
 	server, baseDir := newFileTestServer(t)
-	rel := "hist.txt"
+	rel := "services/test/hist.txt"
 	full := filepath.Join(baseDir, rel)
 
-	// 预置种子文件：saveHistory 仅在文件已存在时记录版本（写入前读旧内容）
 	if err := os.WriteFile(full, []byte("seed"), 0644); err != nil {
 		t.Fatalf("seed write: %v", err)
 	}
-	// 第一次写入 → 记录 v001（内容为 seed）
-	body1, _ := json.Marshal(map[string]string{"content": "v1"})
-	resp := doAPICall(t, server, http.MethodPut, "/api/files?path="+rel, body1)
-	if resp.Code != http.StatusNoContent {
-		t.Fatalf("write v1: expected 204, got %d (body: %s)", resp.Code, resp.Body.String())
-	}
-	// 第二次写入 → 记录 v002（内容为 v1）
-	body2, _ := json.Marshal(map[string]string{"content": "v2"})
-	resp = doAPICall(t, server, http.MethodPut, "/api/files?path="+rel, body2)
-	if resp.Code != http.StatusNoContent {
-		t.Fatalf("write v2: expected 204, got %d (body: %s)", resp.Code, resp.Body.String())
+	resp := doAPICall(t, server, http.MethodPost, "/api/files/snapshot?path="+rel, nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("snapshot v1: expected 200, got %d (body: %s)", resp.Code, resp.Body.String())
 	}
 
-	// 查询历史（应至少 2 个版本）
+	body, _ := json.Marshal(map[string]string{"content": "v2"})
+	resp = doAPICall(t, server, http.MethodPut, "/api/files?path="+rel, body)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("write: expected 200, got %d (body: %s)", resp.Code, resp.Body.String())
+	}
+
 	resp = doAPICall(t, server, http.MethodGet, "/api/files/history?path="+rel, nil)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("history: expected 200, got %d (body: %s)", resp.Code, resp.Body.String())
@@ -269,11 +271,10 @@ func TestFileHistoryAndRollback(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &versions); err != nil {
 		t.Fatalf("unmarshal versions: %v", err)
 	}
-	if len(versions) < 2 {
-		t.Errorf("expected at least 2 versions, got %d", len(versions))
+	if len(versions) != 1 {
+		t.Fatalf("ordinary save must not create history: got %d versions", len(versions))
 	}
 
-	// 回滚到 v1
 	rbBody, _ := json.Marshal(map[string]int{"version": 1})
 	resp = doAPICall(t, server, http.MethodPost, "/api/files/rollback?path="+rel, rbBody)
 	if resp.Code != http.StatusOK {
@@ -341,7 +342,7 @@ func TestValidateFile(t *testing.T) {
 // TestSnapshotFile 覆盖 handleSnapshotFile：成功快照、缺 path、provider 缺失
 func TestSnapshotFile(t *testing.T) {
 	server, baseDir := newFileTestServer(t)
-	rel := "snap.txt"
+	rel := "services/test/snap.txt"
 	full := filepath.Join(baseDir, rel)
 	if err := os.WriteFile(full, []byte("snapme"), 0644); err != nil {
 		t.Fatalf("write: %v", err)
@@ -370,7 +371,7 @@ func TestSnapshotFile(t *testing.T) {
 func TestUploadFileHandler(t *testing.T) {
 	server, baseDir := newFileTestServer(t)
 
-	// 成功上传到根目录
+	// 成功上传到可写白名单目录
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	part, err := w.CreateFormFile("file", "uploaded.txt")
@@ -380,14 +381,14 @@ func TestUploadFileHandler(t *testing.T) {
 	part.Write([]byte("upload-content"))
 	w.Close()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/files/upload", &buf)
+	req := httptest.NewRequest(http.MethodPost, "/api/files/upload?path=services%2Ftest", &buf)
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	rec := httptest.NewRecorder()
 	server.router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("upload: expected 201, got %d (body: %s)", rec.Code, rec.Body.String())
 	}
-	got, err := os.ReadFile(filepath.Join(baseDir, "uploaded.txt"))
+	got, err := os.ReadFile(filepath.Join(baseDir, "services", "test", "uploaded.txt"))
 	if err != nil {
 		t.Fatalf("read uploaded: %v", err)
 	}
@@ -428,7 +429,7 @@ func TestUploadFileHandler(t *testing.T) {
 	p4, _ := w4.CreateFormFile("file", "x.txt")
 	p4.Write([]byte("x"))
 	w4.Close()
-	req4 := httptest.NewRequest(http.MethodPost, "/api/files/upload", &buf4)
+	req4 := httptest.NewRequest(http.MethodPost, "/api/files/upload?path=services/test", &buf4)
 	req4.Header.Set("Content-Type", w4.FormDataContentType())
 	rec4 := httptest.NewRecorder()
 	server.router.ServeHTTP(rec4, req4)

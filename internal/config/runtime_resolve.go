@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"log/slog"
 	"sort"
 
 	"github.com/supdorg/supd/internal/errors"
@@ -74,33 +73,24 @@ func RegisterFromScan(registry *RuntimeRegistry, runtimes map[string]string) {
 func Resolve(registry *RuntimeRegistry, alias string) (*RuntimeEntry, error) {
 	entry, ok := registry.entries[alias]
 	if !ok {
-		// K-03-001: 记录警告日志，说明 runtime 不可用将降级为直接执行
-		slog.Warn("runtime not found in registry, falling back to direct execution",
-			"alias", alias,
-		)
-		// REQ-F-029: 别名不存在 → RUNTIME_NOT_FOUND
 		return nil, errors.NewServiceError(
 			errors.ErrRuntimeNotFound,
 			fmt.Sprintf("runtime %q not found in registry", alias),
-		).WithDetails(map[string]any{
-			"alias": alias,
-		})
+		).WithDetails(map[string]any{"alias": alias})
 	}
 	if !entry.Available {
-		// K-03-001: 记录警告日志，说明 runtime 不可用将降级为直接执行
-		slog.Warn("runtime is not available, falling back to direct execution",
-			"alias", alias,
-			"path", entry.Path,
-			"source", string(entry.Source),
-		)
-		// REQ-F-029: 运行时不可用 → RUNTIME_NOT_FOUND
+		code := errors.ErrRuntimeNotFound
+		if entry.UnavailableReason == "not_executable" {
+			code = errors.ErrRuntimeNotExecutable
+		}
 		return nil, errors.NewServiceError(
-			errors.ErrRuntimeNotFound,
+			code,
 			fmt.Sprintf("runtime %q is not available (path: %s)", alias, entry.Path),
 		).WithDetails(map[string]any{
 			"alias":  alias,
 			"path":   entry.Path,
 			"source": string(entry.Source),
+			"reason": entry.UnavailableReason,
 		})
 	}
 	return entry, nil

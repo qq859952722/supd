@@ -10,7 +10,7 @@ import (
 // 规格 §2.4.2: 热重载是核心特性（自动 fsnotify + 手动 POST /api/reload 兜底）
 // P-02-001 修复：原实现错误调用 POST /api/settings（仅 GET/PUT）和 PUT /api/services/{name}（更新服务配置），
 // 两个子命令均失败。改为统一调用 POST /api/reload（server.go 中注册的真正重载端点）。
-// 后端不支持单服务级热重载（spec 无此要求），原 --service 标志从未工作过，已移除。
+// 不提供单服务 reload：全量重扫用 reload，应用服务配置用 restart，业务配置重载用 signal HUP。
 var reloadCmd = &cobra.Command{
 	Use:   "reload",
 	Short: "热重载配置",

@@ -99,7 +99,7 @@ export function SystemResourcesPanel() {
             <span>系统资源信息加载失败，将在稍后自动重试。</span>
           </div>
         )}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           {/* CPU — supd 进程 CPU 占用 */}
           <div className="space-y-2">
             <div className="flex items-center gap-2 text-sm">
@@ -184,7 +184,7 @@ export function SystemResourcesPanel() {
             <span className="text-sm font-medium text-[var(--color-text-secondary)]">服务资源汇总</span>
             <span className="text-xs text-[var(--color-text-tertiary)]">({services.length} 个服务)</span>
           </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             {/* 服务 CPU 总占用 */}
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-sm">

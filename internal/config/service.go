@@ -19,9 +19,9 @@ type ServiceConfig struct {
 	Runtime     string   `yaml:"runtime"`
 	User        string   `yaml:"user"`
 	Group       string   `yaml:"group"`
-	UID         int      `yaml:"uid"`          // UID 模式：直接指定 uid（与 user 互斥）
-	GID         int      `yaml:"gid"`          // UID 模式：直接指定 gid（0 表示 = uid）
-	Groups      []int    `yaml:"groups"`       // UID 模式：补充组 gid 列表
+	UID         int      `yaml:"uid"`    // UID 模式：直接指定 uid（与 user 互斥）
+	GID         int      `yaml:"gid"`    // UID 模式：直接指定 gid（0 表示 = uid）
+	Groups      []int    `yaml:"groups"` // UID 模式：补充组 gid 列表
 	Workdir     string   `yaml:"workdir"`
 	DependsOn   []string `yaml:"depends_on"`
 	Tags        []string `yaml:"tags"`
@@ -56,7 +56,7 @@ type StopConfig struct {
 
 // LoggingConfig 日志配置
 type LoggingConfig struct {
-	Enabled   *bool `yaml:"enabled"`    // 默认 true
+	Enabled   *bool `yaml:"enabled"`     // 默认 true
 	MaxSizeMB int   `yaml:"max_size_mb"` // 默认 10
 	MaxFiles  int   `yaml:"max_files"`   // 默认 5
 }
@@ -87,8 +87,7 @@ func LoadService(path string) (*ServiceConfig, error) {
 		return nil, fmt.Errorf("parse service config %s: %w", path, err)
 	}
 
-	setServiceDefaults(sc)
-	if err := validateService(sc); err != nil {
+	if err := ValidateService(sc); err != nil {
 		return nil, err
 	}
 

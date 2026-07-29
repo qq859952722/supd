@@ -125,6 +125,31 @@ func TestTCPChecker_Ready(t *testing.T) {
 	testTCPChecker_Ready(t)
 }
 
+func TestTCPChecker_ImmediateProbeIgnoresInterval(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		conn, acceptErr := ln.Accept()
+		if acceptErr == nil {
+			conn.Close()
+		}
+	}()
+	checker, err := newTCPChecker(&config.ReadinessConfig{Type: "tcp_check", Port: ln.Addr().(*net.TCPAddr).Port, IntervalSeconds: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if err := checker.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed >= time.Second {
+		t.Fatalf("single probe took %v, want < 1s", elapsed)
+	}
+}
+
 func TestTCPChecker_Timeout(t *testing.T) {
 	cfg := &config.ReadinessConfig{
 		Type:            "tcp_check",
@@ -384,33 +409,33 @@ func TestNewReadinessChecker_Factory(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "nil config",
-			cfg:  nil,
+			name:    "nil config",
+			cfg:     nil,
 			wantErr: true,
 		},
 		{
-			name: "unsupported type",
-			cfg: &config.ReadinessConfig{Type: "unknown"},
+			name:    "unsupported type",
+			cfg:     &config.ReadinessConfig{Type: "unknown"},
 			wantErr: true,
 		},
 		{
-			name: "fd_notify",
-			cfg: &config.ReadinessConfig{Type: "fd_notify", Fd: 3, IntervalSeconds: 1, TimeoutSeconds: 5},
+			name:    "fd_notify",
+			cfg:     &config.ReadinessConfig{Type: "fd_notify", Fd: 3, IntervalSeconds: 1, TimeoutSeconds: 5},
 			wantErr: false,
 		},
 		{
-			name: "tcp_check",
-			cfg: &config.ReadinessConfig{Type: "tcp_check", Port: 8080, IntervalSeconds: 1, TimeoutSeconds: 5},
+			name:    "tcp_check",
+			cfg:     &config.ReadinessConfig{Type: "tcp_check", Port: 8080, IntervalSeconds: 1, TimeoutSeconds: 5},
 			wantErr: false,
 		},
 		{
-			name: "http_check",
-			cfg: &config.ReadinessConfig{Type: "http_check", URL: "http://localhost/health", IntervalSeconds: 1, TimeoutSeconds: 5},
+			name:    "http_check",
+			cfg:     &config.ReadinessConfig{Type: "http_check", URL: "http://localhost/health", IntervalSeconds: 1, TimeoutSeconds: 5},
 			wantErr: false,
 		},
 		{
-			name: "script",
-			cfg: &config.ReadinessConfig{Type: "script", Check: []string{"true"}, IntervalSeconds: 1, TimeoutSeconds: 5},
+			name:    "script",
+			cfg:     &config.ReadinessConfig{Type: "script", Check: []string{"true"}, IntervalSeconds: 1, TimeoutSeconds: 5},
 			wantErr: false,
 		},
 	}

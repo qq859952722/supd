@@ -317,7 +317,10 @@ func TestServer_Start_NilCallback(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	var ok bool
 	for time.Now().Before(deadline) {
-		if s.httpServer != nil {
+		s.httpServerMu.RLock()
+		started := s.httpServer != nil
+		s.httpServerMu.RUnlock()
+		if started {
 			ok = true
 			break
 		}

@@ -19,12 +19,12 @@ func createTestDir(t *testing.T) string {
 
 // validServiceYAML 返回一个合法的 service.yaml 内容
 func validServiceYAML(name string) string {
-	return "name: " + name + "\nversion: \"1.0\"\ncommand: [\"/usr/bin/echo\", \"hello\"]\n"
+	return "name: " + name + "\nversion: \"1.0.0\"\ncommand: [\"/usr/bin/echo\", \"hello\"]\n"
 }
 
 // validExtensionYAML 返回一个合法的 meta.yaml 内容
 func validExtensionYAML(name string) string {
-	return "name: " + name + "\nversion: \"1.0\"\nentry: run.sh\n"
+	return "name: " + name + "\nversion: \"1.0.0\"\nentry: run.sh\n"
 }
 
 // validEnvYAML 返回一个合法的 env.yaml 内容

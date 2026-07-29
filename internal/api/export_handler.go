@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"io"
@@ -8,7 +9,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -31,22 +34,283 @@ func acquireImportLock(key string) func() {
 	return mu.Unlock
 }
 
+type importTransactionConfig struct {
+	TargetDir string
+	Reader    io.Reader
+	Name      string
+	KeepData  bool
+	Validator func(string) error
+}
+
+type importTransactionMarker struct {
+	TargetDir  string `json:"target_dir"`
+	StagingDir string `json:"staging_dir"`
+	BackupDir  string `json:"backup_dir,omitempty"`
+	Phase      string `json:"phase"`
+}
+
+func executeImportTransaction(cfg importTransactionConfig) (backupDir string, err error) {
+	parentDir := filepath.Dir(cfg.TargetDir)
+	if err := os.MkdirAll(parentDir, 0755); err != nil {
+		return "", fmt.Errorf("create target parent: %w", err)
+	}
+	stagingDir, err := os.MkdirTemp(parentDir, "."+cfg.Name+".staging-*")
+	if err != nil {
+		return "", fmt.Errorf("create staging: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(stagingDir) }()
+
+	if err := archive.UnpackDir(cfg.Reader, stagingDir); err != nil {
+		return "", fmt.Errorf("unpack to staging: %w", err)
+	}
+	if cfg.KeepData {
+		stagingData := filepath.Join(stagingDir, "data")
+		if _, statErr := os.Stat(stagingData); os.IsNotExist(statErr) {
+			targetData := filepath.Join(cfg.TargetDir, "data")
+			if info, dataErr := os.Stat(targetData); dataErr == nil && info.IsDir() {
+				if err := copyImportDir(targetData, stagingData); err != nil {
+					return "", fmt.Errorf("preserve local data: %w", err)
+				}
+			}
+		}
+	}
+	if cfg.Validator != nil {
+		if err := cfg.Validator(stagingDir); err != nil {
+			return "", fmt.Errorf("validate staging: %w", err)
+		}
+	}
+
+	markerPath := filepath.Join(parentDir, "."+cfg.Name+".importing")
+	marker := importTransactionMarker{TargetDir: cfg.TargetDir, StagingDir: stagingDir, Phase: "prepared"}
+	if err := writeImportMarker(markerPath, marker); err != nil {
+		return "", fmt.Errorf("write import marker: %w", err)
+	}
+	defer func() {
+		if err == nil {
+			_ = os.Remove(markerPath)
+			return
+		}
+		if _, statErr := os.Stat(cfg.TargetDir); statErr == nil {
+			_ = os.Remove(markerPath)
+		}
+	}()
+
+	if _, statErr := os.Stat(cfg.TargetDir); statErr == nil {
+		backupDir = fmt.Sprintf("%s.bak.%s", cfg.TargetDir, time.Now().Format("20060102T150405.000000000"))
+		marker.BackupDir = backupDir
+		if err := writeImportMarker(markerPath, marker); err != nil {
+			return "", fmt.Errorf("update import marker: %w", err)
+		}
+		if err := os.Rename(cfg.TargetDir, backupDir); err != nil {
+			return "", fmt.Errorf("backup target: %w", err)
+		}
+		marker.Phase = "backup_moved"
+		if err := writeImportMarker(markerPath, marker); err != nil {
+			if rollbackErr := os.Rename(backupDir, cfg.TargetDir); rollbackErr != nil {
+				return "", fmt.Errorf("update import marker: %w; restore backup: %v", err, rollbackErr)
+			}
+			return "", fmt.Errorf("update import marker: %w", err)
+		}
+	} else if !os.IsNotExist(statErr) {
+		return "", fmt.Errorf("stat target: %w", statErr)
+	}
+
+	if err := os.Rename(stagingDir, cfg.TargetDir); err != nil {
+		if backupDir != "" {
+			if rollbackErr := os.Rename(backupDir, cfg.TargetDir); rollbackErr != nil {
+				return "", fmt.Errorf("activate staging: %w; restore backup: %v", err, rollbackErr)
+			}
+		}
+		return "", fmt.Errorf("activate staging: %w", err)
+	}
+	return backupDir, nil
+}
+
+func writeImportMarker(path string, marker importTransactionMarker) error {
+	data, err := json.Marshal(marker)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".import-marker-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+// RecoverInterruptedImports 清理未切换的 staging，并在目标缺失时恢复完整备份。
+func RecoverInterruptedImports(baseDir string) {
+	for _, container := range []string{"services", "extensions"} {
+		parentDir := filepath.Join(baseDir, container)
+		markers, _ := filepath.Glob(filepath.Join(parentDir, ".*.importing"))
+		for _, markerPath := range markers {
+			data, readErr := os.ReadFile(markerPath)
+			if readErr != nil {
+				slog.Warn("read interrupted import marker failed", "path", markerPath, "error", readErr)
+				continue
+			}
+			var marker importTransactionMarker
+			if err := json.Unmarshal(data, &marker); err != nil {
+				slog.Warn("parse interrupted import marker failed", "path", markerPath, "error", err)
+				continue
+			}
+			if marker.StagingDir != "" {
+				_ = os.RemoveAll(marker.StagingDir)
+			}
+			if _, err := os.Stat(marker.TargetDir); os.IsNotExist(err) && marker.BackupDir != "" {
+				if _, backupErr := os.Stat(marker.BackupDir); backupErr == nil {
+					if restoreErr := os.Rename(marker.BackupDir, marker.TargetDir); restoreErr != nil {
+						slog.Error("restore interrupted import backup failed", "backup", marker.BackupDir, "target", marker.TargetDir, "error", restoreErr)
+						continue
+					}
+				}
+			}
+			if err := os.Remove(markerPath); err != nil && !os.IsNotExist(err) {
+				slog.Warn("remove interrupted import marker failed", "path", markerPath, "error", err)
+			}
+		}
+		stagingDirs, _ := filepath.Glob(filepath.Join(parentDir, ".*.staging-*"))
+		for _, stagingDir := range stagingDirs {
+			if err := os.RemoveAll(stagingDir); err != nil {
+				slog.Warn("cleanup interrupted import staging failed", "path", stagingDir, "error", err)
+			}
+		}
+	}
+}
+
+func cleanupImportBackups(targetDir string, maxAge time.Duration) {
+	matches, _ := filepath.Glob(targetDir + ".bak.*")
+	cutoff := time.Now().Add(-maxAge)
+	for _, backupDir := range matches {
+		info, err := os.Stat(backupDir)
+		if err != nil || !info.IsDir() || !info.ModTime().Before(cutoff) {
+			continue
+		}
+		if err := os.RemoveAll(backupDir); err != nil {
+			slog.Warn("cleanup expired import backup failed", "path", backupDir, "error", err)
+		}
+	}
+}
+
+func copyImportDir(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode().Perm())
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("unsupported data entry: %s", rel)
+		}
+		in, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.Copy(out, in)
+		closeErr := out.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
+	})
+}
+
+func validateServiceImport(stagingDir, expectedName string) error {
+	svc, err := config.LoadService(filepath.Join(stagingDir, "service.yaml"))
+	if err != nil {
+		return err
+	}
+	if svc.Name != expectedName {
+		return fmt.Errorf("service name mismatch: archive=%s request=%s", svc.Name, expectedName)
+	}
+	entries, err := os.ReadDir(filepath.Join(stagingDir, "extensions"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		meta, err := config.LoadExtension(filepath.Join(stagingDir, "extensions", entry.Name(), "meta.yaml"))
+		if err != nil {
+			return fmt.Errorf("extension %s: %w", entry.Name(), err)
+		}
+		if meta.Name != entry.Name() {
+			return fmt.Errorf("extension directory/name mismatch: %s/%s", entry.Name(), meta.Name)
+		}
+		if err := validateExtensionForExport(filepath.Join(stagingDir, "extensions", entry.Name()), filepath.Join(stagingDir, "extensions", entry.Name(), "meta.yaml")); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func importErrorCode(err error) errors.ErrorCode {
+	if stderrors.Is(err, archive.ErrPathTraversal) {
+		return errors.ErrFileAccessDenied
+	}
+	message := err.Error()
+	if strings.Contains(message, "validate staging:") {
+		return errors.ErrServiceConfigInvalid
+	}
+	return errors.ErrInternal
+}
+
+func validateExtensionImport(stagingDir, expectedName string) error {
+	metaPath := filepath.Join(stagingDir, "meta.yaml")
+	meta, err := config.LoadExtension(metaPath)
+	if err != nil {
+		return err
+	}
+	if meta.Name != expectedName {
+		return fmt.Errorf("extension name mismatch: archive=%s request=%s", meta.Name, expectedName)
+	}
+	return validateExtensionForExport(stagingDir, metaPath)
+}
+
 // ImportPreviewResponse 导入预览响应
 // REQ-F-038: 导入前对比版本号
 type ImportPreviewResponse struct {
-	Entries      []string             `json:"entries"`
-	ServiceName  string               `json:"service_name,omitempty"`
-	ServiceInfo  *ImportVersionInfo   `json:"service_info,omitempty"`
-	Extensions   []ImportVersionInfo  `json:"extensions,omitempty"`
-	ExistsLocal  bool                 `json:"exists_local"`
+	Entries     []string            `json:"entries"`
+	ServiceName string              `json:"service_name,omitempty"`
+	ServiceInfo *ImportVersionInfo  `json:"service_info,omitempty"`
+	Extensions  []ImportVersionInfo `json:"extensions,omitempty"`
+	ExistsLocal bool                `json:"exists_local"`
 }
 
 // ImportVersionInfo 版本对比信息
 type ImportVersionInfo struct {
-	Name         string `json:"name"`
-	ArchiveVer   string `json:"archive_version"`
-	LocalVer     string `json:"local_version,omitempty"`
-	ExistsLocal  bool   `json:"exists_local"`
+	Name        string `json:"name"`
+	ArchiveVer  string `json:"archive_version"`
+	LocalVer    string `json:"local_version,omitempty"`
+	ExistsLocal bool   `json:"exists_local"`
 }
 
 // handleExportService GET /api/services/{name}/export[?profile=<name>]
@@ -350,9 +614,6 @@ func (s *Server) handleImportConfirm(w http.ResponseWriter, r *http.Request) {
 	unlockImport := acquireImportLock(svcDir)
 	defer unlockImport()
 
-	// 如果服务已存在，先停止并删除旧目录（覆盖导入）
-	// dataBackup 提升到外层作用域，供 R-003 回滚逻辑使用
-	dataBackup := ""
 	if s.stateProvider != nil {
 		if info, exists := s.stateProvider.GetServiceState(name); exists {
 			status := string(info.State)
@@ -360,68 +621,34 @@ func (s *Server) handleImportConfirm(w http.ResponseWriter, r *http.Request) {
 				respondError(w, errors.ErrServiceRunning, fmt.Sprintf("service %s is running (status: %s), stop it first", name, status))
 				return
 			}
-			// 删除旧目录（保留 data/）
-			dataDir := filepath.Join(svcDir, "data")
-			if st, err := os.Stat(dataDir); err == nil && st.IsDir() {
-				dataBackup = svcDir + ".data-backup"
-				// C-01-001 修复：删除旧备份失败时记录日志而非静默丢弃
-				if err := os.RemoveAll(dataBackup); err != nil {
-					slog.Warn("remove old data backup failed", "path", dataBackup, "error", err)
-				}
-				if err := os.Rename(dataDir, dataBackup); err != nil {
-					slog.Error("backup data dir failed, aborting import", "service", name, "error", err)
-					respondError(w, errors.ErrInternal, "failed to backup service data directory")
-					return
-				}
-			}
-			if err := os.RemoveAll(svcDir); err != nil {
-				slog.Error("remove old service dir failed", "service", name, "error", err)
-				respondError(w, errors.ErrInternal, "failed to remove old service directory")
-				return
-			}
-			if dataBackup != "" {
-				if err := os.MkdirAll(svcDir, 0755); err != nil {
-					slog.Error("recreate service dir failed", "service", name, "error", err)
-					respondError(w, errors.ErrInternal, "failed to recreate service directory")
-					return
-				}
-				if err := os.Rename(dataBackup, dataDir); err != nil {
-					slog.Error("restore data dir failed", "service", name, "error", err)
-					respondError(w, errors.ErrInternal, "failed to restore service data directory")
-					return
-				}
-				// data/ 已恢复到 svcDir/data/，清空 dataBackup 标记（不再需要回滚恢复）
-				dataBackup = ""
-			}
 		}
 	}
 
-	// 创建服务目录
-	if err := os.MkdirAll(svcDir, 0755); err != nil {
-		respondError(w, errors.ErrInternal, fmt.Sprintf("failed to create service directory: %v", err))
-		return
-	}
-
-	// 解包tar.gz到服务目录
-	if err := archive.UnpackDir(file, svcDir); err != nil {
-		// R-003 修复：解压失败时回滚，删除 svcDir 下除 data/ 外的残留文件，恢复 dataBackup（若存在）
-		// 与扩展导入的原子性语义保持一致
-		slog.Error("unpack archive failed, rolling back", "service", name, "dir", svcDir, "error", err)
-		rollbackImportFailure(svcDir, dataBackup)
-		// H-03-002 修复：zip slip（路径穿越）返回 403 而非 500
-		if stderrors.Is(err, archive.ErrPathTraversal) {
-			respondError(w, errors.ErrFileAccessDenied, fmt.Sprintf("archive contains path traversal: %v", err))
-		} else {
-			respondError(w, errors.ErrInternal, fmt.Sprintf("failed to unpack archive: %v", err))
+	backupDir, err := executeImportTransaction(importTransactionConfig{
+		TargetDir: svcDir,
+		Reader:    file,
+		Name:      name,
+		KeepData:  true,
+		Validator: func(stagingDir string) error { return validateServiceImport(stagingDir, name) },
+	})
+	if err != nil {
+		slog.Error("service import transaction failed", "service", name, "error", err)
+		code := importErrorCode(err)
+		message := fmt.Sprintf("import failed: %v", err)
+		if code == errors.ErrFileAccessDenied {
+			message = fmt.Sprintf("archive contains path traversal: %v", err)
 		}
+		respondError(w, code, message)
 		return
 	}
+	cleanupImportBackups(svcDir, 7*24*time.Hour)
 
 	// R-001 修复：导入成功后显式触发热重载，避免依赖 fsnotify 异步检测的延迟和漏事件风险
 	// 失败时不影响导入本身（导入已成功），仅记录 warn 日志
 	resp := map[string]any{
-		"name":    name,
-		"message": "service imported, hot-reload triggered",
+		"name":       name,
+		"message":    "service imported, hot-reload triggered",
+		"backup_dir": backupDir,
 	}
 	newDiscovery, errCount, errDetails := s.triggerReload()
 	if newDiscovery != nil {
@@ -437,39 +664,4 @@ func (s *Server) handleImportConfirm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusCreated, resp)
-}
-
-// rollbackImportFailure R-003 修复：服务导入解压失败时回滚
-// 删除 svcDir 下除 data/ 外的所有内容；若 dataBackup 存在则恢复为 data/
-func rollbackImportFailure(svcDir, dataBackup string) {
-	// 删除 svcDir 下除 data/ 外的所有内容（避免删除已恢复的 data/）
-	entries, err := os.ReadDir(svcDir)
-	if err != nil {
-		slog.Warn("rollback: read service dir failed", "dir", svcDir, "error", err)
-		return
-	}
-	for _, entry := range entries {
-		if entry.Name() == "data" {
-			continue
-		}
-		path := filepath.Join(svcDir, entry.Name())
-		if rmErr := os.RemoveAll(path); rmErr != nil {
-			slog.Warn("rollback: remove entry failed", "path", path, "error", rmErr)
-		}
-	}
-	// 若存在 dataBackup，恢复为 data/
-	if dataBackup != "" {
-		dataDir := filepath.Join(svcDir, "data")
-		if _, statErr := os.Stat(dataDir); statErr == nil {
-			// data/ 已存在（恢复成功），删除 backup
-			if rmErr := os.RemoveAll(dataBackup); rmErr != nil {
-				slog.Warn("rollback: remove data backup failed", "backup", dataBackup, "error", rmErr)
-			}
-		} else {
-			// data/ 不存在，从 backup 恢复
-			if mvErr := os.Rename(dataBackup, dataDir); mvErr != nil {
-				slog.Error("rollback: restore data dir from backup failed", "backup", dataBackup, "error", mvErr)
-			}
-		}
-	}
 }

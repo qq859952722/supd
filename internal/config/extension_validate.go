@@ -11,15 +11,15 @@ import (
 
 // shellMetaChars 需要拦截的shell元字符（S-04: 扩展 entry 路径安全校验）
 var shellMetaChars = map[rune]bool{
-	';': true,
-	'|': true,
-	'&': true,
-	'$': true,
-	'`': true,
-	'(': true,
-	')': true,
-	'{': true,
-	'}': true,
+	';':  true,
+	'|':  true,
+	'&':  true,
+	'$':  true,
+	'`':  true,
+	'(':  true,
+	')':  true,
+	'{':  true,
+	'}':  true,
 	'\n': true,
 	'\r': true,
 }
@@ -74,6 +74,9 @@ func ValidateExtension(meta *ExtensionMeta) error {
 	}
 	if meta.Version == "" {
 		return fmt.Errorf("version: required")
+	}
+	if !versionRegex.MatchString(meta.Version) {
+		return fmt.Errorf("version: invalid value %q, must match ^[0-9]+\\.[0-9]+\\.[0-9]+$", meta.Version)
 	}
 	if meta.Entry == "" {
 		return fmt.Errorf("entry: required")

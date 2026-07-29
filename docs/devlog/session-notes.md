@@ -111,37 +111,31 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-28 | 扩展参数运行测试 + Skill README 规范 + v0.0.38 | 修复 CLI 契约、相对 env_path、服务级未知 action 回退；TempEnv/保存/CLI E2E 与完整回归通过；Skill 强制 8 节 README | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
 | 2026-07-28 | supd 启动信息摘要（Startup Banner） | 两段式打印（Bootstrap后静态摘要 + HTTP绑定后实际监听地址+可访问URL枚举）；改造 `api.Server.Start` 为 net.Listen+Serve+addrReady 回调；双通道输出（stdout+slog）；20 个测试 | [notes/2026-07-28.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-28.md) |
 | 2026-07-29 | 启动摘要运行测试 + post_ready 异步修复 + v0.0.39 | post_ready 改异步执行避免阻塞启动摘要；端到端验证启动摘要/扩展生命周期/API/优雅关闭全通过；v0.0.39 推送 GitHub | [notes/2026-07-29.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-29.md) |
+| 2026-07-29 | 审计复核与整改规划 | 逐项核验审计报告 29 F 项 + 1 矛盾项；纠偏误报与不宜采用建议；输出 `tmp/审计报告复核与整改方案.md`（P0-P3 顺序 + 8 待决策） | [notes/2026-07-29.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-29.md) |
+| 2026-07-29 | 审计整改方案逐项落地与交叉验证 | 生成 32 个整改方案文件（tmp/fix）覆盖 30 复核结论 + 5 漏项；交叉验证覆盖/唯一性/一致性全通过；7 待决策项待用户确认 | [notes/2026-07-29.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-29.md) |
+| 2026-07-29 | 审计整改 A～H 全量落地与验证 | 32 项方案按批次完成；diagnostic 字段白名单脱敏；HTTP Start/Stop 竞态修复；Go 全量/race 与前端 60 项测试全通过 | [notes/2026-07-29.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-29.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-29 启动摘要运行测试 + post_ready 异步修复 + v0.0.39）
+## 八、最近会话重点（2026-07-29 审计整改 A～H 全量落地与验证）
 
 ### 本次完成
 
-1. **post_ready 扩展异步执行修复**（`internal/cli/run.go`）
-   - 将 `supdLifecycleTrigger.OnPostReady(ctx)` 从 HTTP 服务器启动前的同步调用，改为 HTTP goroutine 启动后的 `go` 异步执行。
-   - 解决 post_ready 扩展（supd-startup-hook notify action 约 3s）阻塞启动摘要第二段与"supd 运行中"提示的问题。
-   - 规格 §2.8.3 要求 Step 8（HTTP）在 Step 11（post_ready）之前，异步满足此顺序；关机时 `WaitForAllRunning` 仍等待其完成。
-
-2. **端到端运行测试**（10 项全通过）
-   - 启动摘要两段式打印 ✅；IPv4+IPv6 双栈 URL 枚举 ✅
-   - post_ready 异步时序：HTTP 监听 26.601 → post_ready 26.603（2ms，不阻塞）✅
-   - pre_start / pre_shutdown 钩子执行 ✅；API system/status + services ✅
-   - 优雅关闭 exit 0 ✅；关机等待扩展任务结束 ✅
-
-3. **完整回归**：`go build/vet/test` 全绿（core 51.9s、extension 34.3s）；`pnpm build` 19.07s ✅
-
-4. **版本升级 v0.0.39**：提交 `754600d`+`7e26d68`，标签推送 GitHub，CI Release 构建已触发。
+1. **整改闭环**：按 `tmp/fix/README-整改方案索引.md` 完成 A～H 批次，代码、测试、WebUI 与需求规格同步。
+2. **H 批次收尾**：根 `config.yaml` 明确禁读；diagnostic 登记并改为结构化字段白名单脱敏；前端依赖表对齐 package.json；四项 auth/监听设置统一为需重启语义。
+3. **附带缺陷修复**：Token UI 纠正不存在的 `regenerate` 命令；合法版本测试夹具统一为三段版本；HTTP Server Start/Stop 增加同步，消除全量 race 暴露的数据竞态。
+4. **完整验证**：go build/vet/test/race 全通过；前端 7 文件 60 项测试和生产构建通过；IDE diagnostics 0。
 
 ### 关键技术点
 
-- **dispatcher 不记录成功扩展运行**：supd.log 仅记失败（ERROR/WARN），成功运行仅写 `/tmp/supd-logs/extensions/<ext>/<run_id>.log`。排查 post_ready 是否执行需查扩展运行日志文件。
-- **v0.0.38 网络阻断已自动恢复**：上轮 v0.0.38 标签因网络超时未推送，本轮确认远程已有 v0.0.38 标签。
+- diagnostic 禁止 command、result_msg、事件 message/payload、token 原值等自由文本或敏感字段，新增字段必须显式审查。
+- HTTP `addrReady` 只能在 `httpServer` 已加锁发布后调用，确保收到回调后立即 Stop 安全。
+- 文件 API 路径按读写/只读/禁止三级契约执行，根 config 与日志目录不进入通用文件通路。
 
 ### 遗留事项
 
-- CI 构建结果待确认（v0.0.39 Release 工作流 in_progress）
-- 启动摘要第二段偶尔在"supd 运行中"之后打印（goroutine 调度时序，功能正确，UX 可接受）
+- 无阻断项。
+- 本轮未提交、未推送、未发版。
 
 ---
 

@@ -6,7 +6,7 @@ import { ThemeProvider, useTheme } from '@/lib/theme'
 import { QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createQueryClient } from '@/lib/query-client'
 import { Toaster } from 'sonner'
-import { ErrorBoundary } from '@/components/ErrorBoundary'
+import { RouteAwareErrorBoundary } from '@/components/ErrorBoundary'
 import { t } from '@/lib/i18n'
 import { BottomDrawer } from '@/components/BottomDrawer'
 import { GlobalSearch } from '@/components/GlobalSearch'
@@ -316,9 +316,9 @@ function AppLayout() {
 
       {/* 主内容区 */}
       <main className="flex-1 overflow-auto bg-[var(--color-bg-primary)] p-4">
-        <ErrorBoundary>
+        <RouteAwareErrorBoundary>
           <Outlet />
-        </ErrorBoundary>
+        </RouteAwareErrorBoundary>
       </main>
 
       {/* REQ-U-016: 底部浮窗 — 运行中任务 */}

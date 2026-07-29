@@ -1,10 +1,12 @@
 // REQ-U-012: 错误边界组件
 
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { useLocation } from 'react-router'
 
 interface ErrorBoundaryProps {
   children: ReactNode
   fallback?: ReactNode
+  resetKey?: string
 }
 
 interface ErrorBoundaryState {
@@ -22,9 +24,14 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     return { hasError: true, error }
   }
 
-  // P-01-04: 保留原始错误日志记录（console.error），不向用户展示技术堆栈
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('ErrorBoundary caught error:', error, errorInfo)
+  }
+
+  componentDidUpdate(prevProps: ErrorBoundaryProps) {
+    if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false, error: null })
+    }
   }
 
   render() {
@@ -34,25 +41,32 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       }
       return (
         <div className="flex min-h-[200px] items-center justify-center rounded-lg border border-[var(--color-border-error)] bg-[var(--color-surface-error)] p-6">
-          <div className="text-center">
+          <div className="max-w-md text-center">
             <h3 className="text-lg font-semibold text-[var(--color-text-error)]">
               页面出现错误
             </h3>
             <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
-              应用发生错误，请刷新页面或联系管理员
+              应用发生错误，请重试或刷新页面
             </p>
-            {/* P-01-04: 仅开发模式显示原始错误消息，生产环境不暴露技术堆栈 */}
             {import.meta.env.DEV && this.state.error?.message && (
-              <p className="mt-2 text-xs text-[var(--color-text-tertiary)] font-mono break-all">
+              <p className="mt-2 break-all font-mono text-xs text-[var(--color-text-tertiary)]">
                 {this.state.error.message}
               </p>
             )}
-            <button
-              className="mt-4 rounded-md bg-[var(--color-btn-primary-bg)] px-4 py-2 text-sm text-[var(--color-btn-primary-text)] hover:opacity-90"
-              onClick={() => this.setState({ hasError: false, error: null })}
-            >
-              重试
-            </button>
+            <div className="mt-4 flex justify-center gap-2">
+              <button
+                className="rounded-md bg-[var(--color-btn-primary-bg)] px-4 py-2 text-sm text-[var(--color-btn-primary-text)] hover:opacity-90"
+                onClick={() => this.setState({ hasError: false, error: null })}
+              >
+                重试当前页
+              </button>
+              <button
+                className="rounded-md border border-[var(--color-border-primary)] bg-[var(--color-surface-elevated)] px-4 py-2 text-sm text-[var(--color-text-primary)] hover:opacity-90"
+                onClick={() => window.location.reload()}
+              >
+                刷新页面
+              </button>
+            </div>
           </div>
         </div>
       )
@@ -60,4 +74,9 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
     return this.props.children
   }
+}
+
+export function RouteAwareErrorBoundary({ children }: { children: ReactNode }) {
+  const location = useLocation()
+  return <ErrorBoundary resetKey={location.pathname}>{children}</ErrorBoundary>
 }

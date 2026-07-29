@@ -186,6 +186,66 @@ func TestServiceDeaths(t *testing.T) {
 
 // ---- 事件 ----
 
+func TestDiagnosticResponseExcludesSensitiveFields(t *testing.T) {
+	server := newMiscServer(t)
+	server.stateProvider = &fakeStateProvider{states: map[string]ServiceStateInfo{
+		"svc-a": {
+			Name:  "svc-a",
+			State: core.ServiceState("up"),
+			Config: &config.ServiceConfig{
+				Command: []string{"server", "--password=command-secret"},
+			},
+		},
+	}}
+	server.taskProvider = &fakeTaskProvider{runs: []*extension.RunResult{{
+		RunID: "run-1", ExtensionName: "ext-a", ResultMsg: "result-secret",
+	}}}
+	server.settingsProvider = &fakeSettingsProvider{settings: &config.Settings{AuthToken: "token-secret"}}
+	server.eventRing.Add("service_state", map[string]any{"message": "event-secret"})
+
+	resp := doAPICall(t, server, http.MethodGet, "/api/system/diagnostic", nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("diagnostic: expected 200, got %d (body: %s)", resp.Code, resp.Body.String())
+	}
+	for _, forbidden := range [][]byte{
+		[]byte("command-secret"), []byte("result-secret"), []byte("event-secret"), []byte("token-secret"),
+		[]byte(`"command"`), []byte(`"result_msg"`), []byte(`"message"`), []byte(`"auth_token"`),
+	} {
+		if bytes.Contains(resp.Body.Bytes(), forbidden) {
+			t.Errorf("diagnostic response contains forbidden value or field %q", forbidden)
+		}
+	}
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(resp.Body.Bytes(), &fields); err != nil {
+		t.Fatalf("unmarshal diagnostic response: %v", err)
+	}
+	for _, required := range []string{"timestamp", "system", "services", "extensions", "recent_runs", "recent_events", "cron_jobs", "settings", "runtimes"} {
+		if _, ok := fields[required]; !ok {
+			t.Errorf("diagnostic response missing field %q", required)
+		}
+	}
+}
+
+func TestDiagnosticRequiresAuth(t *testing.T) {
+	server := NewServer(&config.Config{Settings: config.Settings{AuthMode: "always_token", AuthToken: "secret"}})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/system/diagnostic", nil)
+	resp := httptest.NewRecorder()
+	server.router.ServeHTTP(resp, req)
+	if resp.Code != http.StatusUnauthorized {
+		t.Fatalf("diagnostic without token: expected 401, got %d", resp.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/system/diagnostic", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp = httptest.NewRecorder()
+	server.router.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("diagnostic with token: expected 200, got %d (body: %s)", resp.Code, resp.Body.String())
+	}
+}
+
 func TestRecentEvents(t *testing.T) {
 	server := newMiscServer(t)
 	server.eventRing.Add("service_state", map[string]any{"name": "svc-a"})

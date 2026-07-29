@@ -2,128 +2,162 @@ package api
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/supdorg/supd/internal/errors"
 )
 
+type pathTier int
+
+const (
+	tierForbidden pathTier = iota
+	tierReadOnly
+	tierReadWrite
+)
+
+var readWriteSubdirs = map[string]struct{}{
+	"services":   {},
+	"extensions": {},
+	"env":        {},
+	"assets":     {},
+}
+
+var readOnlySubdirs = map[string]struct{}{
+	"runtimes": {},
+}
+
 // PathValidator 文件路径校验器。
-// 保留 baseDir 边界检查（防路径穿越），baseDir 下所有文件自由访问。
-// extraAllowed 路径（如日志目录）为只读。
+// 文件 API 仅允许访问显式登记的顶层目录；额外绝对路径只读。
 type PathValidator struct {
-	baseDir      string   // 基础目录，默认 /etc/supd/
-	extraAllowed []string // 额外允许的绝对路径前缀（如日志目录，只读）
+	baseDir      string
+	extraAllowed []string
 }
 
 // NewPathValidator 创建路径校验器。
 func NewPathValidator(baseDir string) *PathValidator {
 	if baseDir == "" {
-		baseDir = "/etc/supd/"
+		baseDir = "/etc/supd"
 	}
-	if !strings.HasSuffix(baseDir, "/") {
-		baseDir += "/"
+	abs, err := filepath.Abs(baseDir)
+	if err == nil {
+		baseDir = abs
 	}
-
-	return &PathValidator{
-		baseDir: baseDir,
-	}
+	return &PathValidator{baseDir: filepath.Clean(baseDir)}
 }
 
-// AddAllowedPath 添加额外允许的绝对路径前缀
-// 用于将日志目录等外部路径加入白名单，设为只读
+// AddAllowedPath 添加额外允许的只读绝对目录。
 func (v *PathValidator) AddAllowedPath(absPath string) {
-	absPath = filepath.Clean(absPath)
-	if !strings.HasSuffix(absPath, "/") {
-		absPath += "/"
+	abs, err := filepath.Abs(absPath)
+	if err != nil {
+		return
 	}
-	v.extraAllowed = append(v.extraAllowed, absPath)
+	v.extraAllowed = append(v.extraAllowed, filepath.Clean(abs))
 }
 
-// Validate 校验路径是否在允许范围内。
-// 保留 baseDir 边界检查（防路径穿越），baseDir 下所有文件自由访问。
-// 返回清理后的绝对路径或错误。
+func pathWithin(base, path string) bool {
+	rel, err := filepath.Rel(base, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func (v *PathValidator) tierOf(absPath string) pathTier {
+	absPath = filepath.Clean(absPath)
+	if pathWithin(v.baseDir, absPath) {
+		rel, err := filepath.Rel(v.baseDir, absPath)
+		if err != nil {
+			return tierForbidden
+		}
+		if rel == "." {
+			return tierReadWrite
+		}
+		first := strings.Split(filepath.ToSlash(rel), "/")[0]
+		if _, ok := readWriteSubdirs[first]; ok {
+			return tierReadWrite
+		}
+		if _, ok := readOnlySubdirs[first]; ok {
+			return tierReadOnly
+		}
+		return tierForbidden
+	}
+	for _, allowed := range v.extraAllowed {
+		if pathWithin(allowed, absPath) {
+			return tierReadOnly
+		}
+	}
+	return tierForbidden
+}
+
+// safeResolve 解析目标或最近存在祖先的符号链接，防止不存在目标借父目录 symlink 逃逸。
+func (v *PathValidator) safeResolve(absPath string) (string, error) {
+	probe := absPath
+	var tail []string
+	for {
+		resolved, err := filepath.EvalSymlinks(probe)
+		if err == nil {
+			for i := len(tail) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, tail[i])
+			}
+			resolved = filepath.Clean(resolved)
+			if v.tierOf(resolved) == tierForbidden {
+				return "", errors.NewServiceError(errors.ErrFileAccessDenied,
+					fmt.Sprintf("symlink resolves outside allowed paths: %s -> %s", absPath, resolved))
+			}
+			return resolved, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", errors.NewServiceError(errors.ErrFileAccessDenied,
+				fmt.Sprintf("cannot resolve path: %s: %v", absPath, err))
+		}
+		parent := filepath.Dir(probe)
+		if parent == probe {
+			return "", errors.NewServiceError(errors.ErrFileAccessDenied,
+				fmt.Sprintf("cannot resolve path ancestry: %s", absPath))
+		}
+		tail = append(tail, filepath.Base(probe))
+		probe = parent
+	}
+}
+
+// Validate 校验读路径并返回解析后的绝对路径。
 func (v *PathValidator) Validate(requestedPath string) (string, error) {
-	// 1. 如果是相对路径，基于 baseDir 转绝对路径
+	if strings.Contains(requestedPath, "..") {
+		return "", errors.NewServiceError(errors.ErrInvalidRequest,
+			fmt.Sprintf("path must not contain '..': %s", requestedPath))
+	}
+
 	var absPath string
 	if filepath.IsAbs(requestedPath) {
 		absPath = filepath.Clean(requestedPath)
 	} else {
 		absPath = filepath.Clean(filepath.Join(v.baseDir, requestedPath))
 	}
-
-	// 2. 检查路径中不含 ".."
-	// H-03-004 评估说明：strings.Contains(requestedPath, "..") 是宽松检查，
-	// 会误拒 foo..bar.txt 等合法文件名。但审计建议的逐段检查会破坏现有
-	// URL 编码攻击向量测试（services/..%2Fetc%2Fpasswd 等）。
-	// 综合 AGENTS.md "最小化修改" 原则和测试覆盖完整性，保留原检查。
-	// baseDir 边界检查 + EvalSymlinks 已提供主防御，此检查为额外保险。
-	if strings.Contains(requestedPath, "..") {
-		return "", errors.NewServiceError(errors.ErrInvalidRequest,
-			fmt.Sprintf("path must not contain '..': %s", requestedPath))
-	}
-
-	// 3. 检查路径在 baseDir 下，或在额外允许的绝对路径前缀内
-	if !strings.HasPrefix(absPath, v.baseDir) {
-		for _, prefix := range v.extraAllowed {
-			if strings.HasPrefix(absPath, prefix) {
-				// 符号链接检查
-				if resolved, err := filepath.EvalSymlinks(absPath); err == nil && resolved != absPath {
-					if !strings.HasPrefix(resolved, prefix) {
-						return "", errors.NewServiceError(errors.ErrFileAccessDenied,
-							fmt.Sprintf("symlink resolves outside allowed directory: %s -> %s", requestedPath, resolved))
-					}
-					absPath = resolved
-				}
-				return absPath, nil
-			}
-		}
+	if v.tierOf(absPath) == tierForbidden {
 		return "", errors.NewServiceError(errors.ErrFileAccessDenied,
-			fmt.Sprintf("path is outside allowed base directory: %s", requestedPath))
+			fmt.Sprintf("access to path is forbidden: %s", requestedPath))
 	}
 
-	// H-03-003 修复：拒绝访问根目录的 config.yaml（含 auth_token 等敏感信息）
-	// 仅精确匹配 baseDir/config.yaml，不影响 services/*/config.yaml 等
-	rootConfigPath := filepath.Join(v.baseDir, "config.yaml")
-	if absPath == rootConfigPath {
-		return "", errors.NewServiceError(errors.ErrFileAccessDenied,
-			"access to root config.yaml is forbidden")
+	resolved, err := v.safeResolve(absPath)
+	if err != nil {
+		return "", err
 	}
-
-	// 4. 符号链接检查：防止 symlink 逃逸 baseDir
-	if resolved, err := filepath.EvalSymlinks(absPath); err == nil && resolved != absPath {
-		if !strings.HasPrefix(resolved, v.baseDir) {
-			return "", errors.NewServiceError(errors.ErrFileAccessDenied,
-				fmt.Sprintf("symlink resolves outside allowed base directory: %s -> %s", requestedPath, resolved))
-		}
-		absPath = resolved
-	}
-
-	return absPath, nil
+	return resolved, nil
 }
 
-// IsReadOnly 检查路径是否为只读。
-// extraAllowed 路径（如日志目录）为只读
+// IsReadOnly 检查已解析路径是否只读。
 func (v *PathValidator) IsReadOnly(absPath string) bool {
-	for _, prefix := range v.extraAllowed {
-		if strings.HasPrefix(absPath, prefix) {
-			return true
-		}
-	}
-	return false
+	return v.tierOf(absPath) == tierReadOnly
 }
 
-// ValidateWritePath 校验写路径（排除只读路径）。
+// ValidateWritePath 校验写路径。
 func (v *PathValidator) ValidateWritePath(requestedPath string) (string, error) {
 	absPath, err := v.Validate(requestedPath)
 	if err != nil {
 		return "", err
 	}
-
-	if v.IsReadOnly(absPath) {
+	if v.tierOf(absPath) != tierReadWrite || absPath == v.baseDir {
 		return "", errors.NewServiceError(errors.ErrFileAccessDenied,
-			fmt.Sprintf("path is read-only: %s", requestedPath))
+			fmt.Sprintf("path is read-only or forbidden: %s", requestedPath))
 	}
-
 	return absPath, nil
 }

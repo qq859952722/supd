@@ -42,8 +42,10 @@ type CoreServiceOperator struct {
 	RestartEngines   map[string]*core.RestartEngine
 	restartEnginesMu sync.Mutex
 	// 服务 supervisor 的 cancel context（用于停止退避等待中的服务）
-	cancelFuncs   map[string]context.CancelFunc
-	cancelFuncsMu sync.Mutex
+	cancelFuncs           map[string]context.CancelFunc
+	cancelFuncsMu         sync.Mutex
+	LifecycleLocks        *core.LifecycleLocks
+	DependencyCoordinator *core.DependencyCoordinator
 }
 
 // SetCancelFuncs 设置从 Bootstrap 传递的 cancel context map
@@ -61,6 +63,39 @@ func (o *CoreServiceOperator) SetCancelFuncs(cancelFuncs map[string]context.Canc
 
 // SetDiscovery 热重载时更新 Discovery 引用
 // N-04-001 修复：providers 持有 Discovery 指针值拷贝，reload 后需要显式更新
+func (o *CoreServiceOperator) CanAutoRecover(name string) bool {
+	o.stateMachinesMu.RLock()
+	defer o.stateMachinesMu.RUnlock()
+	svc, ok := o.Discovery.Services[name]
+	if !ok || svc.Config == nil || !isServiceAutostart(svc.Config) {
+		return false
+	}
+	sm, ok := o.StateMachines[name]
+	if !ok || sm.Current() != core.StatePending {
+		return false
+	}
+	for _, dep := range svc.Config.DependsOn {
+		depEntry, exists := o.Discovery.Services[dep]
+		depSM, hasSM := o.StateMachines[dep]
+		if !exists || !hasSM || depEntry.Config == nil {
+			return false
+		}
+		state := depSM.Current()
+		if depEntry.Config.Readiness != nil {
+			if state != core.StateReady {
+				return false
+			}
+		} else if state != core.StateUp {
+			return false
+		}
+	}
+	return true
+}
+
+func isServiceAutostart(svc *config.ServiceConfig) bool {
+	return svc.Autostart == nil || *svc.Autostart
+}
+
 func (o *CoreServiceOperator) SetDiscovery(d *watch.DiscoveryResult) {
 	if o == nil || d == nil {
 		return
@@ -92,6 +127,12 @@ func (o *CoreServiceOperator) UpdateRestartEngines(cfg *config.Config, discovery
 }
 
 func (o *CoreServiceOperator) StartService(name string) error {
+	unlock := o.LifecycleLocks.Lock(name)
+	defer unlock()
+	return o.startServiceLocked(name)
+}
+
+func (o *CoreServiceOperator) startServiceLocked(name string) error {
 	o.stateMachinesMu.RLock()
 	svcEntry, ok := o.Discovery.Services[name]
 	if !ok {
@@ -118,9 +159,11 @@ func (o *CoreServiceOperator) StartService(name string) error {
 	command := svcConfig.Command
 	if svcConfig.Runtime != "" {
 		registry := config.BuildRegistry(o.Config.Runtimes, o.Discovery.Runtimes)
-		if rt, err := config.Resolve(registry, svcConfig.Runtime); err == nil && rt.Available {
-			command = append([]string{rt.AbsPath}, command...)
+		rt, err := config.Resolve(registry, svcConfig.Runtime)
+		if err != nil {
+			return fmt.Errorf("service %s runtime %q: %w", name, svcConfig.Runtime, err)
 		}
+		command = append([]string{rt.AbsPath}, command...)
 	}
 
 	// 规格 §2.2.4: 服务进程合并 3 层 env（与 bootstrap.startService 一致）
@@ -219,18 +262,29 @@ func (o *CoreServiceOperator) StartService(name string) error {
 		o.loggersMu.Unlock()
 	}
 
+	engine := core.BuildRestartEngine(o.Config, svcConfig)
+	if svcConfig.Readiness == nil {
+		engine.RecordStart()
+	}
+	o.restartEnginesMu.Lock()
+	if o.RestartEngines == nil {
+		o.RestartEngines = make(map[string]*core.RestartEngine)
+	}
+	o.RestartEngines[name] = engine
+	o.restartEnginesMu.Unlock()
+
 	// REQ-F-009: readiness 检查（异步执行，不阻塞 API 响应）
 	if svcConfig.Readiness != nil {
 		if preChecker != nil {
 			// fd_notify: 使用在 StartProcess 前创建的 checker
-			go o.runReadinessCheck(context.Background(), name, svcConfig.Readiness, sm, proc, preChecker)
+			go o.runReadinessCheck(context.Background(), name, svcConfig.Readiness, sm, proc, engine, preChecker)
 		} else {
 			checker, cerr := core.NewReadinessChecker(svcConfig.Readiness, workdir, env)
 			if cerr != nil {
 				slog.Error("create readiness checker failed", "service", name, "error", cerr)
 				sm.Transition(core.EventReadinessTimeout)
 			} else {
-				go o.runReadinessCheck(context.Background(), name, svcConfig.Readiness, sm, proc, checker)
+				go o.runReadinessCheck(context.Background(), name, svcConfig.Readiness, sm, proc, engine, checker)
 			}
 		}
 	}
@@ -240,17 +294,11 @@ func (o *CoreServiceOperator) StartService(name string) error {
 		o.HistoryStore.RecordStart(name, proc.PID())
 	}
 
-	// 修复：API 启动的服务需要 supervisor goroutine 监控进程退出
-	// 否则进程崩溃后状态机永远停在 up，不触发重启/failed/事件
-	engine := core.BuildRestartEngine(o.Config, svcConfig)
-	engine.RecordStart()
-	o.restartEnginesMu.Lock()
-	if o.RestartEngines == nil {
-		o.RestartEngines = make(map[string]*core.RestartEngine)
+	if svcConfig.Readiness == nil && o.DependencyCoordinator != nil {
+		o.DependencyCoordinator.OnServiceDependable(context.Background(), name)
 	}
-	o.RestartEngines[name] = engine
-	o.restartEnginesMu.Unlock()
 
+	// API 启动的服务同样启动 supervisor，监控退出并应用重启策略。
 	// 创建 cancel context 用于停止退避等待中的服务
 	svcCtx, svcCancel := context.WithCancel(context.Background())
 	o.cancelFuncsMu.Lock()
@@ -266,7 +314,7 @@ func (o *CoreServiceOperator) StartService(name string) error {
 }
 
 // runReadinessCheck 异步执行就绪检查，通过则转 ready，超时则转 failed
-func (o *CoreServiceOperator) runReadinessCheck(ctx context.Context, name string, readinessCfg *config.ReadinessConfig, sm *core.StateMachine, proc *core.Process, checker core.ReadinessChecker) {
+func (o *CoreServiceOperator) runReadinessCheck(ctx context.Context, name string, readinessCfg *config.ReadinessConfig, sm *core.StateMachine, proc *core.Process, engine *core.RestartEngine, checker core.ReadinessChecker) {
 	defer checker.Close()
 
 	interval := time.Duration(readinessCfg.IntervalSeconds) * time.Second
@@ -284,17 +332,23 @@ func (o *CoreServiceOperator) runReadinessCheck(ctx context.Context, name string
 	defer ticker.Stop()
 
 	for {
-		select {
-		case <-ticker.C:
-			if err := checker.Check(checkCtx); err == nil {
-				// REQ-F-004: up→ready，readiness 检查通过
-				sm.Transition(core.EventReadinessPassed)
+		if err := checker.Check(checkCtx); err == nil {
+			// REQ-F-004: up→ready，readiness 检查通过
+			if _, ok := sm.Transition(core.EventReadinessPassed); ok {
+				engine.RecordStart()
+				if o.DependencyCoordinator != nil {
+					o.DependencyCoordinator.OnServiceDependable(ctx, name)
+				}
 				// REQ-D-004: service_lifecycle:post_ready
 				if o.ServiceLifecycleTrigger != nil {
 					o.ServiceLifecycleTrigger.OnPostReady(context.Background(), name, proc.PID())
 				}
-				return
 			}
+			return
+		}
+		select {
+		case <-ticker.C:
+			continue
 		case <-proc.Done():
 			slog.Warn("process exited during readiness check", "service", name)
 			return
@@ -328,8 +382,9 @@ func (o *CoreServiceOperator) superviseService(ctx context.Context, name string,
 	registry := config.BuildRegistry(o.Config.Runtimes, o.Discovery.Runtimes)
 
 	callbacks := core.SupervisorCallbacks{
-		WriteServiceLog: o.writeServiceLog,
-		PublishEvent:    o.EventPublisher,
+		AcquireLifecycleLock: o.LifecycleLocks.Lock,
+		WriteServiceLog:      o.writeServiceLog,
+		PublishEvent:         o.EventPublisher,
 		OnFailure: func(fCtx context.Context, n string, exitCode, signal, restartCount, pid int) {
 			if o.ServiceLifecycleTrigger != nil {
 				// 原行为：传 supervisor ctx（OnFailure 受 StopService cancel 控制）
@@ -359,11 +414,16 @@ func (o *CoreServiceOperator) superviseService(ctx context.Context, name string,
 			// 返回 newCtx：service_operator 的 readiness 受 StopService cancelFuncs 控制（与原行为一致）
 			return newCtx
 		},
+		OnDependable: func(depCtx context.Context, n string) {
+			if o.DependencyCoordinator != nil {
+				o.DependencyCoordinator.OnServiceDependable(depCtx, n)
+			}
+		},
 		RunReadiness: func(rCtx context.Context, n string, entry *watch.ServiceEntry,
 			s *core.StateMachine, p *core.Process, pre core.ReadinessChecker) error {
 			// 异步模式：返回 nil（无同步 error，RunSupervisor 不处理 newProc.Done）
 			if pre != nil {
-				go o.runReadinessCheck(rCtx, n, entry.Config.Readiness, s, p, pre)
+				go o.runReadinessCheck(rCtx, n, entry.Config.Readiness, s, p, engine, pre)
 			} else {
 				workdir := entry.Config.Workdir
 				if workdir == "" {
@@ -375,7 +435,7 @@ func (o *CoreServiceOperator) superviseService(ctx context.Context, name string,
 					slog.Error("create readiness checker failed on restart", "service", n, "error", cerr)
 					s.Transition(core.EventReadinessTimeout)
 				} else {
-					go o.runReadinessCheck(rCtx, n, entry.Config.Readiness, s, p, checker)
+					go o.runReadinessCheck(rCtx, n, entry.Config.Readiness, s, p, engine, checker)
 				}
 			}
 			return nil
@@ -408,6 +468,12 @@ func (o *CoreServiceOperator) rebuildLogger(name string, newProc *core.Process, 
 }
 
 func (o *CoreServiceOperator) StopService(name string) error {
+	unlock := o.LifecycleLocks.Lock(name)
+	defer unlock()
+	return o.stopServiceLocked(name)
+}
+
+func (o *CoreServiceOperator) stopServiceLocked(name string) error {
 	proc, ok := o.ProcessMgr.Get(name)
 	if !ok {
 		// 进程不存在：服务可能处于退避等待（starting 状态，无活跃进程）
@@ -533,10 +599,12 @@ func (o *CoreServiceOperator) writeServiceLog(name string, level, message string
 }
 
 func (o *CoreServiceOperator) RestartService(name string) error {
-	if err := o.StopService(name); err != nil {
+	unlock := o.LifecycleLocks.Lock(name)
+	defer unlock()
+	if err := o.stopServiceLocked(name); err != nil {
 		return fmt.Errorf("stop failed: %w", err)
 	}
-	return o.StartService(name)
+	return o.startServiceLocked(name)
 }
 
 func (o *CoreServiceOperator) SendSignal(name string, signal syscall.Signal) error {
@@ -545,6 +613,9 @@ func (o *CoreServiceOperator) SendSignal(name string, signal syscall.Signal) err
 
 // ForceStopService 强制停止服务（SIGKILL）
 func (o *CoreServiceOperator) ForceStopService(name string) error {
+	unlock := o.LifecycleLocks.Lock(name)
+	defer unlock()
+
 	proc, ok := o.ProcessMgr.Get(name)
 	if !ok {
 		// 进程不存在：服务可能处于退避等待，与 StopService 同样处理
@@ -604,6 +675,9 @@ func (o *CoreServiceOperator) ForceStopService(name string) error {
 
 // ClearFailedState 清除失败状态，重置为 pending
 func (o *CoreServiceOperator) ClearFailedState(name string) error {
+	unlock := o.LifecycleLocks.Lock(name)
+	defer unlock()
+
 	o.stateMachinesMu.RLock()
 	sm, ok := o.StateMachines[name]
 	o.stateMachinesMu.RUnlock()

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -19,17 +20,20 @@ const DefaultDebounceInterval = 500 * time.Millisecond
 // REQ-F-026: fsnotify 监听器，监听 /etc/supd/ 下所有子目录
 // 防抖500ms，按文件路径去重，原子写关注 rename 事件
 type Watcher struct {
-	fswatcher *fsnotify.Watcher   // fsnotify 实例
-	debouncer *Debouncer          // 500ms 防抖器
-	baseDir   string              // 监控的根目录
-	done      chan struct{}       // 停止信号
-	stopOnce  sync.Once           // A-08-001: 保护 Stop 仅执行一次，避免重复 close panic
+	fswatcher *fsnotify.Watcher // fsnotify 实例
+	debouncer *Debouncer        // 500ms 防抖器
+	baseDir   string            // 监控的根目录
+	done      chan struct{}     // 停止信号
+	stopOnce  sync.Once         // A-08-001: 保护 Stop 仅执行一次，避免重复 close panic
 
 	// A-08-001 修复：运行时 fd 耗尽检测
 	// 连续 addWatch 失败计数，超过阈值时发出警告（疑似 fd 耗尽）
 	// 成功添加监控时计数清零
 	consecutiveAddFailures int
 	addFailMu              sync.Mutex
+	disabled               atomic.Bool
+	disableMu              sync.RWMutex
+	disableReason          string
 }
 
 // A-08-001 修复：连续 addWatch 失败阈值
@@ -56,8 +60,11 @@ func NewWatcher(baseDir string) (*Watcher, error) {
 		done:      make(chan struct{}),
 	}
 
-	// REQ-F-026: 递归添加 baseDir 下所有子目录到监控
-	w.walkAndWatch()
+	// REQ-F-026: 初始目录监控必须完整建立，否则拒绝启动。
+	if err := w.walkAndWatch(); err != nil {
+		_ = fsw.Close()
+		return nil, err
+	}
 
 	return w, nil
 }
@@ -86,6 +93,32 @@ func (w *Watcher) Events() <-chan []ChangeEvent {
 	return w.debouncer.Events()
 }
 
+// Enabled 返回运行期热重载是否可用。
+func (w *Watcher) Enabled() bool {
+	return w != nil && !w.disabled.Load()
+}
+
+// Reason 返回 watcher 被禁用的原因。
+func (w *Watcher) Reason() string {
+	if w == nil {
+		return "watcher unavailable"
+	}
+	w.disableMu.RLock()
+	defer w.disableMu.RUnlock()
+	return w.disableReason
+}
+
+func (w *Watcher) disable(reason string) {
+	if !w.disabled.CompareAndSwap(false, true) {
+		return
+	}
+	w.disableMu.Lock()
+	w.disableReason = reason
+	w.disableMu.Unlock()
+	slog.Error("watcher disabled; automatic reload is unavailable", "reason", reason)
+	w.debouncer.Stop()
+}
+
 // forwardEvents 事件转发 goroutine
 // REQ-F-026: fsnotify events → ChangeEvent → debouncer.Push()
 // fsnotify 事件映射：Create→"create", Write→"write", Rename→"rename", Remove→"remove"
@@ -99,6 +132,9 @@ func (w *Watcher) forwardEvents() {
 		case event, ok := <-w.fswatcher.Events:
 			if !ok {
 				return
+			}
+			if strings.HasPrefix(filepath.Base(event.Name), ".supd-tmp-") {
+				continue
 			}
 			ce := ChangeEvent{
 				Path:      event.Name,
@@ -125,8 +161,12 @@ func (w *Watcher) forwardEvents() {
 
 			w.debouncer.Push(ce)
 
-		case <-w.fswatcher.Errors:
-			// REQ-F-026: fsnotify 错误不 panic，忽略
+		case err, ok := <-w.fswatcher.Errors:
+			if !ok {
+				return
+			}
+			w.disable(fmt.Sprintf("fsnotify runtime error: %v", err))
+			return
 		}
 	}
 }
@@ -152,7 +192,10 @@ func (w *Watcher) handleNewDir(path string) {
 			return nil
 		}
 		if d.IsDir() && shouldWatchDir(w.baseDir, p) {
-			w.addWatch(p)
+			if err := w.addWatch(p); err != nil {
+				w.disable(err.Error())
+				return err
+			}
 		}
 		return nil
 	}); err != nil {
@@ -167,7 +210,7 @@ func (w *Watcher) handleNewDir(path string) {
 // 通过追踪连续 addWatch 失败次数，识别运行时 fd 耗尽（EMFILE/ENFILE）
 // 超过阈值时发出 slog.Warn，提示用户检查系统 inotify/max_user_watches 或 fd ulimit
 // 注意：此处不切换到 FallbackWatcher 模式（已监控的目录仍生效），仅发出警告
-func (w *Watcher) addWatch(path string) {
+func (w *Watcher) addWatch(path string) error {
 	if err := w.fswatcher.Add(path); err != nil {
 		// REQ-F-026: 添加监控失败不 panic，记录错误即可
 		fmt.Fprintf(os.Stderr, "REQ-F-026: add watch %s: %v\n", path, err)
@@ -186,18 +229,19 @@ func (w *Watcher) addWatch(path string) {
 				"hint", "check /proc/sys/fs/inotify/max_user_watches and ulimit -n",
 				"last_error", err)
 		}
-		return
+		return fmt.Errorf("add watch %s: %w", path, err)
 	}
 
 	// 成功添加监控，清零连续失败计数
 	w.addFailMu.Lock()
 	w.consecutiveAddFailures = 0
 	w.addFailMu.Unlock()
+	return nil
 }
 
 // walkAndWatch 递归添加 baseDir 下白名单子目录到监控
 // REQ-F-026: 监听 /etc/supd/ 下配置文件目录
-func (w *Watcher) walkAndWatch() {
+func (w *Watcher) walkAndWatch() error {
 	if err := filepath.WalkDir(w.baseDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			slog.Warn("walk base dir entry error", "path", path, "err", err)
@@ -212,12 +256,15 @@ func (w *Watcher) walkAndWatch() {
 		}
 		// 白名单过滤：只监控配置目录
 		if shouldWatchDir(w.baseDir, path) {
-			w.addWatch(path)
+			if err := w.addWatch(path); err != nil {
+				return err
+			}
 		}
 		return nil
 	}); err != nil {
-		slog.Warn("walk base dir failed", "baseDir", w.baseDir, "error", err)
+		return fmt.Errorf("initialize watcher for %s: %w", w.baseDir, err)
 	}
+	return nil
 }
 
 // shouldSkipDir 判断目录是否应该跳过遍历

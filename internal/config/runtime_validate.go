@@ -26,6 +26,7 @@ func validateAbsolutePath(entry *RuntimeEntry) {
 	info, err := os.Stat(entry.Path)
 	if err != nil {
 		entry.Available = false
+		entry.UnavailableReason = "not_found"
 		entry.AbsPath = entry.Path
 		return
 	}
@@ -33,6 +34,7 @@ func validateAbsolutePath(entry *RuntimeEntry) {
 	// 必须是普通文件
 	if !info.Mode().IsRegular() {
 		entry.Available = false
+		entry.UnavailableReason = "not_executable"
 		entry.AbsPath = entry.Path
 		return
 	}
@@ -40,11 +42,13 @@ func validateAbsolutePath(entry *RuntimeEntry) {
 	// 检查可执行位
 	if info.Mode().Perm()&0111 == 0 {
 		entry.Available = false
+		entry.UnavailableReason = "not_executable"
 		entry.AbsPath = entry.Path
 		return
 	}
 
 	entry.Available = true
+	entry.UnavailableReason = ""
 	entry.AbsPath = entry.Path
 }
 
@@ -54,10 +58,12 @@ func validatePathLookup(entry *RuntimeEntry) {
 	absPath, err := exec.LookPath(entry.Path)
 	if err != nil {
 		entry.Available = false
+		entry.UnavailableReason = "not_found"
 		entry.AbsPath = entry.Path
 		return
 	}
 	entry.Available = true
+	entry.UnavailableReason = ""
 	entry.AbsPath = absPath
 }
 
@@ -71,7 +77,7 @@ func ValidateAll(registry *RuntimeRegistry) {
 	for _, entry := range registry.entries {
 		ValidateRuntime(entry)
 		if !entry.Available {
-			slog.Warn("runtime is not available, services using this runtime will fall back to direct command execution",
+			slog.Warn("runtime is not available; users of this alias will fail to start",
 				"alias", entry.Alias,
 				"path", entry.Path,
 				"source", string(entry.Source),

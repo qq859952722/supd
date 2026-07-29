@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -15,7 +16,37 @@ import (
 
 // SupervisorCallbacks 封装 supervisor 差异依赖，由调用方（bootstrap/api）注入。
 // 所有字段均为可选（nil 安全），未注入时静默跳过。
+// LifecycleLocks 按服务名串行化生命周期操作，不同服务之间互不阻塞。
+type LifecycleLocks struct {
+	mu    sync.Mutex
+	locks map[string]*sync.Mutex
+}
+
+// NewLifecycleLocks 创建共享生命周期锁集合。
+func NewLifecycleLocks() *LifecycleLocks {
+	return &LifecycleLocks{locks: make(map[string]*sync.Mutex)}
+}
+
+// Lock 获取指定服务的生命周期锁并返回解锁函数。
+func (l *LifecycleLocks) Lock(name string) func() {
+	if l == nil {
+		return func() {}
+	}
+	l.mu.Lock()
+	lock := l.locks[name]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		l.locks[name] = lock
+	}
+	l.mu.Unlock()
+	lock.Lock()
+	return lock.Unlock
+}
+
 type SupervisorCallbacks struct {
+	// AcquireLifecycleLock 在自动重启 fork 前获取与 API/关机路径共享的服务锁。
+	AcquireLifecycleLock func(name string) func()
+
 	// WriteServiceLog 写服务日志（进程退出原因、重启失败原因）
 	WriteServiceLog func(name, level, message string)
 
@@ -52,6 +83,9 @@ type SupervisorCallbacks struct {
 	SpawnNextSupervisor func(name string, svcEntry *watch.ServiceEntry,
 		sm *StateMachine, proc *Process, engine *RestartEngine) context.Context
 
+	// OnDependable 在进程进入可依赖终态时通知依赖恢复协调器。
+	OnDependable func(ctx context.Context, name string)
+
 	// RunReadiness 重启后执行 readiness 检查
 	// bootstrap: 同步（阻塞），返回 error（checkReadiness 的错误）
 	// service_operator: 异步（goroutine），返回 nil（异步模式无同步 error）
@@ -68,9 +102,9 @@ type RestartAction int
 
 const (
 	RestartActionWait   RestartAction = iota // 允许重启，进入退避
-	RestartActionFailed                       // → failed
-	RestartActionDown                         // → down
-	RestartActionAbort                        // 状态已被外部接管，静默退出
+	RestartActionFailed                      // → failed
+	RestartActionDown                        // → down
+	RestartActionAbort                       // 状态已被外部接管，静默退出
 )
 
 // RunSupervisor 监督单个服务进程：等待退出→决策→重启。
@@ -138,8 +172,13 @@ func RunSupervisor(
 		return
 	}
 
-	// 7. 启动新进程+重建日志器
+	// 7. 启动新进程+重建日志器，与 API/关机路径共享同服务生命周期锁。
+	unlock := func() {}
+	if callbacks.AcquireLifecycleLock != nil {
+		unlock = callbacks.AcquireLifecycleLock(name)
+	}
 	newProc, preChecker, ok := doRestartProcess(name, svcEntry, sm, engine, callbacks)
+	unlock()
 	if !ok {
 		return // 启动失败，已转 failed
 	}
@@ -152,10 +191,14 @@ func RunSupervisor(
 		readinessCtx = callbacks.SpawnNextSupervisor(name, svcEntry, sm, newProc, engine)
 	}
 
-	// 9. readiness 检查
+	// 9. readiness 检查；无 readiness 的 up 即为可依赖终态。
 	// bootstrap: 同步+error 处理（区分进程退出 vs 超时）
 	// service_operator: 异步，返回 nil（无同步 error）
-	if svcEntry.Config.Readiness != nil && callbacks.RunReadiness != nil {
+	if svcEntry.Config.Readiness == nil {
+		if callbacks.OnDependable != nil {
+			callbacks.OnDependable(readinessCtx, name)
+		}
+	} else if callbacks.RunReadiness != nil {
 		if err := callbacks.RunReadiness(readinessCtx, name, svcEntry, sm, newProc, preChecker); err != nil {
 			// 同步模式下 checkReadiness 返回 error
 			// 区分"进程在 readiness 期间退出"和"readiness 超时"
@@ -267,10 +310,14 @@ func doRestartProcess(name string, svcEntry *watch.ServiceEntry, sm *StateMachin
 
 	// 构建命令（runtime 解析）
 	command := svcConfig.Command
-	if svcConfig.Runtime != "" && cb.RuntimeRegistry != nil {
-		if rt, err := config.Resolve(cb.RuntimeRegistry, svcConfig.Runtime); err == nil && rt.Available {
-			command = append([]string{rt.AbsPath}, command...)
+	if svcConfig.Runtime != "" {
+		rt, err := config.Resolve(cb.RuntimeRegistry, svcConfig.Runtime)
+		if err != nil {
+			slog.Error("runtime resolve failed during restart", "service", name, "runtime", svcConfig.Runtime, "error", err)
+			sm.Transition(EventMaxRetries)
+			return nil, nil, false
 		}
+		command = append([]string{rt.AbsPath}, command...)
 	}
 
 	// 构建 env 和 workdir
@@ -324,9 +371,11 @@ func doRestartProcess(name string, svcEntry *watch.ServiceEntry, sm *StateMachin
 		}
 	}
 
-	// 状态转移: starting → up
+	// 状态转移: starting → up；有 readiness 时在 ready 后记录稳定锚点。
 	sm.Transition(EventProcessStarted)
-	engine.RecordStart()
+	if svcConfig.Readiness == nil {
+		engine.RecordStart()
+	}
 
 	// 注册新进程
 	if cb.RegisterProcess != nil {

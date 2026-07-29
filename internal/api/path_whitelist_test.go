@@ -203,14 +203,11 @@ func TestPathValidator_RuntimesWritable(t *testing.T) {
 		t.Errorf("expected %s, got %s", expected, absPath)
 	}
 
-	// runtimes/ 可写（不是只读）
-	if v.IsReadOnly(absPath) {
-		t.Error("expected runtimes/ to be writable, not read-only")
+	if !v.IsReadOnly(absPath) {
+		t.Error("expected runtimes/ to be read-only")
 	}
-
-	// 写入校验通过
-	if _, err := v.ValidateWritePath("runtimes/node/config.json"); err != nil {
-		t.Errorf("expected runtimes/ write to be allowed, got error: %v", err)
+	if _, err := v.ValidateWritePath("runtimes/node/config.json"); err == nil {
+		t.Fatal("expected runtimes/ write to be rejected")
 	}
 }
 
@@ -336,20 +333,20 @@ func TestPathValidator_DoubleEncodedPathTraversal(t *testing.T) {
 		{
 			name:        "double encoded %252E%252E%252F → %2E%2E%2F after decode",
 			path:        "%2E%2E%2Fetc%2Fpasswd",
-			shouldBlock: false, // 字面 % 字符，落在 baseDir 下，无害
-			reason:      "literal % chars, no traversal",
+			shouldBlock: true,
+			reason:      "literal percent path is harmless but root-level path is outside explicit whitelist",
 		},
 		{
 			name:        "double encoded lowercase %252e%252e%252f → %2e%2e%2f after decode",
 			path:        "%2e%2e%2fetc%2fpasswd",
-			shouldBlock: false,
-			reason:      "literal % chars, no traversal",
+			shouldBlock: true,
+			reason:      "root-level path is outside explicit whitelist",
 		},
 		{
 			name:        "partial double encoded %252E%252E/ → %2E%2E/ after decode",
 			path:        "%2E%2E/etc/passwd",
-			shouldBlock: false,
-			reason:      "literal % chars, no traversal",
+			shouldBlock: true,
+			reason:      "root-level path is outside explicit whitelist",
 		},
 	}
 
@@ -412,8 +409,8 @@ func TestPathValidator_NullByteInjection(t *testing.T) {
 		{
 			name:        "null byte followed by absolute path",
 			path:        "services\x00/etc/passwd",
-			shouldBlock: false,
-			reason:      "null byte in filename, no '..', path resolves under baseDir",
+			shouldBlock: true,
+			reason:      "top-level component does not exactly match the services whitelist entry",
 		},
 	}
 

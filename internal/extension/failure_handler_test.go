@@ -78,7 +78,7 @@ func TestTriggerSchedule_RetryOnFailureParsing(t *testing.T) {
 
 	yamlData := []byte(`
 name: test-ext
-version: "1.0"
+version: "1.0.0"
 runtime: bash
 entry: run.sh
 actions:
@@ -136,7 +136,7 @@ func TestTriggerSchedule_NoRetryOnFailure(t *testing.T) {
 
 	yamlData := []byte(`
 name: test-ext
-version: "1.0"
+version: "1.0.0"
 runtime: bash
 entry: run.sh
 actions:

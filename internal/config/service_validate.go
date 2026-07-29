@@ -10,6 +10,9 @@ import (
 // REQ-D-007: ^[a-z][a-z0-9-]*$
 var serviceNameRegex = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
+// versionRegex 服务和扩展统一使用三段数字版本格式。
+var versionRegex = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+
 // allowedSignals 允许的自定义信号
 var allowedSignals = map[string]bool{
 	"HUP": true, "INT": true, "QUIT": true, "USR1": true,
@@ -76,6 +79,12 @@ func setServiceDefaults(sc *ServiceConfig) {
 			sc.Logging.MaxFiles = 5
 		}
 	}
+}
+
+// ValidateService 填充默认值并校验服务配置，供文件保存等内存校验路径复用。
+func ValidateService(sc *ServiceConfig) error {
+	setServiceDefaults(sc)
+	return validateService(sc)
 }
 
 // validateService 校验服务配置的合法性

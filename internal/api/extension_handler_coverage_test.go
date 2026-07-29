@@ -96,7 +96,7 @@ func validExtMetaJSON(t *testing.T) []byte {
 	t.Helper()
 	meta := config.ExtensionMeta{
 		Name:        "myext",
-		Version:     "1.0",
+		Version:     "1.0.0",
 		Entry:       "run.sh",
 		Concurrency: "replace",
 		Actions:     []config.Action{{ID: "a", Label: "Run"}},
@@ -371,7 +371,7 @@ func TestUpdateExtension(t *testing.T) {
 	server := newExtensionTestServer(t, fp)
 
 	// 完整更新成功 → 200
-	full, _ := json.Marshal(config.ExtensionMeta{Name: "ext-a", Version: "2.0", Entry: "run.sh", Concurrency: "replace", Actions: []config.Action{{ID: "a", Label: "Run"}}})
+	full, _ := json.Marshal(config.ExtensionMeta{Name: "ext-a", Version: "2.0.0", Entry: "run.sh", Concurrency: "replace", Actions: []config.Action{{ID: "a", Label: "Run"}}})
 	resp := doAPICall(t, server, http.MethodPut, "/api/extensions/ext-a", full)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("PUT full: expected 200, got %d (body: %s)", resp.Code, resp.Body.String())
@@ -561,7 +561,11 @@ func TestGetExtensionStatus(t *testing.T) {
 // TestExportExtension 覆盖 handleExportExtension：成功(打包gzip)、不存在404、目录不存在404。
 func TestExportExtension(t *testing.T) {
 	extDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(extDir, "meta.yaml"), []byte("name: x\n"), 0644); err != nil {
+	metaYAML := "name: ext-x\nversion: \"1.0.0\"\nentry: run.sh\n"
+	if err := os.WriteFile(filepath.Join(extDir, "meta.yaml"), []byte(metaYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(extDir, "run.sh"), []byte("#!/bin/sh\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	fp := &fakeExtensionProvider{
@@ -619,7 +623,7 @@ func TestImportExtensionPreview(t *testing.T) {
 	}
 
 	// 有效归档 → 200 + 预览
-	metaYAML := "name: myext\nversion: \"1.0\"\nentry: run.sh\nconcurrency: replace\nactions:\n  - id: a\n    label: Run\n"
+	metaYAML := "name: myext\nversion: \"1.0.0\"\nentry: run.sh\nconcurrency: replace\nactions:\n  - id: a\n    label: Run\n"
 	archiveData := buildMetaTarGz(t, metaYAML)
 	req = newUploadRequest(t, "/api/extensions/import", "file", "myext.tar.gz", archiveData, nil)
 	rec = httptest.NewRecorder()
@@ -631,8 +635,8 @@ func TestImportExtensionPreview(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &prev); err != nil {
 		t.Fatalf("unmarshal preview: %v", err)
 	}
-	if prev.Name != "myext" || prev.ArchiveVer != "1.0" {
-		t.Errorf("preview = %+v, want name myext / ver 1.0", prev)
+	if prev.Name != "myext" || prev.ArchiveVer != "1.0.0" {
+		t.Errorf("preview = %+v, want name myext / ver 1.0.0", prev)
 	}
 	if prev.ExistsLocal {
 		t.Errorf("preview ExistsLocal should be false when not seeded")
@@ -654,7 +658,7 @@ func TestImportExtensionPreview(t *testing.T) {
 	}
 
 	// 非法 meta.yaml（缺 entry）→ 422
-	badYAML := "name: myext\nversion: \"1.0\"\n"
+	badYAML := "name: myext\nversion: \"1.0.0\"\n"
 	badArchive := buildMetaTarGz(t, badYAML)
 	req = newUploadRequest(t, "/api/extensions/import", "file", "bad.tar.gz", badArchive, nil)
 	rec = httptest.NewRecorder()
@@ -669,7 +673,7 @@ func TestImportExtensionConfirm(t *testing.T) {
 	server := newExtensionTestServer(t, &fakeExtensionProvider{})
 
 	// 缺 name → 400 field error
-	archiveData := buildMetaTarGz(t, "name: myext\nversion: \"1.0\"\nentry: run.sh\n")
+	archiveData := buildMetaTarGz(t, "name: myext\nversion: \"1.0.0\"\nentry: run.sh\n")
 	req := newUploadRequest(t, "/api/extensions/import/confirm", "file", "myext.tar.gz", archiveData, nil)
 	rec := httptest.NewRecorder()
 	server.router.ServeHTTP(rec, req)
@@ -686,6 +690,10 @@ func TestImportExtensionConfirm(t *testing.T) {
 	}
 
 	// 成功 → 201（watchProvider 未配置，triggerReload 返回 nil，走跳过分支）
+	archiveData = buildTarGz(t, map[string]string{
+		"meta.yaml": "name: myext\nversion: \"1.0.0\"\nentry: run.sh\n",
+		"run.sh":    "#!/bin/sh\n",
+	})
 	req = newUploadRequest(t, "/api/extensions/import/confirm", "file", "myext.tar.gz", archiveData, map[string]string{"name": "myext"})
 	rec = httptest.NewRecorder()
 	server.router.ServeHTTP(rec, req)
@@ -752,7 +760,7 @@ func TestServiceScopedExtensionHandlers(t *testing.T) {
 	}
 
 	// update → 200
-	full, _ := json.Marshal(config.ExtensionMeta{Name: "ext-a", Version: "2.0", Entry: "run.sh", Concurrency: "replace", Actions: []config.Action{{ID: "a", Label: "Run"}}})
+	full, _ := json.Marshal(config.ExtensionMeta{Name: "ext-a", Version: "2.0.0", Entry: "run.sh", Concurrency: "replace", Actions: []config.Action{{ID: "a", Label: "Run"}}})
 	resp = doAPICall(t, server, http.MethodPut, "/api/services/svc-a/extensions/ext-a", full)
 	if resp.Code != http.StatusOK {
 		t.Errorf("update svc ext: expected 200, got %d (body: %s)", resp.Code, resp.Body.String())

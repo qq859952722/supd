@@ -1,15 +1,17 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 
 	"github.com/spf13/cobra"
 )
 
 // REQ-F-039: status 命令 — 查询服务状态
 var (
-	statusOutputJSON bool
+	statusOutputFormat = string(OutputTable)
+	statusOutputJSON   bool // 测试兼容；CLI 使用 statusOutputFormat
 )
 
 var statusCmd = &cobra.Command{
@@ -23,18 +25,26 @@ var statusCmd = &cobra.Command{
   supd status web-demo
 
   # 以 JSON 格式输出（便于脚本处理）
-  supd status --json`,
+  supd status -o json`,
 	Args: maximumNArgs(1),
 	RunE: runStatus,
 }
 
 func init() {
-	statusCmd.Flags().BoolVarP(&statusOutputJSON, "output", "o", false, "以 JSON 格式输出")
+	statusCmd.Flags().StringVarP(&statusOutputFormat, "output", "o", string(OutputTable), "输出格式 (table|json)")
 }
 
 // runStatus 执行 status 命令
 // REQ-F-039: 通过 HTTP API 查询服务状态
 func runStatus(cmd *cobra.Command, args []string) error {
+	formatValue := statusOutputFormat
+	if statusOutputJSON {
+		formatValue = string(OutputJSON)
+	}
+	format, err := parseOutputFormat(formatValue)
+	if err != nil {
+		return err
+	}
 	client := getAPIClient()
 	if err := client.CheckSupdRunning(); err != nil {
 		return err
@@ -42,23 +52,36 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	if len(args) > 0 {
 		// 单服务状态
-		return showServiceStatus(client, args[0])
+		return showServiceStatusWithFormat(client, args[0], format, cmd)
 	}
 
 	// 全部服务状态
-	return showAllServicesStatus(client)
+	return showAllServicesStatusWithFormat(client, format, cmd)
+}
+
+func outputWriter(cmd *cobra.Command) io.Writer {
+	if cmd == nil {
+		return os.Stdout
+	}
+	return cmd.OutOrStdout()
 }
 
 func showServiceStatus(client *APIClient, name string) error {
+	format := OutputTable
+	if statusOutputJSON {
+		format = OutputJSON
+	}
+	return showServiceStatusWithFormat(client, name, format, nil)
+}
+
+func showServiceStatusWithFormat(client *APIClient, name string, format OutputFormat, cmd *cobra.Command) error {
 	var result map[string]any
 	if err := client.GetJSON("/api/services/"+name, &result); err != nil {
 		return fmt.Errorf("查询服务 %s 状态失败: %w", name, err)
 	}
 
-	if statusOutputJSON {
-		data, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Println(string(data))
-		return nil
+	if format == OutputJSON {
+		return writeJSON(outputWriter(cmd), result)
 	}
 
 	// 表格输出
@@ -67,6 +90,14 @@ func showServiceStatus(client *APIClient, name string) error {
 }
 
 func showAllServicesStatus(client *APIClient) error {
+	format := OutputTable
+	if statusOutputJSON {
+		format = OutputJSON
+	}
+	return showAllServicesStatusWithFormat(client, format, nil)
+}
+
+func showAllServicesStatusWithFormat(client *APIClient, format OutputFormat, cmd *cobra.Command) error {
 	var response struct {
 		Services []map[string]any `json:"services"`
 	}
@@ -75,10 +106,8 @@ func showAllServicesStatus(client *APIClient) error {
 	}
 
 	result := response.Services
-	if statusOutputJSON {
-		data, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Println(string(data))
-		return nil
+	if format == OutputJSON {
+		return writeJSON(outputWriter(cmd), result)
 	}
 
 	if len(result) == 0 {

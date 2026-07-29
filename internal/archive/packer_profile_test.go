@@ -1,9 +1,9 @@
 package archive
 
 import (
+	"archive/tar"
 	"bytes"
 	"compress/gzip"
-	"archive/tar"
 	"os"
 	"path/filepath"
 	"sort"
@@ -153,6 +153,46 @@ func TestPackDirMigrateProfile(t *testing.T) {
 }
 
 // TestPackDirShareProfile 共享导出：default:exclude，仅含 bin/ 和 extensions/
+func TestPackExtensionDirUsesExtensionRules(t *testing.T) {
+	extDir := t.TempDir()
+	files := map[string]string{
+		"meta.yaml":             "name: ext\nversion: 1.0.0\nentry: run.sh\n",
+		"run.sh":                "#!/bin/sh\n",
+		"env.yaml":              "env: {}\n",
+		"data/config.json":      "{}",
+		"__pycache__/entry.pyc": "cache",
+		"node_modules/pkg/a.js": "module",
+		".git/config":           "git",
+		".svn/entries":          "svn",
+		"debug.log":             "log",
+	}
+	for rel, content := range files {
+		path := filepath.Join(extDir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var buf bytes.Buffer
+	if err := PackExtensionDir(extDir, &buf); err != nil {
+		t.Fatalf("PackExtensionDir: %v", err)
+	}
+	entries := listArchiveEntries(t, &buf)
+	for _, want := range []string{"meta.yaml", "run.sh", "env.yaml", "data/config.json"} {
+		if !contains(entries, want) {
+			t.Errorf("extension export should contain %q, entries=%v", want, entries)
+		}
+	}
+	for _, excluded := range []string{"__pycache__/entry.pyc", "node_modules/pkg/a.js", ".git/config", ".svn/entries", "debug.log"} {
+		if contains(entries, excluded) {
+			t.Errorf("extension export should exclude %q, entries=%v", excluded, entries)
+		}
+	}
+}
+
 func TestPackDirShareProfile(t *testing.T) {
 	svcDir := createTestServiceDir(t)
 
