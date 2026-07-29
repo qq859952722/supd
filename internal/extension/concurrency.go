@@ -13,6 +13,9 @@ import (
 // REQ-F-018, 2.2.7: 4种并发策略，锁定不可新增
 type ConcurrencyPolicy string
 
+// maxSerializeQueue serialize 策略有界 FIFO 队列上限。
+// 超过此值的新触发直接返回 TaskFailed，防止高频触发下 pending 无限堆积导致内存溢出。
+// 数值选取：兼顾突发流量缓冲与资源占用，16 足以覆盖正常运维场景的排队需求。
 const maxSerializeQueue = 16
 
 const (

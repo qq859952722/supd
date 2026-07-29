@@ -22,10 +22,12 @@ func (p *CoreWatchProvider) SetDiscovery(d *watch.DiscoveryResult) {
 	p.Discovery = d
 }
 
+// Enabled 返回运行期热重载是否可用（watcher 未被运行时错误禁用）。
 func (p *CoreWatchProvider) Enabled() bool {
 	return p != nil && p.Watcher != nil && p.Watcher.Enabled()
 }
 
+// Reason 返回 watcher 被禁用的原因，供 /api/system/diagnostic 展示降级状态。
 func (p *CoreWatchProvider) Reason() string {
 	if p == nil || p.Watcher == nil {
 		return "watcher unavailable"

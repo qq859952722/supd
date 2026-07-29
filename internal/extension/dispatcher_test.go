@@ -1371,3 +1371,109 @@ func TestDispatchServiceUserPropagatedToTriggerContext(t *testing.T) {
 		t.Errorf("expected serviceName %q, got %q", "svc1", m.serviceName)
 	}
 }
+
+// TestExecuteOnDemand_SerializeQueueFull_ResultHasMetadata 验证 serialize 队列满时
+// 返回的 RunResult 包含完整元数据（ExtensionName/ActionID/TriggerType/StartedAt/FinishedAt）。
+//
+// F2-001 修复背景：applySerialize 在 queue full 路径仅构造 {RunID, State, ResultMsg}，
+// 缺少 StartedAt（零值 time.Time{}），导致 TaskHistory.lazyCleanupLocked 误判为超期记录
+// 立即删除（task_history.go:158 r.StartedAt.Before(cutoff)），使 failed 记录无法持久化，
+// 违反规格 §2.2.7「超过上限的触发立即以 failed 结束」与 §2.2.9 任务历史保留要求。
+//
+// 修复在 dispatcher.go executeWithConcurrency 中统一补全字段，本测试验证该修复生效。
+func TestExecuteOnDemand_SerializeQueueFull_ResultHasMetadata(t *testing.T) {
+	tmpDir := t.TempDir()
+	logDir := filepath.Join(tmpDir, "log")
+
+	// 长时间运行的脚本（5 秒），确保第 1 个任务运行期间队列能填满
+	slowScript := createTestScript(t, tmpDir, "slow.sh", "sleep 5")
+
+	executor := NewExecutor(logDir, tmpDir)
+	dispatcher := NewDispatcher(executor, tmpDir, logDir, 1800)
+
+	// serialize 策略的扩展
+	meta := &config.ExtensionMeta{
+		Name:           "serialize-ext",
+		Enabled:        boolPtr(true),
+		Entry:          slowScript, // 必须为绝对路径，否则 executor 在 $PATH 中找不到
+		TimeoutSeconds: 30,
+		Concurrency:    "serialize",
+		Actions: []config.Action{
+			{ID: "run", Label: "Run", ButtonStyle: "default"},
+		},
+	}
+
+	tc := TriggerContext{
+		EventType:     "on_demand",
+		TriggerSource: "test",
+		ActionID:      "run",
+		WorkDir:       tmpDir,
+	}
+
+	// 启动第 1 个任务（直接执行，阻塞 5 秒）
+	go func() {
+		dispatcher.ExecuteOnDemand(context.Background(), meta, tc, "run", nil)
+	}()
+
+	// 等待第 1 个任务进入运行状态
+	time.Sleep(200 * time.Millisecond)
+
+	// 并发触发 16 个请求（进入 pendingRuns 队列，阻塞等待）
+	pendingDone := make([]chan struct{}, 16)
+	for i := 0; i < 16; i++ {
+		pendingDone[i] = make(chan struct{})
+		go func(idx int) {
+			defer close(pendingDone[idx])
+			dispatcher.ExecuteOnDemand(context.Background(), meta, tc, "run", nil)
+		}(i)
+	}
+
+	// 等待队列填满
+	time.Sleep(200 * time.Millisecond)
+
+	// 第 18 个请求 → queue full，立即返回
+	queueFullResult, err := dispatcher.ExecuteOnDemand(context.Background(), meta, tc, "run", nil)
+
+	// 验证返回 queue full 错误
+	if err == nil {
+		t.Fatal("expected error for queue full, got nil")
+	}
+	if queueFullResult == nil {
+		t.Fatal("expected non-nil result for queue full")
+	}
+	if queueFullResult.State != TaskFailed {
+		t.Errorf("queue full result.State = %v, want %v", queueFullResult.State, TaskFailed)
+	}
+	if queueFullResult.ResultMsg != "serialize queue full" {
+		t.Errorf("queue full result.ResultMsg = %q, want %q", queueFullResult.ResultMsg, "serialize queue full")
+	}
+
+	// 验证元数据字段已补全（F2-001 修复核心）
+	if queueFullResult.ExtensionName != "serialize-ext" {
+		t.Errorf("queue full result.ExtensionName = %q, want %q", queueFullResult.ExtensionName, "serialize-ext")
+	}
+	if queueFullResult.ActionID != "run" {
+		t.Errorf("queue full result.ActionID = %q, want %q", queueFullResult.ActionID, "run")
+	}
+	if queueFullResult.TriggerType != "on_demand" {
+		t.Errorf("queue full result.TriggerType = %q, want %q", queueFullResult.TriggerType, "on_demand")
+	}
+	// StartedAt 非零值（防止 lazyCleanupLocked 误删）
+	if queueFullResult.StartedAt.IsZero() {
+		t.Error("queue full result.StartedAt is zero, will be deleted by lazyCleanupLocked")
+	}
+	if queueFullResult.FinishedAt.IsZero() {
+		t.Error("queue full result.FinishedAt is zero")
+	}
+
+	// 等待所有 pending 任务完成（避免 goroutine 泄漏影响后续测试）
+	// 第 1 个任务 5 秒 + 16 个排队任务每个 5 秒 = 85 秒，超时设为 120 秒
+	timeout := time.After(120 * time.Second)
+	for i := 0; i < 16; i++ {
+		select {
+		case <-pendingDone[i]:
+		case <-timeout:
+			t.Fatalf("timeout waiting for pending task %d to complete", i)
+		}
+	}
+}

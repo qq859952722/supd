@@ -202,10 +202,9 @@ func runRun(cmd *cobra.Command, args []string) error {
 	bootstrap := core.NewBootstrap(bsCfg)
 	result, err := bootstrap.Run(ctx)
 	if err != nil {
-		// Bootstrap 失败，但 result 可能包含部分已启动的资源，需要清理
-		if result != nil {
-			cleanupResources(ctx, result)
-		}
+		// Bootstrap 失败：调用 Cleanup 取消 supervisor goroutine、杀死已拉起的子进程、
+		// 停止 watcher 并关闭日志器，避免 goroutine 与孤儿进程泄漏。
+		bootstrap.Cleanup()
 		return fmt.Errorf("启动失败: %w", err)
 	}
 
@@ -414,11 +413,16 @@ func injectProviders(server *api.Server, result *core.BootstrapResult, cfg *conf
 	}
 	// 从 Bootstrap 传递 cancel context（用于停止退避等待中的服务）
 	svcOperator.SetCancelFuncs(result.CancelFuncs)
+	// 构建依赖恢复协调器：上游就绪后自动拉起因依赖未就绪而停留在 pending 的下游服务。
+	// canStart 复用 svcOperator.CanAutoRecover（校验 autostart+pending+依赖终态），
+	// start 复用 svcOperator.StartService（与 API/CLI 路径同一启动流程）。
 	dependencyCoordinator := core.NewDependencyCoordinator(result.DepGraph, svcOperator.CanAutoRecover, func(ctx context.Context, name string) error {
 		return svcOperator.StartService(name)
 	})
 	svcOperator.DependencyCoordinator = dependencyCoordinator
 	dependencyCoordinator.Enable()
+	// 启动后补偿扫描：对已在 up/ready 终态的服务触发一次 OnServiceDependable，
+	// 唤醒因启动顺序错位而未能在启动期被拉起的 pending 下游服务。
 	for name, entry := range result.Discovery.Services {
 		if entry.Config == nil {
 			continue
@@ -528,20 +532,6 @@ func buildStopConfigs(result *core.BootstrapResult) map[string]core.StopConfig {
 		}
 	}
 	return stopConfigs
-}
-
-// cleanupResources 清理 Bootstrap 已分配的资源（启动失败时调用）
-func cleanupResources(ctx context.Context, result *core.BootstrapResult) {
-	if result.Watcher != nil {
-		result.Watcher.Stop()
-	}
-	// 关闭所有服务日志器
-	for name, logger := range result.Loggers {
-		if logger != nil {
-			logger.Close()
-		}
-		_ = name
-	}
 }
 
 // handleWatcherEvents 处理 watcher 事件（配置热重载）

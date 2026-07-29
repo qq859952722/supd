@@ -49,6 +49,8 @@ type TriggerContext struct {
 	TriggeredAt time.Time
 }
 
+// shanghaiLocation SUPD_TRIGGER_TIME 注入时使用的固定时区（CST +08:00）。
+// 扩展脚本依赖本地时间字符串而非 UTC，统一用东八区格式化保证可读性与日志对齐。
 var shanghaiLocation = time.FixedZone("CST", 8*60*60)
 
 // BuildSupdEnv 构造 SUPD_* 上下文环境变量

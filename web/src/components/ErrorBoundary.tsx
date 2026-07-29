@@ -76,6 +76,8 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 }
 
+// RouteAwareErrorBoundary 路由感知的错误边界：路由切换时重置错误状态，
+// 使局部错误不会持续阻塞后续页面，配合 App.tsx 的路由结构使用。
 export function RouteAwareErrorBoundary({ children }: { children: ReactNode }) {
   const location = useLocation()
   return <ErrorBoundary resetKey={location.pathname}>{children}</ErrorBoundary>

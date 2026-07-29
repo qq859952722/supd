@@ -21,6 +21,7 @@ interface FileVersion {
   size: number
 }
 
+// FileWriteResponse 对应后端 FileWriteResponse，保存后据此判断是否提示"配置正在重载"。
 interface FileWriteResponse {
   saved: boolean
   reload_state: 'queued' | 'skipped'

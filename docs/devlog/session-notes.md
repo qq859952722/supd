@@ -114,28 +114,30 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-29 | 审计复核与整改规划 | 逐项核验审计报告 29 F 项 + 1 矛盾项；纠偏误报与不宜采用建议；输出 `tmp/审计报告复核与整改方案.md`（P0-P3 顺序 + 8 待决策） | [notes/2026-07-29.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-29.md) |
 | 2026-07-29 | 审计整改方案逐项落地与交叉验证 | 生成 32 个整改方案文件（tmp/fix）覆盖 30 复核结论 + 5 漏项；交叉验证覆盖/唯一性/一致性全通过；7 待决策项待用户确认 | [notes/2026-07-29.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-29.md) |
 | 2026-07-29 | 审计整改 A～H 全量落地与验证 | 32 项方案按批次完成；diagnostic 字段白名单脱敏；HTTP Start/Stop 竞态修复；Go 全量/race 与前端 60 项测试全通过 | [notes/2026-07-29.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-29.md) |
+| 2026-07-29 | 运行状态测试 + serialize 队列满记录修复（F2-001） | A～K 组运行测试全通过；发现并修复 serialize queue full 的 failed 记录因 StartedAt 零值被 lazyCleanup 误删；dispatcher.go 补全 result 元数据；skill 更新并发策略详解 | [notes/2026-07-29.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-29.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-29 审计整改 A～H 全量落地与验证）
+## 八、最近会话重点（2026-07-29 运行状态测试与 serialize 队列满记录修复 F2-001）
 
 ### 本次完成
 
-1. **整改闭环**：按 `tmp/fix/README-整改方案索引.md` 完成 A～H 批次，代码、测试、WebUI 与需求规格同步。
-2. **H 批次收尾**：根 `config.yaml` 明确禁读；diagnostic 登记并改为结构化字段白名单脱敏；前端依赖表对齐 package.json；四项 auth/监听设置统一为需重启语义。
-3. **附带缺陷修复**：Token UI 纠正不存在的 `regenerate` 命令；合法版本测试夹具统一为三段版本；HTTP Server Start/Stop 增加同步，消除全量 race 暴露的数据竞态。
-4. **完整验证**：go build/vet/test/race 全通过；前端 7 文件 60 项测试和生产构建通过；IDE diagnostics 0。
+1. **运行状态测试**：按 `tmp/runtime_test_plan_v2.md` 执行 A～K 组全量测试，覆盖依赖恢复、生命周期锁、启动摘要、原子文件写入、诊断脱敏、serialize FIFO、关机协调器，全部通过。
+2. **F2-001 修复**：serialize 队列满时 `applySerialize` 返回的 `RunResult` 缺少 `StartedAt`（零值），导致 `TaskHistory.lazyCleanupLocked` 误判为超期记录立即删除，failed 记录无法持久化。修复在 `dispatcher.go executeWithConcurrency` 中统一补全 result 缺失字段（ExtensionName/ActionID/TriggerType/StartedAt/FinishedAt），覆盖所有触发路径。
+3. **测试与验证**：新增 `TestExecuteOnDemand_SerializeQueueFull_ResultHasMetadata` 回归测试（85s）；重建二进制后运行时验证 queue full 的 failed 记录正确出现在 runs 历史。
+4. **skill 更新**：`02_extension_spec.md` 新增 §3.5 并发策略行为详解；`SKILL.md` 补充 serialize 队列上限 16。
+5. **完整回归**：go build/vet/test（含新测试）、pnpm build 全通过。
 
 ### 关键技术点
 
-- diagnostic 禁止 command、result_msg、事件 message/payload、token 原值等自由文本或敏感字段，新增字段必须显式审查。
-- HTTP `addrReady` 只能在 `httpServer` 已加锁发布后调用，确保收到回调后立即 Stop 安全。
-- 文件 API 路径按读写/只读/禁止三级契约执行，根 config 与日志目录不进入通用文件通路。
+- `RunExtension` 是异步执行模式：预记录 `TaskRunning` 后立即返回 `run_id`，扩展在后台 goroutine 执行。queue full 等失败发生在 goroutine 中，不反映在 HTTP 响应，需查 runs 历史。
+- `TaskHistory.Add` 按 RunID 覆盖存储后立即调用 `lazyCleanupLocked`；若 result.StartedAt 为零值会被判定为超期记录删除——所有 RecordRun 的 result 必须有非零 StartedAt。
+- serialize 队列上限 16 是 pendingRuns 的上限：第 1 个直接执行，第 2-17 个进队列，第 18 个才触发 queue full。
 
 ### 遗留事项
 
 - 无阻断项。
-- 本轮未提交、未推送、未发版。
+- 代码已全部验证通过，待提交与发版。
 
 ---
 

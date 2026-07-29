@@ -6,20 +6,27 @@ import (
 	"sync"
 )
 
-// DependencyCoordinator 在依赖进入可依赖终态后，去重拉起满足条件的下游服务。
+// DependencyCoordinator 依赖恢复协调器。
+// 当上游服务进入可依赖终态（up/ready）后，去重拉起满足依赖条件且未在启动中的下游服务，
+// 用于自动恢复因依赖未就绪而停留在 pending/down 状态的服务。
+// bootstrap 启动期间不触发恢复（enabled=false），仅在 autostart 服务批量启动完成后调用 Enable。
 type DependencyCoordinator struct {
-	graph    *DependencyGraph
-	canStart func(string) bool
-	start    func(context.Context, string) error
-	mu       sync.Mutex
-	enabled  bool
-	starting map[string]struct{}
+	graph    *DependencyGraph               // 依赖图，用于查询某服务的下游依赖者
+	canStart func(string) bool              // 判断服务当前是否允许被恢复拉起（状态/配置前置校验）
+	start    func(context.Context, string) error // 实际拉起服务的回调（与 API/CLI 路径复用同一启动流程）
+	mu       sync.Mutex                     // 保护 enabled 与 starting 两个并发字段
+	enabled  bool                           // 是否已启用恢复（bootstrap 完成后置 true）
+	starting map[string]struct{}            // 正在恢复拉起的服务名集合，防止重复并发拉起
 }
 
+// NewDependencyCoordinator 创建依赖恢复协调器。
+// graph/canStart/start 均由调用方注入，协调器本身不持有服务状态。
 func NewDependencyCoordinator(graph *DependencyGraph, canStart func(string) bool, start func(context.Context, string) error) *DependencyCoordinator {
 	return &DependencyCoordinator{graph: graph, canStart: canStart, start: start, starting: make(map[string]struct{})}
 }
 
+// Enable 启用依赖恢复。仅在 bootstrap 批量启动 autostart 服务完成后调用，
+// 避免启动期间上游就绪事件误触发尚未初始化完成的下游服务。
 func (c *DependencyCoordinator) Enable() {
 	if c == nil {
 		return
@@ -29,6 +36,9 @@ func (c *DependencyCoordinator) Enable() {
 	c.mu.Unlock()
 }
 
+// OnServiceDependable 上游服务进入可依赖终态时的回调入口。
+// 遍历该服务的所有直接下游依赖者，逐个尝试恢复拉起。
+// 由 supervisor / readiness 检查通过路径在 up/ready 终态触发。
 func (c *DependencyCoordinator) OnServiceDependable(ctx context.Context, serviceName string) {
 	if c == nil || c.graph == nil || c.canStart == nil || c.start == nil {
 		return
@@ -38,6 +48,10 @@ func (c *DependencyCoordinator) OnServiceDependable(ctx context.Context, service
 	}
 }
 
+// tryStart 去重拉起单个下游服务。
+// 加锁检查 enabled、未在 starting 中、canStart 通过后标记 starting，
+// 随后在独立 goroutine 中执行 start 回调，完成后清理 starting 标记。
+// goroutine 内再次校验 ctx 与 canStart，避免锁外窗口期的竞态。
 func (c *DependencyCoordinator) tryStart(ctx context.Context, name string) {
 	c.mu.Lock()
 	if !c.enabled {

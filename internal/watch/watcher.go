@@ -34,6 +34,10 @@ type Watcher struct {
 	disabled               atomic.Bool
 	disableMu              sync.RWMutex
 	disableReason          string
+	// disableCh 在 disable() 时关闭，通知 forwardEvents goroutine 退出。
+	// 不能复用 done（done 由 Stop 经 stopOnce 关闭，重复 close 会 panic）。
+	// disable() 已有 CAS 守卫保证只执行一次，故 disableCh 也只会被关闭一次。
+	disableCh chan struct{}
 }
 
 // A-08-001 修复：连续 addWatch 失败阈值
@@ -58,6 +62,7 @@ func NewWatcher(baseDir string) (*Watcher, error) {
 		debouncer: debouncer,
 		baseDir:   baseDir,
 		done:      make(chan struct{}),
+		disableCh: make(chan struct{}),
 	}
 
 	// REQ-F-026: 初始目录监控必须完整建立，否则拒绝启动。
@@ -116,6 +121,10 @@ func (w *Watcher) disable(reason string) {
 	w.disableReason = reason
 	w.disableMu.Unlock()
 	slog.Error("watcher disabled; automatic reload is unavailable", "reason", reason)
+	// 关闭 disableCh 通知 forwardEvents goroutine 退出。
+	// 若不退出，forwardEvents 会继续向已停止的 debouncer.Push 写入，
+	// 当 debouncer 的 events 通道（容量 64）填满后 goroutine 永久阻塞 → 泄漏。
+	close(w.disableCh)
 	w.debouncer.Stop()
 }
 
@@ -129,8 +138,17 @@ func (w *Watcher) forwardEvents() {
 		case <-w.done:
 			return
 
+		case <-w.disableCh:
+			// watcher 运行期被禁用（fsnotify 错误或 addWatch 失败），退出转发 goroutine。
+			// disable() 已停止 debouncer，继续转发只会向已关闭的 debouncer 堆积事件。
+			return
+
 		case event, ok := <-w.fswatcher.Events:
 			if !ok {
+				return
+			}
+			if w.disabled.Load() {
+				// 防御：disable 与收到事件可能并发，已禁用时不再向 debouncer 推送。
 				return
 			}
 			if strings.HasPrefix(filepath.Base(event.Name), ".supd-tmp-") {

@@ -44,7 +44,7 @@ description: "supd服务与扩展开发指南。当用户要求开发、修改�
 | **Readiness类型** (4种) | `http_check` / `tcp_check` / `fd_notify` / `script` |
 | **认证模式** (3种) | `none` / `local_skip` / `always_token` |
 | **按钮样式** (3种) | `primary` / `default` / `danger` (用于 `on_demand` 扩展) |
-| **数值限制** | fsnotify防抖 `500ms` / stop grace `10s` / 扩展硬上限 `1800s` / 上传限制 `100MB` |
+| **数值限制** | fsnotify防抖 `500ms` / stop grace `10s` / 扩展硬上限 `1800s` / 上传限制 `100MB` / serialize队列上限 `16` |
 | **禁止引入** | 数据库 (SQLite/Bolt 等)、SSE (Server-Sent Events)、WebSocket |
 
 > **⚠️ 环境变量 (`env.yaml`) 致命陷阱**：

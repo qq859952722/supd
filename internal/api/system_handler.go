@@ -143,6 +143,8 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 		MemoryMB:    status.MemoryMB,
 		DiskTotalMB: status.DiskTotalMB,
 		DiskUsedMB:  status.DiskUsedMB,
+		// 填充 watcher 运行期状态（与 diagnostic 保持一致）。
+		Watcher: watcherStatus(s.watchProvider),
 	}
 
 	respondJSON(w, http.StatusOK, resp)
@@ -169,6 +171,8 @@ func (s *Server) handleDiagnostic(w http.ResponseWriter, r *http.Request) {
 			MemoryMB:    status.MemoryMB,
 			DiskTotalMB: status.DiskTotalMB,
 			DiskUsedMB:  status.DiskUsedMB,
+			// 填充 watcher 运行期状态（此前遗漏导致恒为 {enabled:false}）。
+			Watcher: watcherStatus(s.watchProvider),
 		}
 	}
 

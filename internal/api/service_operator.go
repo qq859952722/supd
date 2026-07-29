@@ -61,8 +61,10 @@ func (o *CoreServiceOperator) SetCancelFuncs(cancelFuncs map[string]context.Canc
 	}
 }
 
-// SetDiscovery 热重载时更新 Discovery 引用
-// N-04-001 修复：providers 持有 Discovery 指针值拷贝，reload 后需要显式更新
+// CanAutoRecover 判断服务是否可被依赖恢复协调器自动拉起。
+// 条件：autostart 启用 + 当前处于 pending + 所有依赖均已进入可依赖终态
+// （有 readiness 的依赖须 ready，无 readiness 的依赖须 up）。
+// 作为 DependencyCoordinator 的 canStart 回调使用。
 func (o *CoreServiceOperator) CanAutoRecover(name string) bool {
 	o.stateMachinesMu.RLock()
 	defer o.stateMachinesMu.RUnlock()
@@ -92,10 +94,13 @@ func (o *CoreServiceOperator) CanAutoRecover(name string) bool {
 	return true
 }
 
+// isServiceAutostart 判断服务是否启用自动启动（nil 视为 true，与规格默认值一致）。
 func isServiceAutostart(svc *config.ServiceConfig) bool {
 	return svc.Autostart == nil || *svc.Autostart
 }
 
+// SetDiscovery 热重载时更新 Discovery 引用
+// N-04-001 修复：providers 持有 Discovery 指针值拷贝，reload 后需要显式更新
 func (o *CoreServiceOperator) SetDiscovery(d *watch.DiscoveryResult) {
 	if o == nil || d == nil {
 		return
@@ -126,12 +131,16 @@ func (o *CoreServiceOperator) UpdateRestartEngines(cfg *config.Config, discovery
 	}
 }
 
+// StartService 启动服务。先获取按服务名粒度的生命周期锁，
+// 与关机路径、自动重启路径互斥，避免并发 start/stop/restart 导致状态机错乱。
 func (o *CoreServiceOperator) StartService(name string) error {
 	unlock := o.LifecycleLocks.Lock(name)
 	defer unlock()
 	return o.startServiceLocked(name)
 }
 
+// startServiceLocked 已持有生命周期锁的内部启动实现。
+// RestartService 在同一把锁内依次调用 stopServiceLocked + startServiceLocked，避免重入死锁。
 func (o *CoreServiceOperator) startServiceLocked(name string) error {
 	o.stateMachinesMu.RLock()
 	svcEntry, ok := o.Discovery.Services[name]
@@ -467,12 +476,14 @@ func (o *CoreServiceOperator) rebuildLogger(name string, newProc *core.Process, 
 	}
 }
 
+// StopService 停止服务。先获取生命周期锁再委托 stopServiceLocked。
 func (o *CoreServiceOperator) StopService(name string) error {
 	unlock := o.LifecycleLocks.Lock(name)
 	defer unlock()
 	return o.stopServiceLocked(name)
 }
 
+// stopServiceLocked 已持有生命周期锁的内部停止实现，供 RestartService 复用。
 func (o *CoreServiceOperator) stopServiceLocked(name string) error {
 	proc, ok := o.ProcessMgr.Get(name)
 	if !ok {
@@ -598,6 +609,8 @@ func (o *CoreServiceOperator) writeServiceLog(name string, level, message string
 	}
 }
 
+// RestartService 重启服务。在同一把生命周期锁内依次 stop→start，
+// 复用 *Locked 内部方法避免重入死锁，保证重启期间不被其他 start/stop 并发干扰。
 func (o *CoreServiceOperator) RestartService(name string) error {
 	unlock := o.LifecycleLocks.Lock(name)
 	defer unlock()

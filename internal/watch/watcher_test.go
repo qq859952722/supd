@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -425,4 +426,68 @@ func TestWatcher_QbittorrentDataNotWatched(t *testing.T) {
 	case <-time.After(1 * time.Second):
 		// 没有事件是预期的（data 目录不被监控）
 	}
+}
+
+// TestWatcher_DisableExitsForwardEvents 验证 disable() 后 forwardEvents goroutine 退出，
+// 不会因向已停止的 debouncer 持续 Push（events 通道容量 64 填满后阻塞）而泄漏。
+//
+// 判据：disable 后产生大量文件事件（远超 64），若 forwardEvents 未退出，
+// debouncer.events 缓冲会被填满至 64（debouncer.run 已退出不再消费）；
+// 修复后 forwardEvents 在 disableCh 关闭时立即退出，events 缓冲不会填满。
+func TestWatcher_DisableExitsForwardEvents(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	w, err := NewWatcher(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Start()
+	defer w.Stop()
+
+	// 主动禁用 watcher（模拟 fsnotify 运行期错误或 addWatch 失败）
+	w.disable("test: simulate runtime disable")
+	if !w.disabled.Load() {
+		t.Fatal("expected watcher to be disabled")
+	}
+
+	// disableCh 应已关闭（forwardEvents select 据此退出）
+	select {
+	case <-w.disableCh:
+	default:
+		t.Fatal("expected disableCh to be closed after disable")
+	}
+
+	// disable 后产生远超 debouncer.events 容量（64）的文件事件。
+	// forwardEvents 若已退出（修复），不会向 debouncer.events 推送，缓冲不会增长。
+	// forwardEvents 若未退出（缺陷），会持续 Push 直至 64 填满后永久阻塞。
+	for i := 0; i < 150; i++ {
+		f := filepath.Join(tmpDir, fmt.Sprintf("evt-%d.yaml", i))
+		if err := os.WriteFile(f, []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 等待 fsnotify 投递事件 + forwardEvents 处理（若有缺陷会在此期间 Push）
+	time.Sleep(500 * time.Millisecond)
+
+	// 判据：events 缓冲未填满（< 64）说明 forwardEvents 已退出，未向已停止的
+	// debouncer 堆积事件。若 == 64 则 forwardEvents 仍在 Push 且已阻塞。
+	if got := len(w.debouncer.events); got >= 64 {
+		t.Errorf("forwardEvents did not exit after disable: debouncer.events buffer full (%d/64), goroutine likely blocked on Push (leak)", got)
+	}
+}
+
+// TestWatcher_DisableThenStop 验证 disable 后仍可正常 Stop（不 panic、不 double-close）。
+func TestWatcher_DisableThenStop(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	w, err := NewWatcher(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Start()
+
+	w.disable("test: disable before stop")
+	// Stop 在 disable 之后调用，不应 panic（done 与 disableCh 是独立通道）
+	w.Stop()
 }

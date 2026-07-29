@@ -612,6 +612,71 @@ func (b *Bootstrap) StopStartup() {
 	}
 }
 
+// Cleanup 清理 Bootstrap 已分配的资源（启动失败时由调用方调用）。
+//
+// 背景：Bootstrap.Run 在 startAutostartServices 阶段可能已拉起部分服务，
+// 每个 autostart 服务对应一个 supervisor goroutine（阻塞在 proc.Wait 或退避等待），
+// 以及一个运行中的子进程。若直接返回而不清理，会导致：
+//   - supervisor goroutine 泄漏：进程未退出则 proc.Wait 永久阻塞；退避中的 goroutine
+//     也因无进程退出信号而无法收尾。
+//   - 孤儿进程：子进程脱离 supd 管理继续运行，占用端口/PID 文件/锁文件。
+//
+// 清理顺序（关键）：
+//  1. 先取消所有 supervisor 的 context（cancelFuncsMu 保护）→ 中断退避等待，
+//     使后续 doBackoff 立即返回 false，goroutine 不再尝试重启。
+//  2. 再杀死所有已注册进程组 → 使 supervisor 的 proc.Wait() 返回，
+//     goroutine 走完退出路径后因 ctx 已取消而退出（doBackoff 返回 false）。
+//     Unregister 同时删除 PID 文件，避免下次启动时 ReapOrphans 误杀。
+//  3. 停止 watcher（关闭 fsnotify + debouncer，回收 forwardEvents goroutine）。
+//  4. 关闭所有服务日志器（loggersMu 保护，防止与 supervisor 退出路径中
+//     writeServiceLog 并发读写 Loggers map）。
+//
+// 说明：writeServiceLog 取得 logger 引用后释放读锁再 WriteLine，存在与 Close
+// 并发的窄窗口；WriteLine 向已关闭的 RotatingLogWriter 写入仅静默丢弃（bufio 缓冲，
+// 不 panic），对失败清理路径可接受。
+func (b *Bootstrap) Cleanup() {
+	result := b.result
+	if result == nil {
+		return
+	}
+
+	// 1. 取消所有 supervisor goroutine 的 context，中断退避等待。
+	b.cancelFuncsMu.Lock()
+	for _, cancel := range result.CancelFuncs {
+		if cancel != nil {
+			cancel()
+		}
+	}
+	b.cancelFuncsMu.Unlock()
+
+	// 2. 杀死所有已注册进程组，使 supervisor 的 proc.Wait() 返回并走退出路径。
+	//    ctx 已取消 → doBackoff 返回 false → goroutine 不重启、直接退出。
+	if result.ProcessMgr != nil {
+		for _, name := range result.ProcessMgr.List() {
+			if err := result.ProcessMgr.KillProcessGroup(name); err != nil {
+				slog.Warn("cleanup: kill process group failed", "service", name, "error", err)
+			}
+			// Unregister 同时删除 PID 文件，避免下次启动 ReapOrphans 误杀已退出的服务。
+			result.ProcessMgr.Unregister(name)
+		}
+	}
+
+	// 3. 停止 watcher（关闭 fsnotify + debouncer）。
+	if result.Watcher != nil {
+		result.Watcher.Stop()
+	}
+
+	// 4. 关闭所有服务日志器（加写锁，防止与 supervisor 退出路径的 writeServiceLog
+	//    并发读写 Loggers map）。
+	b.loggersMu.Lock()
+	for _, logger := range result.Loggers {
+		if logger != nil {
+			_ = logger.Close()
+		}
+	}
+	b.loggersMu.Unlock()
+}
+
 // isAutostart 判断服务是否自动启动
 // REQ-F-034: autostart 为 nil 或 true → true，false → false
 func isAutostart(svc *config.ServiceConfig) bool {

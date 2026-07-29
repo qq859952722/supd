@@ -497,6 +497,34 @@ func (d *Dispatcher) executeWithConcurrency(ctx context.Context, meta *config.Ex
 		return d.executor.Execute(childCtx, meta, tc, mergedEnvSlice, d.hardLimitSeconds, progressCb)
 	})
 
+	// F2-001 修复：tracker.Apply 在 serialize 队列满等失败路径返回的 RunResult 仅含
+	// RunID/State/ResultMsg，缺少 ExtensionName/ActionID/TriggerType/StartedAt/FinishedAt。
+	// 缺失 StartedAt（零值 time.Time{}）会导致 TaskHistory.lazyCleanupLocked 误判为超期记录
+	// 立即删除（task_history.go:158 r.StartedAt.Before(cutoff)），使 queue full 的 failed 记录
+	// 无法进入任务历史，违反规格 §2.2.7「超过上限的触发立即以 failed 结束」与 §2.2.9 任务历史保留要求。
+	// 此处统一补全元数据字段，确保所有失败路径的 result 可被正确持久化与查询。
+	if result != nil {
+		if result.ExtensionName == "" {
+			result.ExtensionName = meta.Name
+		}
+		if result.ActionID == "" {
+			result.ActionID = actionID
+		}
+		if result.TriggerType == "" {
+			result.TriggerType = tc.EventType
+		}
+		if result.ServiceName == "" {
+			result.ServiceName = tc.ServiceName
+		}
+		now := time.Now()
+		if result.StartedAt.IsZero() {
+			result.StartedAt = now
+		}
+		if result.FinishedAt.IsZero() {
+			result.FinishedAt = now
+		}
+	}
+
 	// P-03-001 修复：根据执行结果发布对应事件
 	if d.eventPublisher != nil && result != nil {
 		eventType := "extension_completed"

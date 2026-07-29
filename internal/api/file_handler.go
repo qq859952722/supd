@@ -56,11 +56,11 @@ type ValidateFileResponse struct {
 
 // FileWriteResponse 文件保存响应；写盘成功不代表异步热重载已经完成。
 type FileWriteResponse struct {
-	Saved           bool              `json:"saved"`
-	ReloadState     string            `json:"reload_state"`
-	RequiresRestart string            `json:"requires_restart"`
-	Warnings        []string          `json:"warnings"`
-	Errors          []ValidationError `json:"errors"`
+	Saved           bool              `json:"saved"`            // 是否已成功写盘
+	ReloadState     string            `json:"reload_state"`     // skipped（非配置文件）/ queued（配置文件已入队等待热重载）
+	RequiresRestart string            `json:"requires_restart"` // 保留字段，当前固定 "unknown"
+	Warnings        []string          `json:"warnings"`         // 非阻断性提示
+	Errors          []ValidationError `json:"errors"`           // 校验失败时填充，Saved=false
 }
 
 // MoveFileRequest 移动文件请求
@@ -204,6 +204,8 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// isReloadableConfigFile 判断路径是否为受 watcher 监控的配置文件，
+// 决定 FileWriteResponse.ReloadState 返回 queued 还是 skipped。
 func isReloadableConfigFile(path string) bool {
 	switch strings.ToLower(filepath.Base(path)) {
 	case "service.yaml", "meta.yaml", "env.yaml", "config.yaml":

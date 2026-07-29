@@ -94,6 +94,28 @@ triggers:
 
 ---
 
+## 3.5 并发策略行为详解 (concurrency)
+
+`concurrency` 字段控制同一 action 多次触发时的执行行为（§2.2.7）：
+
+| 策略 | 行为 | 适用场景 |
+|---|---|---|
+| `replace` | 取消前任务（SIGTERM → 5s → SIGKILL），启动新任务 | 默认值；适合"只关心最新结果"的场景 |
+| `serialize` | 排队执行，前任务终态后执行下一任务；FIFO 队列上限 16 | 串行化操作，避免并发冲突（如配置写入） |
+| `parallel` | 并行执行，不限数量 | 无副作用的并行任务 |
+| `debounce:Ns` | trailing debounce，N 秒内无新触发后执行最后一次 | 合并高频触发（N 为 1-3600 整数，单位秒） |
+
+### serialize 队列满行为（§2.2.7）
+
+- 队列固定最多 **16 个待执行任务**（`maxSerializeQueue`）。
+- 超过上限的新触发立即以 `failed` 结束，`result_msg="serialize queue full"`。
+- 该 `failed` 记录会写入任务历史（runs），包含完整的 `extension_name`/`action_id`/`started_at` 等元数据，可通过 `GET /api/extensions/runs` 查询。
+- 扩展开发者无需特殊处理；队列满是 supd 的自动限流，防止高频触发下 pending 无限堆积。
+
+> **on_demand 异步执行模式**：`POST /api/extensions/{name}/run` 立即返回 `state=running` 和 `run_id`，扩展在后台 goroutine 中执行。最终结果（success/failed）通过 `GET /api/extensions/runs/{runID}` 或 `GET /api/extensions/runs` 查询。
+
+---
+
 ## 4. 14 个 `SUPD_*` 环境变量
 
 扩展进程启动时，系统将自动注入以下 14 个环境变量：

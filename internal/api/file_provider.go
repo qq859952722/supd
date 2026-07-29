@@ -88,12 +88,17 @@ func (p *OsFileProvider) CreateFile(path string, content []byte) error {
 	return p.atomicWrite(path, content)
 }
 
+// atomicWrite 原子写文件：先写临时文件再 rename 替换目标。
+// 避免写盘中途崩溃导致配置文件（service.yaml/meta.yaml/env.yaml）半截损坏，
+// 保证 fsnotify 观察到的是完整 rename 事件而非多次 write 抖动。
+// 步骤：保留原权限 → 临时文件写入+fsync → rename → 目录 fsync。
 func (p *OsFileProvider) atomicWrite(path string, content []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("create parent directory: %w", err)
 	}
 
+	// 保留目标文件原有权限（新建文件默认 0644）
 	perm := os.FileMode(0644)
 	if info, err := os.Stat(path); err == nil {
 		perm = info.Mode().Perm()
@@ -101,6 +106,7 @@ func (p *OsFileProvider) atomicWrite(path string, content []byte) error {
 		return fmt.Errorf("stat target file: %w", err)
 	}
 
+	// 临时文件名前缀 .supd-tmp-，被 watcher.forwardEvents 过滤，避免触发误重载
 	tmp, err := os.CreateTemp(dir, ".supd-tmp-*")
 	if err != nil {
 		return fmt.Errorf("create temporary file: %w", err)
