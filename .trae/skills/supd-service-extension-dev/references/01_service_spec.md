@@ -244,6 +244,17 @@ pending → starting → up → ready → stopping → down
 - `down`: 进程已退出并清理完毕。
 - `failed`: 启动超时、进程异常崩溃或重启尝试耗尽。
 
+### 4.1 clear-failed 操作（failed → down）
+
+`POST /api/services/{name}/clear-failed` 清除 `failed` 状态，**重置为 `down`**（规格 §2.8.1 允许 down/pending，实现选择 down）。
+
+- **前置条件**：服务当前状态必须为 `failed`；否则返回 `400 INVALID_REQUEST`（错误码 `ErrInvalidRequest`）。
+- **目标状态选择理由**：
+  - `pending → starting` 仅由 `depends_ready`（依赖就绪）或 bootstrap 推进；`clear-failed` 不触发依赖图重算，无上游依赖的服务会永久卡在 `pending`（表现为"等待中"假象）。
+  - `down` 可由用户通过 `manual_start` 直接启动（状态机规则 `StateDown → StateStarting`），语义明确。
+- **不触发下游唤醒**：`clear-failed` 不调用 `OnServiceDependable`，不会唤醒依赖该服务的下游服务。下游服务需通过其自身的 `start`/`restart` 推进。
+- **后续操作**：重置为 `down` 后，需显式调用 `POST /api/services/{name}/start` 启动服务。
+
 ---
 
 ## 5. service.yaml 检查清单

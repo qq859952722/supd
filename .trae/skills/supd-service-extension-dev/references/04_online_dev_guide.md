@@ -54,6 +54,9 @@ env:
 - `POST /api/services/{name}/start` - 启动服务
 - `POST /api/services/{name}/stop` - 停止服务
 - `POST /api/services/{name}/restart` - 重启服务
+- `POST /api/services/{name}/force-stop` - 强制停止服务（SIGKILL）
+- `POST /api/services/{name}/clear-failed` - 清除 `failed` 状态，重置为 `down`（非 failed 状态调用返回 `400 INVALID_REQUEST`；重置后需显式 `start` 启动，不触发下游依赖唤醒）
+- `POST /api/services/{name}/signal` - 发送自定义信号（body: `{"signal": "HUP"}`）
 - `GET /api/services/{name}/logs` - 查看服务日志
 
 ### 3.3 扩展管理 API

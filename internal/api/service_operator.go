@@ -12,6 +12,7 @@ import (
 
 	"github.com/supdorg/supd/internal/config"
 	"github.com/supdorg/supd/internal/core"
+	"github.com/supdorg/supd/internal/errors"
 	"github.com/supdorg/supd/internal/extension"
 	"github.com/supdorg/supd/internal/logging"
 	"github.com/supdorg/supd/internal/watch"
@@ -686,7 +687,12 @@ func (o *CoreServiceOperator) ForceStopService(name string) error {
 	return nil
 }
 
-// ClearFailedState 清除失败状态，重置为 pending
+// ClearFailedState 清除失败状态，重置为 down。
+// 规格 §2.8.1 允许重置为 down/pending；选择 down 的理由：
+//   - pending → starting 仅由 depends_ready（依赖就绪）或 bootstrap 推进，
+//     clear-failed 不触发依赖图重算，无上游依赖的服务会永久卡在 pending；
+//   - down 可由用户通过 manual_start 直接启动（状态机规则 StateDown→StateStarting），
+//     语义明确，避免"等待中"假象。
 func (o *CoreServiceOperator) ClearFailedState(name string) error {
 	unlock := o.LifecycleLocks.Lock(name)
 	defer unlock()
@@ -698,8 +704,9 @@ func (o *CoreServiceOperator) ClearFailedState(name string) error {
 		return fmt.Errorf("state machine for %s not found", name)
 	}
 	if sm.Current() != core.StateFailed {
-		return fmt.Errorf("service %s is not in failed state (current: %s)", name, sm.Current())
+		return errors.NewServiceError(errors.ErrInvalidRequest,
+			fmt.Sprintf("service %s is not in failed state (current: %s)", name, sm.Current()))
 	}
-	sm.ResetTo(core.StatePending)
+	sm.ResetTo(core.StateDown)
 	return nil
 }

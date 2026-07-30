@@ -187,6 +187,8 @@ git push origin vX.Y.Z
 | 2026-07-28 | v0.0.37 | 审计修复 `10-binary-updater-ext` 与 `transmission-updater` 运行时缺陷：`tjs.args[2]`→`tjs.env.SUPD_ACTION`、`Buffer.concat`→`TextDecoder` 累加、`proc.wait()` 返回值改用 `exit_status` 字段、`getArch()` 改为 async 并支持 aarch64；28 项运行状态测试全通过（D/A/B/C/E 五组） |
 | 2026-07-28 | v0.0.38 | 扩展运行时参数重构：删除 Action.Args，统一 SUPD_ACTION；新增临时 env 参数编辑与保存语义；修复 CLI 请求字段、服务级 env_path 和未知 action 静默回退；Skill 强制服务 README 规范 |
 | 2026-07-29 | v0.0.39 | supd 启动信息摘要（Startup Banner）：两段式打印（Bootstrap 后静态摘要 + HTTP 绑定后实际监听地址+可访问 URL 枚举）；改造 `api.Server.Start` 为 `net.Listen`+`Serve`+`addrReady` 回调；双通道输出（stdout+slog）；IPv4/IPv6 双栈地址枚举；post_ready 扩展改为异步执行避免阻塞启动摘要 |
+| 2026-07-30 | v0.0.40 | 审计整改 A～H 批次全量落地：修复 serialize 队列满的 failed 记录因 `StartedAt` 零值被 `TaskHistory.lazyCleanupLocked` 误删（F2-001，dispatcher 统一补全 result 元数据）；diagnostic 字段白名单脱敏；HTTP Server Start/Stop 数据竞态修复；Bootstrap.Cleanup 资源回收；skill 更新（02_extension_spec 并发策略详解、SKILL.md serialize 队列上限 16） |
+| 2026-07-30 | v0.0.41 | `clear-failed` 状态重置由 `pending` 改为 `down`（规格 §2.8.1 允许 down/pending，选择 down 避免无上游依赖服务永久卡在 pending"等待中"假象）；`handleClearFailedService` 用 `errors.As` 识别 `*ServiceError`，非 failed 状态返回 `400 INVALID_REQUEST`（原误返 500）；skill 同步更新（01_service_spec §4.1 状态机 clear-failed 说明、04_online_dev_guide §3.2 补全 clear-failed/force-stop/signal API） |
 
 
 

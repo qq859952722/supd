@@ -158,8 +158,8 @@ func TestClearFailedState_NotFailed(t *testing.T) {
 	}
 }
 
-// TestClearFailedState_FailedToPending failed 状态应重置为 pending
-func TestClearFailedState_FailedToPending(t *testing.T) {
+// TestClearFailedState_FailedToDown failed 状态应重置为 down
+func TestClearFailedState_FailedToDown(t *testing.T) {
 	o := newTestOperator(t.TempDir())
 	sm := core.NewStateMachine()
 	defer sm.Close()
@@ -169,8 +169,8 @@ func TestClearFailedState_FailedToPending(t *testing.T) {
 	if err := o.ClearFailedState("svc"); err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
-	if sm.Current() != core.StatePending {
-		t.Fatalf("expected pending after clear, got %s", sm.Current())
+	if sm.Current() != core.StateDown {
+		t.Fatalf("expected down after clear, got %s", sm.Current())
 	}
 }
 

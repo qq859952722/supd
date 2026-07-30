@@ -2100,7 +2100,7 @@ func TestCoreServiceOperator_ClearFailedState_NotFailed(t *testing.T) {
 	}
 }
 
-// TestCoreServiceOperator_ClearFailedState_OK 验证 failed 状态被重置为 pending。
+// TestCoreServiceOperator_ClearFailedState_OK 验证 failed 状态被重置为 down。
 func TestCoreServiceOperator_ClearFailedState_OK(t *testing.T) {
 	sm := core.NewStateMachine()
 	sm.SetName("svc1")
@@ -2118,8 +2118,8 @@ func TestCoreServiceOperator_ClearFailedState_OK(t *testing.T) {
 	if err := o.ClearFailedState("svc1"); err != nil {
 		t.Fatalf("ClearFailedState: %v", err)
 	}
-	if sm.Current() != core.StatePending {
-		t.Errorf("after ClearFailedState: state = %s, want pending", sm.Current())
+	if sm.Current() != core.StateDown {
+		t.Errorf("after ClearFailedState: state = %s, want down", sm.Current())
 	}
 }
 

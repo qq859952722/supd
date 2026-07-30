@@ -115,29 +115,37 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-29 | 审计整改方案逐项落地与交叉验证 | 生成 32 个整改方案文件（tmp/fix）覆盖 30 复核结论 + 5 漏项；交叉验证覆盖/唯一性/一致性全通过；7 待决策项待用户确认 | [notes/2026-07-29.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-29.md) |
 | 2026-07-29 | 审计整改 A～H 全量落地与验证 | 32 项方案按批次完成；diagnostic 字段白名单脱敏；HTTP Start/Stop 竞态修复；Go 全量/race 与前端 60 项测试全通过 | [notes/2026-07-29.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-29.md) |
 | 2026-07-29 | 运行状态测试 + serialize 队列满记录修复（F2-001） | A～K 组运行测试全通过；发现并修复 serialize queue full 的 failed 记录因 StartedAt 零值被 lazyCleanup 误删；dispatcher.go 补全 result 元数据；skill 更新并发策略详解 | [notes/2026-07-29.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-29.md) |
+| 2026-07-30 | clear-failed 状态重置由 pending 改为 down | 诊断远程实例 code-server 卡 pending 根因（clear-failed 不触发启动 + 无上游依赖无法被依赖协调器唤醒）；ClearFailedState 改为 ResetTo(StateDown)，避免无依赖服务永久卡 pending | [notes/2026-07-30.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-30.md) |
+| 2026-07-30 | 审计+运行状态测试+错误码修复+skill 更新+v0.0.41 发版 | 审计新增代码（符合规格 §2.8.1）；A～F 六组运行状态测试全通过；E 组发现并修复"非 failed 状态调用 clear-failed 误返 500"（改返 400 INVALID_REQUEST）；skill 同步更新 clear-failed 行为与 API；发版 v0.0.41 | [notes/2026-07-30.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-30.md) |
 
 ---
 
-## 八、最近会话重点（2026-07-29 运行状态测试与 serialize 队列满记录修复 F2-001）
+## 八、最近会话重点（2026-07-30 审计+运行状态测试+错误码修复+skill 更新+v0.0.41）
 
 ### 本次完成
 
-1. **运行状态测试**：按 `tmp/runtime_test_plan_v2.md` 执行 A～K 组全量测试，覆盖依赖恢复、生命周期锁、启动摘要、原子文件写入、诊断脱敏、serialize FIFO、关机协调器，全部通过。
-2. **F2-001 修复**：serialize 队列满时 `applySerialize` 返回的 `RunResult` 缺少 `StartedAt`（零值），导致 `TaskHistory.lazyCleanupLocked` 误判为超期记录立即删除，failed 记录无法持久化。修复在 `dispatcher.go executeWithConcurrency` 中统一补全 result 缺失字段（ExtensionName/ActionID/TriggerType/StartedAt/FinishedAt），覆盖所有触发路径。
-3. **测试与验证**：新增 `TestExecuteOnDemand_SerializeQueueFull_ResultHasMetadata` 回归测试（85s）；重建二进制后运行时验证 queue full 的 failed 记录正确出现在 runs 历史。
-4. **skill 更新**：`02_extension_spec.md` 新增 §3.5 并发策略行为详解；`SKILL.md` 补充 serialize 队列上限 16。
-5. **完整回归**：go build/vet/test（含新测试）、pnpm build 全通过。
+1. **诊断远程实例 code-server 卡 pending**：用户报告 `http://192.168.31.188:7979/` 的 code-server 一直"等待中"。通过 HTTP API + 事件流 + 服务日志定位完整因果链：进程因 argon2 原生模块缺 `ld-linux-x86-64.so.2`（宿主机疑似 Alpine/musl）启动失败 exit(1) → 重试 5 次耗尽 max_retries → failed → 被调用 clear-failed 重置回 pending → 卡死。
+2. **定位 supd 行为缺陷**：`ClearFailedState`（[service_operator.go:689](file:///home/qq/Documents/trae_projects/supd/internal/api/service_operator.go#L689)）仅 `ResetTo(StatePending)`，不触发启动也不重算依赖图。而 `pending → starting` 只由 `depends_ready`（上游依赖就绪）或 bootstrap 推进；无上游依赖的服务永远不会被依赖协调器 `OnServiceDependable` 遍历到，导致永久卡 pending。
+3. **修复**：规格 §2.8.1（L1275）允许 clear-failed "重置为 down/pending"。改为 `ResetTo(StateDown)`——down 可由用户 `manual_start` 直接启动（状态机 `StateDown→StateStarting`），语义明确为"已停止"，避免 pending"等待中"假象。
+4. **测试与验证**：更新 2 处测试断言（`adapters_test.go`、`service_operator_test.go`，后者函数名 `FailedToPending→FailedToDown`）；`go build`/`vet`/全量 `go test ./...` 通过。
+5. **审计新增代码**：修改正确、符合规格（§2.8.1 L1275 允许 down/pending）、无副作用、前端兼容、竞态安全。详见 `tmp/clear-failed-test-plan.md` 第一节。
+6. **运行状态测试**（方案：`tmp/clear-failed-test-plan.md`）：用临时服务 `clear-failed-test`（exit 1, max_retries=2）+ `dep-clear-test`（depends_on clear-failed-test）执行 A~F 六组，全通过：
+   - A 单元/集成测试；B clear-failed 核心行为 failed→down；C 事件流 admin_reset old=failed new=down；D down→manual_start 恢复可重复；E 错误场景（**测试中发现 bug 并修复**）；F 依赖连锁 clear-failed 不误唤醒下游。
+7. **E 组发现并修复的额外 bug**：`handleClearFailedService`（[service_ops.go:389](file:///home/qq/Documents/trae_projects/supd/internal/api/service_ops.go#L389)）把"not in failed state"这种客户端错误也映射成 500 INTERNAL_ERROR。修复：`ClearFailedState` 对该错误返回 `*ServiceError(ErrInvalidRequest)`；handler 用 `errors.As` 识别后调用 `respondProviderError` 按 code 映射 HTTP（400）。
+8. **Skill 更新**：同步更新 `.trae/skills/supd-service-extension-dev/`（git 跟踪的规范副本）：`references/01_service_spec.md` §4.1 新增 clear-failed 操作说明（failed→down、前置条件、不触发下游唤醒）；`references/04_online_dev_guide.md` §3.2 补全 clear-failed/force-stop/signal API 端点。
+9. **发版 v0.0.41**：README 版本号 v0.0.40→v0.0.41；version-upgrade-guide.md 补记 v0.0.40（此前遗漏）与 v0.0.41 变更记录；全量验证通过（go build/vet/test 11 包 + pnpm build）；提交并推送 tag 触发 CI。
 
 ### 关键技术点
 
-- `RunExtension` 是异步执行模式：预记录 `TaskRunning` 后立即返回 `run_id`，扩展在后台 goroutine 执行。queue full 等失败发生在 goroutine 中，不反映在 HTTP 响应，需查 runs 历史。
-- `TaskHistory.Add` 按 RunID 覆盖存储后立即调用 `lazyCleanupLocked`；若 result.StartedAt 为零值会被判定为超期记录删除——所有 RecordRun 的 result 必须有非零 StartedAt。
-- serialize 队列上限 16 是 pendingRuns 的上限：第 1 个直接执行，第 2-17 个进队列，第 18 个才触发 queue full。
+- **pending 状态的推进机制**：`pending → starting` 仅由 `EventDependsReady` 触发，来源有二：① bootstrap 批量启动 autostart 服务时（仅 supd 启动一次）；② 依赖协调器 `OnServiceDependable(上游)` 遍历 `GetDependents(上游)` 拉起下游。无上游依赖的服务，clear-failed 后重置为 pending 无人推进——这是设计盲点。
+- **ResetTo 绕过状态机转移规则**：[state_machine.go:144](file:///home/qq/Documents/trae_projects/supd/internal/core/state_machine.go#L144) 只原子存状态 + 发 `admin_reset` 事件，不调用任何启动逻辑。clear-failed / shutdown 等管理操作用它。
+- **autostart 仅控制 supd 启动时初始行为**（§2.8.1 L894-898）：运行时 clear-failed 不应触发 autostart 拉起，故 down 是正确终态（等用户手动启动），而非尝试自动重启。
 
 ### 遗留事项
 
 - 无阻断项。
-- 代码已全部验证通过，待提交与发版。
+- code-server 自身的 libc 兼容性问题（argon2 需 glibc）不在本次修复范围，需用户在远程机器换 musl 版或装 glibc 兼容层。
+- 代码未提交、未发版。
 
 ---
 

@@ -361,7 +361,7 @@ func (s *Server) handleForceStopService(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleClearFailedService POST /api/services/{name}/clear-failed
-// 清除服务的 failed 状态，重置为 pending
+// 清除服务的 failed 状态，重置为 down
 func (s *Server) handleClearFailedService(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	if name == "" {
@@ -387,6 +387,13 @@ func (s *Server) handleClearFailedService(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := s.serviceOperator.ClearFailedState(name); err != nil {
+		// 识别 *ServiceError（如 not in failed state → 400 INVALID_REQUEST），
+		// 避免"状态前置条件不满足"被降级为 500 INTERNAL_ERROR
+		var se *errors.ServiceError
+		if stderrors.As(err, &se) {
+			respondProviderError(w, err)
+			return
+		}
 		respondError(w, errors.ErrInternal, fmt.Sprintf("failed to clear failed state for %s: %v", name, err))
 		return
 	}
