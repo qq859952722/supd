@@ -35,7 +35,7 @@
 | `meta.yaml` triggers 触发器配置 | 热重载，即时生效 | 否（已在运行任务继续） |
 | `meta.yaml` actions 动作定义 | 热重载，即时生效 | 否 |
 | `meta.yaml` concurrency 并发策略 | 热重载，即时生效 | 否（已在运行任务按旧策略） |
-| `meta.yaml` timeout_seconds | 热重载，即时生效 | 否 |
+| `meta.yaml` timeout_seconds | 热重载，**下次执行生效** | 否 |
 | `meta.yaml` enabled 禁用/启用状态 | 热重载，即时生效 | 否（已运行任务不强杀） |
 | `meta.yaml` run_as 运行身份 | 热重载，下次执行生效 | 否 |
 | `meta.yaml` run_as_uid/run_as_gid/run_as_groups（UID 模式） | 热重载，下次执行生效 | 否 |
@@ -47,15 +47,16 @@
 | 修改对象 | 生效方式 | 是否影响运行中的服务进程 |
 |---|---|---|
 | 元数据（description/icon/tags） | 热重载，即时生效 | 否 |
-| `depends_on` 依赖关系 | 热重载，即时生效 | 否 |
+| `depends_on` 依赖关系 | 热重载，**下次启动生效** | 否 |
 | `readiness` 检测配置 | 热重载，**下次启动生效** | 否 |
-| `command` / `args` / `runtime` | 热重载，**标记为待重启** | **否**（必须手动 stop→start 或 restart 生效） |
+| `command` / `runtime` / `workdir` | 热重载，**标记为待重启** | **否**（必须手动 stop→start 或 restart 生效） |
 | `stop` / `restart` 策略 | 热重载，下次停止/重启生效 | 否 |
 | `logging` 配置 | 热重载，即时生效 | 否 |
-| `user` / `group` 运行身份（User 模式） | 热重载，**下次启动生效** | 否 |
-| `uid` / `gid` / `groups` 运行身份（UID 模式） | 热重载，**下次启动生效** | 否 |
+| `signals` 信号映射 | 热重载，即时生效 | 否 |
+| `user` / `group` 运行身份（User 模式） | 热重载，**标记为待重启** | 否 |
+| `uid` / `gid` / `groups` 运行身份（UID 模式） | 热重载，**标记为待重启** | 否 |
 
-> **关键原则**：根据规格说明书，热重载绝不会主动强杀重启正在正常运行的服务进程。命令/环境类变更仅标记为“待重启”，等待用户手动重启后生效。
+> **关键原则**：根据规格说明书，热重载绝不会主动强杀重启正在正常运行的服务进程。命令/身份类变更仅标记为“待重启”，等待用户手动重启后生效（依据 `internal/watch/reload_classifier.go` classifyServiceChange）。
 
 ---
 

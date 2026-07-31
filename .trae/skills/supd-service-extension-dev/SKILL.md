@@ -18,16 +18,29 @@ description: "supd服务与扩展开发指南。当用户要求开发、修改�
 
 ---
 
-## 📚 知识库导航 (Knowledge Base)
+## 📚 知识库导航 (Knowledge Base) — 按需读取
 
-在进行具体代码生成前，**务必先阅读**对应的参考文档：
+> **原则**：以下参考文档按需读取，不要一次性全量加载。根据当前任务类型，仅读取对应行标注的文档。本 SKILL.md 已包含日常开发所需的核心约束，简单任务可直接基于此编码 + 运行校验脚本。
 
-- ⚙️ **服务配置 (`service.yaml`)**: `references/01_service_spec.md` (包含 4 种 Readiness、7 种状态机)
-- 🔌 **扩展配置 (`meta.yaml`)**: `references/02_extension_spec.md` (包含 4 种触发器、stdout 通信协议)
-- 🔄 **热重载与修改规则**: `references/03_modification_matrix.md` (修改配置后何时生效)
-- 🌐 **在线开发与 API**: `references/04_online_dev_guide.md` (SSH 调试与 HTTP 导入导出)
-- ⚠️ **环境变量 (`env.yaml`)**: `references/05_env_spec.md` (极其容易出错，**必读**)
-- 🚀 **tjs 运行时开发**: `references/06_tjs_runtime_guide.md` (当 `runtime: tjs` 时**必读**；`assets/wasm/` 内含经 tjs v26.6.0 实测、可直接部署的 zstd/bsdtar WASI 工具)
+| 何时读取 | 参考文档 | 覆盖内容 |
+|:---|:---|:---|
+| 编写/修改 `service.yaml` | `references/01_service_spec.md` | 4 种 Readiness 配置、状态机 11 条转移规则、restart 策略、signals、stop/logging、检查清单 |
+| 编写/修改 `meta.yaml` | `references/02_extension_spec.md` | 4 种触发器、stdout 通信协议、14 个 SUPD_* 环境变量、retry_on_failure、entry 路径安全 |
+| 修改配置后问"何时生效" | `references/03_modification_matrix.md` | 热重载行为矩阵（哪些字段热生效、哪些需重启服务、哪些需重启 supd） |
+| 在线开发/SSH/HTTP API | `references/04_online_dev_guide.md` | Dropbear SSH 配置、CLI 命令、76 个 API 端点对照表、导入导出流程 |
+| 编写/修改 `env.yaml` | `references/05_env_spec.md` | 4 层环境变量合并规则、env.yaml 结构体格式、密码字段处理 (**必读**，极易出错) |
+| `runtime: tjs` 时 | `references/06_tjs_runtime_guide.md` | tjs API 速查、run.js 模板、fetch 流式下载、WASM 工具调用、常见坑点排查 |
+
+### 工具脚本
+
+| 脚本 | 用途 | 调用方式 |
+|:---|:---|:---|
+| `scripts/validate_dev.py` | 本地校验服务/扩展配置（version 正则、entry 安全、actions、枚举等） | `python3 scripts/validate_dev.py <target_dir>` |
+| `scripts/pack_dev.py` | 打包服务/扩展为 `.tar.gz`（支持 `--profile` 导出规则） | `python3 scripts/pack_dev.py <dir> [output] [--profile <name>]` |
+
+### WASM 资产
+
+`assets/wasm/` 内含经 txiki.js v26.6.0 实测、可直接部署的 WASI CLI 工具（`zstd.wasm` / `bsdtar.wasm`），详见 `references/06_tjs_runtime_guide.md` §11.2。
 
 ---
 
@@ -40,10 +53,13 @@ description: "supd服务与扩展开发指南。当用户要求开发、修改�
 | **服务状态** (7种) | `pending` / `starting` / `up` / `ready` / `stopping` / `down` / `failed` |
 | **任务状态** (7种) | `pending` / `running` / `success` / `failed` / `timeout` / `canceled` / `killed` |
 | **触发器类型** (4种) | `on_demand` / `on_schedule` / `service_lifecycle` / `supd_lifecycle` |
-| **并发策略** (4种) | `replace` / `serialize` / `parallel` / `debounce:Ns` |
+| **并发策略** (4种) | `replace` / `serialize` / `parallel` / `debounce:Ns`（N 为正整数，上限 3600） |
 | **Readiness类型** (4种) | `http_check` / `tcp_check` / `fd_notify` / `script` |
+| **重启策略** (3种) | `always` / `on-failure` / `never`（`max_backoff_ms` 须 ≥ `backoff_ms`） |
 | **认证模式** (3种) | `none` / `local_skip` / `always_token` |
 | **按钮样式** (3种) | `primary` / `default` / `danger` (用于 `on_demand` 扩展) |
+| **版本号格式** | 必须匹配 `^[0-9]+\.[0-9]+\.[0-9]+$`（三段数字，如 `1.0.0`） |
+| **entry 路径安全** | 禁止 `..`、shell 元字符（``; | & $ ` ( ) { }``）、冗余 `./` 前缀 |
 | **数值限制** | fsnotify防抖 `500ms` / stop grace `10s` / 扩展硬上限 `1800s` / 上传限制 `100MB` / serialize队列上限 `16` |
 | **禁止引入** | 数据库 (SQLite/Bolt 等)、SSE (Server-Sent Events)、WebSocket |
 

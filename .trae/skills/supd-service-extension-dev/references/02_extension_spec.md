@@ -23,27 +23,35 @@
 
 **必填字段**：`name`、`version`、`runtime`、`entry`、`timeout_seconds`
 
+> **`version` 格式校验**：必须匹配正则 `^[0-9]+\.[0-9]+\.[0-9]+$`（三段数字，与服务相同）。
+>
+> **`entry` 路径安全校验**：禁止包含 `..`、shell 元字符（`;` `|` `&` `$` `` ` `` `(` `)` `{` `}` `\n` `\r`）以及冗余路径分隔符；`filepath.Clean(entry) == entry` 必须成立。
+
 | 字段 | 类型 | 默认值 | 说明与约束 |
 |---|---|---|---|
 | `name` | string | 必填 | 扩展名称，必须匹配 `^[a-z][a-z0-9-]*$` 且与目录名一致 |
-| `version` | string | 必填 | 扩展版本号，如 `"1.0.0"` |
+| `version` | string | 必填 | 扩展版本号，必须匹配 `^[0-9]+\.[0-9]+\.[0-9]+$`（如 `"1.0.0"`） |
 | `description` | string | `""` | 扩展功能描述 |
 | `enabled` | bool | `true` | 是否启用该扩展 |
-| `runtime` | string | 必填 | 运行时环境（如 `bash`, `python`, `node`, `tjs` 等） |
-| `entry` | string | 必填 | 入口脚本相对路径（如 `run.sh` 或 `main.py`），须具备执行权限 |
-| `timeout_seconds` | int | `600` | 单次运行超时时限（硬上限 1800 秒） |
+| `runtime` | string | 必填 | 运行时环境（如 `bash`, `sh`, `python3`, `node`, `tjs` 等） |
+| `entry` | string | 必填 | 入口脚本相对路径（如 `run.sh` 或 `run.js`），须具备执行权限；路径受安全校验（见上） |
+| `timeout_seconds` | int | `600` | 单次运行超时时限（须 > 0，硬上限 1800 秒；可通过 config.yaml `extension_hard_limit_seconds` 配置） |
 | `run_as` | string | `""` | 运行身份（User 模式）：`root` / `<用户名>` / 空（服务级扩展继承服务身份，全局扩展继承 supd 用户）。与 `run_as_uid` 互斥 |
 | `run_as_uid` | int | `0` | 直接指定 uid（UID 模式，与 `run_as` 互斥，不查 /etc/passwd，适用于 NAS 固定 uid 服务）；`0`=未设置 |
 | `run_as_gid` | int | `0` | 直接指定 gid（UID 模式下可选，`0`=等于 `run_as_uid`） |
 | `run_as_groups` | list[int] | `[]` | 补充组 gid 列表（UID 模式下可选） |
-| `concurrency` | string | `"replace"` | 并发控制策略：`replace` / `serialize` / `parallel` / `debounce:Ns` |
+| `concurrency` | string | `"replace"` | 并发控制策略：`replace` / `serialize` / `parallel` / `debounce:Ns`（N 为 1-3600 的整数秒） |
 | `ui.show_logs` | bool | `true` | 前端 UI 是否实时展示日志 |
 | `ui.button_style` | string | `"default"` | 前端按钮样式：`primary` / `default` / `danger` |
 | `ui.icon` | string | `""` | 前端图标名称 |
-| `actions` | list[struct] | `[]` | 扩展导出的 Action 动作列表（`id`, `label`, `button_style`） |
+| `actions` | list[struct] | `[]` | 扩展导出的 Action 动作列表，含 `id`（必填、唯一）、`label`（必填）、`button_style`（可选，默认继承 `ui.button_style`）。**有 actions 时 `triggers.on_demand` 默认 true** |
 | `triggers` | struct | nil | 触发器配置 |
 
-> **注意**：`actions[].icon` 字段为规格要求但代码暂未实现（详见偏差台账 DEV-012），配置时可省略该字段。`actions[].id` 必须唯一。
+> **actions 字段约束**：
+> - `actions[].id` 必填，且在整个 actions 列表中唯一（重复 id 校验报错）。
+> - `actions[].label` 必填（不能为空字符串）。
+> - `actions[].button_style` 可选，默认继承 `ui.button_style` 的值；空字符串允许（默认值填充前）。
+> - `actions[].icon` 字段**在代码中不存在**（YAML 写入会被静默忽略）。如需为单个 action 配置不同图标，请在 `ui.icon` 中设置扩展级图标。
 
 > **身份配置说明**（§2.2.13）：
 > - **User 模式**（`run_as`）：通过用户名查找，值为 `root` / `<用户名>` / 空。
@@ -61,11 +69,16 @@
 triggers:
   on_demand: true
 
-# 2. on_schedule — cron 定时任务 (标准 5 段表达式)
+# 2. on_schedule — cron 定时任务 (标准 5 段：分 时 日 月 周)
+#    cron 表达式由 robfig/cron ParseStandard 校验，配置阶段即拦截非法表达式
 triggers:
   on_schedule:
     - cron: "0 */5 * * *"
       action: ping
+      # 可选：失败重试配置（规格 §2.2.3 / REQ-D-004）
+      retry_on_failure:
+        max_retries: 3          # 失败后最大重试次数（每次重试生成新 run_id）
+        interval_minutes: 5     # 重试间隔（分钟）
 
 # 3. service_lifecycle — 服务生命周期事件
 # 事件类型限定为: pre_start | post_ready | on_failure | pre_stop
@@ -90,7 +103,11 @@ triggers:
       action: on-shutdown
 ```
 
-> **提示**：服务级扩展自动由目录位置关联到所属服务，`meta.yaml` 中无需也不解析 `service` 字段。
+> **触发器 action 引用校验**：`on_schedule[].action`、`service_lifecycle[].action`、`supd_lifecycle[].action` 必须引用 `actions[]` 中已定义的 `id`；未定义则校验报错。
+>
+> **on_demand 默认值**：当 `actions` 非空且未显式设置 `triggers.on_demand` 时，`on_demand` 默认为 `true`。
+>
+> **提示**：服务级扩展自动由目录位置关联到所属服务，`meta.yaml` 中无需也不解析 `service` 字段（YAML 解析器静默忽略）。
 
 ---
 
@@ -118,24 +135,28 @@ triggers:
 
 ## 4. 14 个 `SUPD_*` 环境变量
 
-扩展进程启动时，系统将自动注入以下 14 个环境变量：
+扩展进程启动时，系统按场景自动注入以下 14 个环境变量（并非所有变量在所有场景都注入，见下表"适用场景"）：
 
-| 环境变量名 | 类型 | 说明与含义 |
-|---|---|---|
-| `SUPD_EVENT` | string | 触发事件类型（如 `post_ready`, `on_demand`, `on_schedule` 等） |
-| `SUPD_TRIGGER_SOURCE` | string | 触发源标识 |
-| `SUPD_TRIGGER_TIME` | string | 触发时间戳 (RFC3339) |
-| `SUPD_TRIGGER_USER` | string | 触发用户（如 API 认证用户或 `system`） |
-| `SUPD_RUN_ID` | string | 本次扩展运行的唯一任务 ID |
-| `SUPD_EXTENSION_NAME` | string | 当前扩展名称 |
-| `SUPD_ACTION` | string | 当前执行的 Action ID |
-| `SUPD_PHASE` | string | 执行阶段标识 |
-| `SUPD_SERVICE` | string | 所关联的服务名称（服务级扩展或生命周期触发） |
-| `SUPD_SERVICE_PID` | string | 关联服务的当前进程 PID（`on_failure` 事件时为失败前的 PID） |
-| `SUPD_SERVICE_DIR` | string | 关联服务的工作目录绝对路径 |
-| `SUPD_SERVICE_EXIT_CODE` | string | 关联服务退出码（`on_failure` 时有效） |
-| `SUPD_SERVICE_SIGNAL` | string | 关联服务信号 |
-| `SUPD_SERVICE_RESTART_COUNT` | string | 关联服务的当前已重启次数 |
+| 环境变量名 | 类型 | 适用场景 | 说明与含义 |
+|---|---|---|---|
+| `SUPD_EVENT` | string | 所有扩展 | 触发事件类型（`on_demand` / `on_schedule` / `service_lifecycle` / `supd_lifecycle`） |
+| `SUPD_TRIGGER_SOURCE` | string | 所有扩展 | 触发源标识（`webui` / `cli` / `schedule` / `service_lifecycle` / `supd_lifecycle`） |
+| `SUPD_TRIGGER_TIME` | string | 所有扩展 | 触发时间戳，RFC3339 格式，**固定 CST +08:00 时区**（如 `2026-07-30T15:30:00+08:00`） |
+| `SUPD_TRIGGER_USER` | string | 所有扩展 | 触发用户（API 认证用户或 `system`） |
+| `SUPD_RUN_ID` | string | 所有扩展 | 本次扩展运行的唯一任务 ID（任务历史主键） |
+| `SUPD_EXTENSION_NAME` | string | 所有扩展 | 当前扩展名称 |
+| `SUPD_ACTION` | string | 所有扩展 | 当前执行的 Action ID；扩展通过此变量区分动作分支（不再用命令行参数） |
+| `SUPD_PHASE` | string | 仅 lifecycle 触发 | 执行阶段：`pre_start` / `post_ready` / `on_failure` / `pre_stop` / `pre_shutdown` |
+| `SUPD_SERVICE` | string | 仅 service_lifecycle | 触发生命周期事件的服务名；全局扩展在 service_lifecycle 触发时也注入 |
+| `SUPD_SERVICE_PID` | string | 仅 service_lifecycle | 关联服务的当前进程 PID；`pre_start` 阶段为空字符串（进程尚未启动），`on_failure` 时为退出前 PID |
+| `SUPD_SERVICE_DIR` | string | 仅服务级扩展 | 关联服务的工作目录绝对路径；当 ServiceName 和 ServiceDir 均非空时注入 |
+| `SUPD_SERVICE_EXIT_CODE` | int | 仅 on_failure | 关联服务退出码（数字） |
+| `SUPD_SERVICE_SIGNAL` | int | 仅 on_failure | 关联服务退出信号（数字，0 表示正常退出而非信号致死） |
+| `SUPD_SERVICE_RESTART_COUNT` | int | 仅 on_failure | 关联服务的当前已重启次数（数字） |
+
+> **额外变量 `SUPD_SCRIPT_TMP`**：扩展工作目录下的 `script_tmp/<service>+<ext>` 或 `script_tmp/global+<ext>` 子目录绝对路径，供扩展脚本写入临时文件；扩展应优先使用此目录而非 `/tmp`。
+>
+> **注入顺序**：`os.Environ()` → 4 层 env.yaml 合并 → `SUPD_*` 上下文变量（后者可覆盖同名系统变量）。
 
 ---
 
@@ -155,22 +176,39 @@ echo '::result:: success "数据同步完成"'
 echo '正常打印执行日志'
 ```
 
-### 任务终态判定优先级：
+### 协议格式规范
+
+- **`::progress:: <0-100> "<message>"`**：百分比必须为 0-100 整数，消息必须用双引号包裹。
+- **`::result:: <success|warning|error> "<message>"`**：状态严格三选一，消息必须用双引号包裹。
+- **`::result::` 多次输出**：以最后一次为准（一个 run 内允许多次输出 result，最终态用最后一条）。
+- **消息内双引号转义**：消息内容中的双引号需转义为 `\"`（如 `::result:: success "say \"hello\""`）。
+- **行长限制**：单行超过 **8KB**（8192 字节）会被截断并按普通日志处理，不再尝试解析协议。
+- **未识别的 `::xxx::` 前缀**：按普通日志处理。
+- **stderr**：全部按普通日志处理，不解析协议。
+
+### 任务终态判定优先级
+
 `timeout` / `killed` / `canceled` > `::result::` 协议判定 > `exit code` 退出码（0 成功，非 0 失败）。
+
+> `::result:: warning` 视为成功完成（带告警），不计入失败统计，不触发 `retry_on_failure`。
 
 ---
 
 ## 6. meta.yaml 检查清单
 
 - [ ] `name` 匹配 `^[a-z][a-z0-9-]*$` 且与所在目录名完全一致
-- [ ] `entry` 脚本路径正确且已具备可执行权限（`chmod +x run.sh`）
-- [ ] `timeout_seconds` ≤ 1800（硬上限）
+- [ ] `version` 匹配 `^[0-9]+\.[0-9]+\.[0-9]+$`（三段数字，如 `1.0.0`）
+- [ ] `entry` 脚本路径正确（无 `..`、无 shell 元字符、无冗余分隔符）且已具备可执行权限（`chmod +x run.sh`）；tjs 扩展的 `run.js` 也建议 `chmod +x` 保持一致性
+- [ ] `timeout_seconds` > 0 且 ≤ 1800（硬上限，可通过 config.yaml 调整）
+- [ ] `runtime` 已选择合适的运行时别名（`bash`/`sh`/`python3`/`node`/`tjs` 或自定义）
 - [ ] 触发器 `service_lifecycle.event` 仅使用 `pre_start`/`post_ready`/`on_failure`/`pre_stop`
 - [ ] 触发器 `supd_lifecycle.event` 仅使用 `pre_start`/`post_ready`/`pre_shutdown`
-- [ ] `actions[].id` 唯一且符合命名规范 `^[a-z][a-z0-9-]*$`
-- [ ] `button_style` 属于 `primary`/`default`/`danger` 三者之一
-- [ ] `on_schedule` 的 `cron` 表达式格式正确（标准 5 段）
-- [ ] `concurrency` 策略符合规范（`debounce:Ns` 中 N 为秒数，不支持毫秒 `ms`）
+- [ ] `actions[].id` 唯一（重复 id 校验报错）；`actions[].label` 必填（非空字符串）
+- [ ] `actions[].button_style` ∈ `{primary, default, danger}`（如未填则继承 `ui.button_style`）
+- [ ] `ui.button_style` ∈ `{primary, default, danger}`
+- [ ] `on_schedule` 的 `cron` 表达式格式正确（标准 5 段：分 时 日 月 周；配置阶段校验）
+- [ ] `on_schedule[].action`、`service_lifecycle[].action`、`supd_lifecycle[].action` 均引用 `actions[]` 中已定义的 `id`
+- [ ] `concurrency` 策略符合规范（`debounce:Ns` 中 N 为 1-3600 的整数秒，不支持毫秒 `ms`）
 - [ ] 若包含 `env.yaml`，必须使用 `env:` 包装层格式
 - [ ] `run_as`（User 模式）与 `run_as_uid`（UID 模式）不能同时指定（互斥校验）
 - [ ] UID 模式下 `run_as_uid` > 0、`run_as_gid` >= 0（0=等于 uid）、`run_as_groups` 元素均 > 0

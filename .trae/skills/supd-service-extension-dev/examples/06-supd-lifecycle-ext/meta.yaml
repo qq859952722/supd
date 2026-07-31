@@ -3,7 +3,7 @@ version: "1.0.0"
 description: supd 生命周期钩子扩展，启动时通知与关闭时清理
 enabled: true
 runtime: bash
-entry: ./run.sh
+entry: run.sh
 timeout_seconds: 60
 concurrency: parallel
 triggers:

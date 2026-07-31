@@ -5,7 +5,7 @@ version: "1.0.0"
 description: "服务生命周期钩子扩展，响应服务的 post_ready/on_failure/pre_stop 三种事件"
 enabled: true
 runtime: bash
-entry: ./run.sh
+entry: run.sh
 timeout_seconds: 10
 ui:
   show_logs: true

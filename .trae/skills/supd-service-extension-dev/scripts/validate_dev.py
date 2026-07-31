@@ -20,14 +20,21 @@ RESET = "\033[0m"
 
 # supd 规格锁定集合与常量
 NAME_REGEX = re.compile(r"^[a-z][a-z0-9-]*$")
+# versionRegex 与 internal/config/service_validate.go:14 一致（三段数字）
+VERSION_REGEX = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 VALID_READINESS_TYPES = {"fd_notify", "tcp_check", "http_check", "script"}
 VALID_BUTTON_STYLES = {"primary", "default", "danger"}
+VALID_RESTART_POLICIES = {"always", "on-failure", "never"}
 VALID_CONCURRENCY = {"replace", "serialize", "parallel"}
+# shellMetaChars 与 internal/config/extension_validate.go:13-25 一致
+SHELL_META_CHARS = set(";|&$`(){}\n\r")
 FORBIDDEN_SIGNALS = {"TERM", "KILL", "STOP", "CONT", "SEGV", "ABRT", "BUS", "FPE", "ILL"}
 ALLOWED_SIGNALS = {"HUP", "INT", "QUIT", "USR1", "USR2", "PIPE", "ALRM", "CHLD"}
 VALID_SERVICE_LIFECYCLE_EVENTS = {"pre_start", "post_ready", "on_failure", "pre_stop"}
 VALID_SUPD_LIFECYCLE_EVENTS = {"pre_start", "post_ready", "pre_shutdown"}
 MAX_TIMEOUT_SECONDS = 1800
+# debounce:Ns 的 N 上限（extension_validate.go:184）
+DEBOUNCE_MAX_SECONDS = 3600
 README_REQUIRED_SECTIONS = (
     "服务名称与版本",
     "目录结构与权限边界",
@@ -51,6 +58,109 @@ def log_fail(msg):
 
 def log_info(msg):
     print(f"[{BLUE}INFO{RESET}] {msg}")
+
+
+def validate_version(content, kind):
+    """校验 version 字段格式：必须匹配 ^[0-9]+\\.[0-9]+\\.[0-9]+$（三段数字）。
+    与 internal/config/service_validate.go:14 versionRegex 对齐。"""
+    m_ver = re.search(r'^\s*version:\s*["\']?([^"\'#\s]+)["\']?', content, re.MULTILINE)
+    if not m_ver:
+        log_fail(f"{kind} 缺少必需的 version 字段")
+        return
+    version = m_ver.group(1)
+    if VERSION_REGEX.match(version):
+        log_pass(f"{kind} version: '{version}' 符合三段数字格式")
+    else:
+        log_fail(f"{kind} version: '{version}' 不匹配 ^[0-9]+\\.[0-9]+\\.[0-9]+$（如 1.0.0）")
+
+
+def validate_entry_path(entry, kind):
+    """校验扩展 entry 路径安全性，与 internal/config/extension_validate.go:42-62 对齐。
+    禁止：..  路径穿越、shell 元字符、冗余路径分隔符（filepath.Clean 后须与原值一致）。"""
+    if not entry:
+        log_fail(f"{kind} entry 为空")
+        return
+    issues = []
+    if ".." in entry:
+        issues.append("包含 '..'（路径穿越）")
+    for ch in entry:
+        if ch in SHELL_META_CHARS:
+            issues.append(f"包含 shell 元字符 '{ch}'")
+            break
+    # 冗余路径分隔符检查：clean 后应与原值一致
+    import posixpath
+    cleaned = posixpath.normpath(entry)
+    if cleaned != entry:
+        issues.append(f"含冗余路径分隔符（'{entry}' → '{cleaned}'）")
+    if issues:
+        log_fail(f"{kind} entry: '{entry}' 不安全 — {'; '.join(issues)}")
+    else:
+        log_pass(f"{kind} entry: '{entry}' 路径安全")
+
+
+def validate_actions_block(content, kind):
+    """校验 actions 列表：每个 action 必须有 id 和 label，id 唯一，button_style 枚举合法。
+    与 internal/config/extension_validate.go:111-129 对齐。"""
+    # 提取 actions 块（actions: 之后所有缩进行，直到遇到非缩进行如 triggers:）
+    actions_match = re.search(r'^actions:\s*\n((?:[ \t]+.+\n?)+)', content, re.MULTILINE)
+    if not actions_match:
+        return  # actions 可选，不强制
+    actions_block = actions_match.group(1)
+    # 按 "  - " 分割为各 action 条目（保留 - 后的内容）
+    # 每个条目以缩进 + "- " 开头，后续属性行紧跟
+    raw_entries = re.split(r'\n(?=[ \t]+-[ \t])', actions_block)
+    # 第一段是第一个 "- id: ..." 之前的内容（通常为空或首行）
+    action_entries = []
+    for raw in raw_entries:
+        # 去掉每条开头的缩进和 "- "，保留属性行
+        entry = re.sub(r'^[ \t]*-[ \t]?', '', raw.strip())
+        if entry:
+            action_entries.append(entry)
+    if not action_entries:
+        return
+    seen_ids = set()
+    dup_found = False
+    for idx, entry in enumerate(action_entries):
+        m_id = re.search(r'^\s*id:\s*["\']?([^"\'#\s]+)["\']?', entry, re.MULTILINE)
+        m_label = re.search(r'^\s*label:\s*(.+)$', entry, re.MULTILINE)
+        m_bs = re.search(r'^\s*button_style:\s*["\']?([^"\'#\s]+)["\']?', entry, re.MULTILINE)
+        aid = m_id.group(1) if m_id else ""
+        label = m_label.group(1).strip().strip('"\'') if m_label else ""
+        bs = m_bs.group(1) if m_bs else ""
+        if not aid:
+            log_fail(f"{kind} actions[{idx}].id: 必填")
+        elif aid in seen_ids:
+            log_fail(f"{kind} actions[{idx}].id: 重复 id '{aid}'")
+            dup_found = True
+        else:
+            seen_ids.add(aid)
+        if not label:
+            log_fail(f"{kind} actions[{idx}].label: 必填（id='{aid}'）")
+        if bs and bs not in VALID_BUTTON_STYLES:
+            log_fail(f"{kind} actions[{idx}].button_style: '{bs}' 不在 {VALID_BUTTON_STYLES} 中")
+    if seen_ids and not dup_found:
+        log_pass(f"{kind} actions: {len(seen_ids)} 个，id 唯一性通过")
+
+
+def validate_restart_policy(content):
+    """校验 restart.policy 枚举与 max_backoff_ms >= backoff_ms。
+    与 internal/config/service_validate.go:229-251 对齐。"""
+    m_pol = re.search(r'^\s*policy:\s*["\']?([^"\'#\s]+)["\']?', content, re.MULTILINE)
+    if not m_pol:
+        return  # restart 块存在但无 policy — Go 端会报错，这里仅校验枚举
+    policy = m_pol.group(1)
+    if policy in VALID_RESTART_POLICIES:
+        log_pass(f"restart.policy: '{policy}' 枚举合法")
+    else:
+        log_fail(f"restart.policy: '{policy}' 不在 {VALID_RESTART_POLICIES} 中")
+    # max_backoff_ms >= backoff_ms（两者均 > 0 时）
+    m_bo = re.search(r'^\s*backoff_ms:\s*(\d+)', content, re.MULTILINE)
+    m_mbo = re.search(r'^\s*max_backoff_ms:\s*(\d+)', content, re.MULTILINE)
+    if m_bo and m_mbo:
+        bo = int(m_bo.group(1))
+        mbo = int(m_mbo.group(1))
+        if bo > 0 and mbo > 0 and mbo < bo:
+            log_fail(f"restart.max_backoff_ms ({mbo}) 必须 >= backoff_ms ({bo})")
 
 
 def check_executable(filepath):
@@ -129,6 +239,9 @@ def validate_service(service_dir):
         else:
             log_fail(f"服务名称 name: '{name}' 格式不合法，必须匹配 ^[a-z][a-z0-9-]*$")
 
+    # 1b. version 格式校验（三段数字）
+    validate_version(content, "service")
+
     # 2. Readiness 校验
     m_type = re.search(r"^\s*type:\s*[\"']?([^\"'\s#]+)[\"']?", content, re.MULTILINE)
     if m_type:
@@ -156,6 +269,11 @@ def validate_service(service_dir):
     for forbidden in FORBIDDEN_SIGNALS:
         if re.search(rf"^\s*(reload|rotate_logs|graceful_quit):\s*{forbidden}", content, re.IGNORECASE | re.MULTILINE):
             log_fail(f"signals 中使用了禁止的框架保留信号: {forbidden}")
+
+    # 3b. restart 策略校验（仅当 restart 块存在时）
+    m_restart = re.search(r"^\s*restart:\s*\n((?:\s+\S.+\n?)+)", content, re.MULTILINE)
+    if m_restart:
+        validate_restart_policy(m_restart.group(1))
 
     # 4. 身份字段互斥校验（User 模式 user/group 与 UID 模式 uid/gid/groups 互斥）
     has_user = re.search(r"^\s*user:\s*\S", content, re.MULTILINE)
@@ -202,13 +320,18 @@ def check_service_layout(service_dir, service_yaml_content):
     if m_cmd:
         cmd_line = m_cmd.group(1).strip().rstrip("]")
         first_cmd = cmd_line.split(",")[0].strip().strip("'\"")
-        if first_cmd.startswith("./bin/"):
-            log_pass(f"command 指向 bin/ 目录: {first_cmd}")
-        elif first_cmd.startswith("./data/"):
-            log_warn(f"command 指向 data/ 目录: {first_cmd}（二进制应放在 bin/）")
-        elif not first_cmd.startswith("/"):
-            # 相对路径但不在 bin/ 或 data/ 下
-            log_warn(f"command 使用相对路径 '{first_cmd}'，建议指向 './bin/<binary>'")
+        # 多行 YAML 数组格式：第一项形如 "- ./bin/myapp"，去除 "- " 前缀
+        if first_cmd.startswith("- "):
+            first_cmd = first_cmd[2:].strip().strip("'\"")
+        # 仅对路径类命令（含 / 或以 ./ 开头）检查 bin/ 布局，跳过解释器（如 python3/node）
+        if "/" in first_cmd or first_cmd.startswith("."):
+            if first_cmd.startswith("./bin/"):
+                log_pass(f"command 指向 bin/ 目录: {first_cmd}")
+            elif first_cmd.startswith("./data/"):
+                log_warn(f"command 指向 data/ 目录: {first_cmd}（二进制应放在 bin/）")
+            elif not first_cmd.startswith("/"):
+                # 相对路径但不在 bin/ 或 data/ 下
+                log_warn(f"command 使用相对路径 '{first_cmd}'，建议指向 './bin/<binary>'")
 
     # 检查是否有二进制文件在 data/ 中
     data_dir = service_dir / "data"
@@ -239,11 +362,27 @@ def validate_extension(ext_dir):
         else:
             log_fail(f"扩展名称不匹配! YAML 中 name='{name}', 但目录名='{ext_dir.name}'")
 
-    # 2. 入口文件权限
+    # 1b. version 格式校验（三段数字）
+    validate_version(content, "extension")
+
+    # 2. 入口文件权限 + 路径安全
+    # runtime 为空（默认 shell/bash）→ 直接执行 entry，需要执行权限
+    # runtime 非空（tjs/node/python3 等）→ BuildCommand 为 [runtimePath, entry]，通过解释器执行，无需执行权限
+    # 依据：internal/extension/run_context.go:115 BuildCommand
+    m_runtime = re.search(r"^\s*runtime:\s*[\"']?([^\"'\s#]+)[\"']?", content, re.MULTILINE)
+    runtime = m_runtime.group(1).strip() if m_runtime else ""
+
     m_entry = re.search(r"^\s*entry:\s*[\"']?([^\"'\s#]+)[\"']?", content, re.MULTILINE)
     if m_entry:
-        entry = m_entry.group(1).lstrip("./")
-        check_executable(ext_dir / entry)
+        entry = m_entry.group(1)
+        validate_entry_path(entry, "extension")
+        entry_path = ext_dir / entry.lstrip("./")
+        if not entry_path.exists():
+            log_fail(f"入口文件 {entry} 不存在")
+        elif runtime:
+            log_pass(f"runtime '{runtime}' 通过解释器执行，入口脚本 {entry} 无需可执行权限")
+        else:
+            check_executable(entry_path)
 
     # 3. 超时上限
     m_timeout = re.search(r"^\s*timeout_seconds:\s*(\d+)", content, re.MULTILINE)
@@ -254,20 +393,40 @@ def validate_extension(ext_dir):
         else:
             log_fail(f"超时设置 timeout_seconds={timeout}s 超出硬上限 {MAX_TIMEOUT_SECONDS}s")
 
-    # 4. 并发控制格式
+    # 4. 并发控制格式（含 debounce:Ns 上限 3600 校验）
     m_conc = re.search(r"^\s*concurrency:\s*[\"']?([^\"'\s#]+)[\"']?", content, re.MULTILINE)
     if m_conc:
         conc = m_conc.group(1)
-        if conc in VALID_CONCURRENCY or conc.startswith("debounce:"):
-            if conc.startswith("debounce:"):
-                if not re.match(r"^debounce:\d+s$", conc):
-                    log_fail(f"debounce 并发格式非法 '{conc}'，必须为 debounce:Ns (如 debounce:5s)")
-                else:
-                    log_pass(f"并发策略 '{conc}' 符合规范")
+        if conc in VALID_CONCURRENCY:
+            log_pass(f"并发策略 '{conc}' 符合规范")
+        elif conc.startswith("debounce:"):
+            m_db = re.match(r"^debounce:(\d+)s$", conc)
+            if not m_db:
+                log_fail(f"debounce 并发格式非法 '{conc}'，必须为 debounce:Ns (如 debounce:5s)")
             else:
-                log_pass(f"并发策略 '{conc}' 符合规范")
+                n = int(m_db.group(1))
+                if n <= 0:
+                    log_fail(f"debounce 的 N 必须为正整数，当前: {n}")
+                elif n > DEBOUNCE_MAX_SECONDS:
+                    log_fail(f"debounce 的 N 上限为 {DEBOUNCE_MAX_SECONDS}，当前: {n}")
+                else:
+                    log_pass(f"并发策略 '{conc}' 符合规范（N={n} ≤ {DEBOUNCE_MAX_SECONDS}）")
         else:
             log_fail(f"非法并发策略 '{conc}'，有效值: replace/serialize/parallel/debounce:Ns")
+
+    # 4b. ui.button_style 枚举校验（仅匹配 ui: 块下的 button_style，排除 actions[] 中的）
+    m_ui_block = re.search(r"^ui:\s*\n((?:[ \t]+\S.+\n?)+)", content, re.MULTILINE)
+    if m_ui_block:
+        m_ui_bs = re.search(r"^[ \t]+button_style:\s*[\"']?([^\"'\s#]+)[\"']?", m_ui_block.group(1), re.MULTILINE)
+        if m_ui_bs:
+            ui_bs = m_ui_bs.group(1)
+            if ui_bs in VALID_BUTTON_STYLES:
+                log_pass(f"ui.button_style: '{ui_bs}' 枚举合法")
+            else:
+                log_fail(f"ui.button_style: '{ui_bs}' 不在 {VALID_BUTTON_STYLES} 中")
+
+    # 4c. actions 校验（id 必填且唯一、label 必填、button_style 枚举）
+    validate_actions_block(content, "extension")
 
     # 5. 身份字段互斥校验（run_as 与 run_as_uid 互斥）
     has_run_as = re.search(r"^\s*run_as:\s*\S", content, re.MULTILINE)

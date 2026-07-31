@@ -31,5 +31,5 @@
 
 - 服务示例目录必须包含中文 `README.md`，覆盖服务信息、目录权限、启动就绪、配置环境、扩展 actions、持久化升级、运维及安全备份，且不得包含敏感数据
 - `service.yaml` 的 `name` 字段必须与所在目录名完全一致
-- `meta.yaml` 的 `entry` 字段使用相对路径（如 `./run.sh`），便于移植
+- `meta.yaml` 的 `entry` 字段使用相对路径（如 `run.sh`），**不可**带 `./` 前缀（`filepath.Clean` 后须与原值一致，`./run.sh` 会被校验拒绝），便于移植
 - 涉及服务端口的扩展示例，端口通过 `SUPD_SERVICE_DIR` 配合 `env.yaml` 注入，避免硬编码

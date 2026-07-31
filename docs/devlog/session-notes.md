@@ -120,32 +120,39 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 
 ---
 
-## 八、最近会话重点（2026-07-30 审计+运行状态测试+错误码修复+skill 更新+v0.0.41）
+## 八、最近会话重点（2026-07-31 Skill 全面验证与优化）
 
 ### 本次完成
 
-1. **诊断远程实例 code-server 卡 pending**：用户报告 `http://192.168.31.188:7979/` 的 code-server 一直"等待中"。通过 HTTP API + 事件流 + 服务日志定位完整因果链：进程因 argon2 原生模块缺 `ld-linux-x86-64.so.2`（宿主机疑似 Alpine/musl）启动失败 exit(1) → 重试 5 次耗尽 max_retries → failed → 被调用 clear-failed 重置回 pending → 卡死。
-2. **定位 supd 行为缺陷**：`ClearFailedState`（[service_operator.go:689](file:///home/qq/Documents/trae_projects/supd/internal/api/service_operator.go#L689)）仅 `ResetTo(StatePending)`，不触发启动也不重算依赖图。而 `pending → starting` 只由 `depends_ready`（上游依赖就绪）或 bootstrap 推进；无上游依赖的服务永远不会被依赖协调器 `OnServiceDependable` 遍历到，导致永久卡 pending。
-3. **修复**：规格 §2.8.1（L1275）允许 clear-failed "重置为 down/pending"。改为 `ResetTo(StateDown)`——down 可由用户 `manual_start` 直接启动（状态机 `StateDown→StateStarting`），语义明确为"已停止"，避免 pending"等待中"假象。
-4. **测试与验证**：更新 2 处测试断言（`adapters_test.go`、`service_operator_test.go`，后者函数名 `FailedToPending→FailedToDown`）；`go build`/`vet`/全量 `go test ./...` 通过。
-5. **审计新增代码**：修改正确、符合规格（§2.8.1 L1275 允许 down/pending）、无副作用、前端兼容、竞态安全。详见 `tmp/clear-failed-test-plan.md` 第一节。
-6. **运行状态测试**（方案：`tmp/clear-failed-test-plan.md`）：用临时服务 `clear-failed-test`（exit 1, max_retries=2）+ `dep-clear-test`（depends_on clear-failed-test）执行 A~F 六组，全通过：
-   - A 单元/集成测试；B clear-failed 核心行为 failed→down；C 事件流 admin_reset old=failed new=down；D down→manual_start 恢复可重复；E 错误场景（**测试中发现 bug 并修复**）；F 依赖连锁 clear-failed 不误唤醒下游。
-7. **E 组发现并修复的额外 bug**：`handleClearFailedService`（[service_ops.go:389](file:///home/qq/Documents/trae_projects/supd/internal/api/service_ops.go#L389)）把"not in failed state"这种客户端错误也映射成 500 INTERNAL_ERROR。修复：`ClearFailedState` 对该错误返回 `*ServiceError(ErrInvalidRequest)`；handler 用 `errors.As` 识别后调用 `respondProviderError` 按 code 映射 HTTP（400）。
-8. **Skill 更新**：同步更新 `.trae/skills/supd-service-extension-dev/`（git 跟踪的规范副本）：`references/01_service_spec.md` §4.1 新增 clear-failed 操作说明（failed→down、前置条件、不触发下游唤醒）；`references/04_online_dev_guide.md` §3.2 补全 clear-failed/force-stop/signal API 端点。
-9. **发版 v0.0.41**：README 版本号 v0.0.40→v0.0.41；version-upgrade-guide.md 补记 v0.0.40（此前遗漏）与 v0.0.41 变更记录；全量验证通过（go build/vet/test 11 包 + pnpm build）；提交并推送 tag 触发 CI。
+1. **pack_dev.py 修正**：修复致命 bug（`re.fnmatch` 不存在 → `fnmatch.fnmatch`）、清理冗余 forced_excludes 逻辑、添加 PyYAML 不可用时的极简 YAML 回退解析器；服务/扩展/profile 三场景打包输出与后端一致。
+2. **tjs 运行时指南验证**：通过 Dockerfile/release.yml/run_context.go/devlog 交叉验证全部 API 声明（BuildCommand、SUPD_ACTION、tjs 非内置、WASM SHA256、tjs.open/arrayBuffer/DirHandle/system Getter/spawn 死锁等）；修正 `supd runtimes install` 描述和 WASM 存储路径说明。
+3. **validate_dev.py 增强**：新增 version 正则、entry 路径安全、actions 校验（id/label/button_style/唯一性）、restart policy 枚举、debounce 上限 3600、ui.button_style 校验；全部与 Go 源码对齐。
+4. **修复 7 个示例 entry 路径**：`./run.sh` → `run.sh`（Go validator 的 filepath.Clean 拒绝 `./` 前缀）；修复 2 个 test_workdir version 格式问题。
+5. **SKILL.md 结构优化**：导航重构为按需读取表格、新增工具脚本和 WASM 资产章节、约束表扩充 restart policy/version 格式/entry 安全。
+6. **回归测试**：Go build/vet/test 全通过、前端 pnpm build 通过、validate_dev.py 在所有示例正常工作、pack_dev.py 输出与后端一致。
 
-### 关键技术点
+### 续接修正（二次核对源码）
 
-- **pending 状态的推进机制**：`pending → starting` 仅由 `EventDependsReady` 触发，来源有二：① bootstrap 批量启动 autostart 服务时（仅 supd 启动一次）；② 依赖协调器 `OnServiceDependable(上游)` 遍历 `GetDependents(上游)` 拉起下游。无上游依赖的服务，clear-failed 后重置为 pending 无人推进——这是设计盲点。
-- **ResetTo 绕过状态机转移规则**：[state_machine.go:144](file:///home/qq/Documents/trae_projects/supd/internal/core/state_machine.go#L144) 只原子存状态 + 发 `admin_reset` 事件，不调用任何启动逻辑。clear-failed / shutdown 等管理操作用它。
-- **autostart 仅控制 supd 启动时初始行为**（§2.8.1 L894-898）：运行时 clear-failed 不应触发 autostart 拉起，故 down 是正确终态（等用户手动启动），而非尝试自动重启。
+7. **validate_dev.py tjs 执行权限误报修复**：`runtime` 非空时通过解释器执行（`BuildCommand` 产出 `[runtimePath, entry]`），无需执行权限；仅 `runtime` 为空（默认 shell/bash）时检查。`10-binary-updater-ext` 不再误报。
+8. **validate_dev.py 多行 command 解析修复**：去除多行 YAML 数组格式的 `- ` 前缀；仅对路径类命令检查 bin/ 布局，跳过解释器。`02-complex-service` 正确识别为指向 bin/。
+9. **01-simple-service 布局修正**：`run.py` → `bin/run.py`，消除散落文件 WARN，与 README"应放在 bin/"说明一致。
+10. **03_modification_matrix.md 热重载矩阵 6 处修正**（依据 `reload_classifier.go`）：`depends_on` 即时→下次启动生效；`command/args/runtime`→`command/runtime/workdir`（args 字段不存在）；`user/group` 与 `uid/gid/groups` 下次启动→标记为待重启；扩展 `timeout_seconds` 即时→下次执行生效；新增 `signals` 即时生效行。
+11. **核对结论**：API 端点 ✅、CLI 命令 ✅、状态机 ✅、环境变量（14 SUPD_* + SUPD_SCRIPT_TMP）✅、4 层 env 合并 ✅、触发器/并发策略 ✅。
 
 ### 遗留事项
 
-- 无阻断项。
-- code-server 自身的 libc 兼容性问题（argon2 需 glibc）不在本次修复范围，需用户在远程机器换 musl 版或装 glibc 兼容层。
-- 代码未提交、未发版。
+- 无阻断项。skill 验证与优化任务全部完成。
+
+---
+
+## 附：2026-07-30 审计+运行状态测试+错误码修复+skill 更新+v0.0.41
+
+> 历史详情见 [notes/2026-07-30.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-30.md)
+
+- 诊断远程实例 code-server 卡 pending 根因（clear-failed 重置为 pending 后无上游依赖无法被唤醒）
+- ClearFailedState 改为 ResetTo(StateDown)（规格 §2.8.1 允许 down/pending）
+- E 组发现并修复"非 failed 状态调用 clear-failed 误返 500"（改返 400 INVALID_REQUEST）
+- 发版 v0.0.41
 
 ---
 

@@ -5,7 +5,7 @@ version: "1.0.0"
 description: "通用 HTTP 服务健康检查扩展，支持快速检查（check）和深度诊断（diagnose）两种动作"
 enabled: true
 runtime: bash
-entry: ./run.sh
+entry: run.sh
 timeout_seconds: 60
 concurrency: replace
 triggers:

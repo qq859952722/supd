@@ -26,6 +26,8 @@ supd 执行器通过 `BuildCommand` 构造命令：`[/usr/local/bin/tjs, run.js]
 - `tjs run run.js` → `tjs-bin run run.js`（显式 `run`）
 - `tjs --version` → `tjs-bin --version`
 
+> **tjs 不是内置运行时**：supd 内置运行时只有 `bash`/`sh`/`python3`/`node`（PATH 查找）。`tjs` 通过 `config.yaml` 的 `runtimes` 映射注册（`supd init` 生成的默认配置已包含 `tjs: /usr/local/bin/tjs`），来源标记为 `config`。可通过 `supd runtimes list` 查看、`supd runtimes install tjs /path/to/tjs` 注册、`supd runtimes remove tjs` 移除。
+
 ---
 
 ## 2. 工作流集成与 musl 兼容性（关键约束）
@@ -987,11 +989,12 @@ cargo build --target wasm32-wasip1 --release
 
 ### 11.4 WASM 文件部署
 
-WASM 文件部署到 supd 容器内的 `/etc/supd/runtimes/` 目录：
+WASM 文件部署到 supd 的运行时目录 `<workdir>/runtimes/`（Docker 默认 `workdir=/etc/supd`，即 `/etc/supd/runtimes/`；本地开发为 `test_workdir/runtimes/`）：
 
 1. **构建时内置**：在 Dockerfile 中 `COPY` 或 `curl` 下载到 `/etc/supd/runtimes/`
-2. **运行时上传**：通过 supd API `POST /api/runtimes/upload?name=tool.wasm` 上传
+2. **运行时上传**：通过 supd API `POST /api/runtimes/upload?name=tool.wasm` 上传（存储到 `<workdir>/runtimes/`，权限 0755）
 3. **直接复制**：`docker cp tool.wasm <container>:/etc/supd/runtimes/tool.wasm`
+4. **API 列出/删除**：`GET /api/runtimes` 列出全部运行时；`DELETE /api/runtimes/{name}` 删除上传的文件（仅能删除 `scan` 来源，不能删除 `builtin`/`config` 声明的别名）
 
 ### 11.5 WASM 调用注意事项
 

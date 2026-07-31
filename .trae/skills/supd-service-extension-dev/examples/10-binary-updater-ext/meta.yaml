@@ -2,7 +2,7 @@ name: binary-updater
 version: "1.0.0"
 description: 二进制更新扩展 — 检测版本、流式下载、原子替换，支持 check-update / update / force-update
 runtime: tjs
-entry: ./run.js
+entry: run.js
 timeout: 600
 
 # 更新安装是串行操作，不允许并发
