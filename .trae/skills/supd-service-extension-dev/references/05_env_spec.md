@@ -57,15 +57,14 @@ env:
 
 ## 2. 4 层环境变量合并规则
 
-supd 环境变量采用 **4 层合并**（同名变量后者覆盖前者，包括 `enabled` 状态）。服务进程和扩展进程共享底图 `os.Environ()`，但 env.yaml 层级略有不同。
+supd 扩展环境采用“`os.Environ()` 系统底图 + 最多 4 层 env 文件覆盖 + `SUPD_*` 最终覆盖”。服务进程使用系统底图、显式全局 env 文件和服务 env。所有场景均为同名变量后者覆盖前者，包括 `enabled` 状态。
 
 ### 2.1 服务进程（BuildServiceProcessEnv）
 
 ```
 [第 0 层：系统底图]  os.Environ()
         ↓ (覆盖)
-[第 1 层：全局 env 文件]  <baseDir>/env/*.yaml（按文件名字母序加载，后者覆盖前者）
-                          或 config.yaml 的 env_files 列表（按列表顺序加载，后者覆盖前者）
+[第 1 层：全局 env 文件]  config.yaml 的 env_files 列表（按列表顺序加载，后者覆盖前者；可用相对或绝对路径）
         ↓ (覆盖)
 [第 2 层：服务 env]  <baseDir>/services/<svc>/env.yaml
 ```
@@ -97,7 +96,7 @@ supd 环境变量采用 **4 层合并**（同名变量后者覆盖前者，包�
 
 ### 2.4 全局 env 文件配置
 
-`config.yaml` 的 `env_files` 字段（列表）用于显式指定全局 env 文件路径（相对路径以 `<baseDir>` 为根）；为空时默认 `["env/00-base.yaml"]`。该字段不影响扩展的 env 合并（扩展始终扫描 `env/` 目录下所有 `.yaml` 文件）。
+`config.yaml` 的 `env_files` 字段（列表）用于显式指定服务进程使用的全局 env 文件路径和顺序（相对路径以 `<baseDir>` 为根，也允许绝对路径）；默认配置通常为 `["env/00-base.yaml"]`，但运行时收到空列表时不会自动扫描 `env/`。该字段不影响扩展合并：扩展始终扫描 `<baseDir>/env/` 下所有 `.yaml` 和 `.yml` 文件并按文件名字母序加载。
 
 ---
 

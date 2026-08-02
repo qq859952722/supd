@@ -44,6 +44,36 @@ description: "supd服务与扩展开发指南。当用户要求开发、修改�
 
 ---
 
+## 📁 配置根目录契约 (Base Directory Contract)
+
+```text
+<baseDir>/
+├── config.yaml                         # 必需：全局配置
+├── env/                                # 可选：全局环境文件，扩展按文件名字母序扫描 *.yaml/*.yml
+├── services/                           # 可选容器：每个直接子目录是一个服务
+│   └── <service-name>/                 # 名称须匹配 ^[a-z][a-z0-9-]*$
+│       ├── service.yaml                # 必需：被发现和加载的服务配置
+│       ├── README.md                   # Skill 生成服务时必需：中文运维说明
+│       ├── env.yaml                    # 可选：服务环境
+│       ├── bin/                        # Skill 生成服务时必需：版本化程序载荷
+│       ├── data/                       # 可选：服务唯一可写的持久化数据区
+│       ├── extensions/                 # 可选：服务级扩展容器
+│       └── package.<profile>.yaml      # 可选：导出规则
+├── extensions/                         # 可选容器：全局扩展
+│   └── <extension-name>/
+│       ├── meta.yaml                   # 必需
+│       ├── <entry>                     # 必需：meta.yaml 的 entry 指向此相对路径
+│       └── env.yaml                    # 可选
+└── runtimes/                           # 可选：直接子文件名即 runtime 别名
+```
+
+- **运行时发现规则**：源码只扫描 `services/*/service.yaml`、`extensions/*/meta.yaml`、`services/*/extensions/*/meta.yaml` 与 `runtimes/*`；服务级扩展由目录位置关联服务。
+- **热重载边界**：watcher 只监控根目录、`env/`、服务配置目录和扩展配置目录；`bin/`、`data/`、日志、缓存和临时目录不进入配置 watcher。
+- **规则等级**：本 Skill 中“必须/禁止”由 `validate_dev.py` 作为错误处理并返回非零；“建议/应”只产生警告或说明。业务约束以需求规格为准，字段加载与默认值以 `config.LoadService`、`config.LoadExtension` 为准；当前 Go 服务校验只检查 `version` 非空，因此开发校验器额外落实规格要求的三段数字格式。
+- **运行期文件**：服务只写自身 `data/`；日志写入 supd 的独立日志目录；扩展临时文件优先写 `SUPD_SCRIPT_TMP`。不要把运行期文件写回 `bin/`、扩展代码目录或配置根目录。
+
+---
+
 ## 🛠️ 核心约束与易错点 (Critical Constraints)
 
 严格遵守以下枚举和数值，**禁止**自行新增：
@@ -59,8 +89,9 @@ description: "supd服务与扩展开发指南。当用户要求开发、修改�
 | **认证模式** (3种) | `none` / `local_skip` / `always_token` |
 | **按钮样式** (3种) | `primary` / `default` / `danger` (用于 `on_demand` 扩展) |
 | **版本号格式** | 必须匹配 `^[0-9]+\.[0-9]+\.[0-9]+$`（三段数字，如 `1.0.0`） |
-| **entry 路径安全** | 禁止 `..`、shell 元字符（``; | & $ ` ( ) { }``）、冗余 `./` 前缀 |
-| **数值限制** | fsnotify防抖 `500ms` / stop grace `10s` / 扩展硬上限 `1800s` / 上传限制 `100MB` / serialize队列上限 `16` |
+| **entry 路径安全** | 禁止 `..`、shell 元字符（``; | & $ ` ( ) { }``）、冗余 `./` 前缀；开发校验还会确认入口文件存在 |
+| **profile 名称** | 必须匹配 `^[a-z][a-z0-9-]*$`，对应 `package.<profile>.yaml` |
+| **数值限制** | fsnotify防抖 `500ms` / stop grace `10s` / 扩展硬上限默认 `1800s`（可由全局设置调整）/ 上传限制 `100MB` / serialize队列上限 `16` |
 | **禁止引入** | 数据库 (SQLite/Bolt 等)、SSE (Server-Sent Events)、WebSocket |
 
 > **⚠️ 环境变量 (`env.yaml`) 致命陷阱**：

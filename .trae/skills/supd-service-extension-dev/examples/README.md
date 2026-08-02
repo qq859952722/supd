@@ -6,7 +6,7 @@
 
 | 编号 | 目录 | 类型 | 覆盖特性 |
 |---|---|---|---|
-| 01 | `01-simple-service/` | 简单服务 | `http_check` readiness、Python HTTP 服务、stop/logging 配置 |
+| 01 | `01-simple-service/` | 完整结构服务 | `http_check`、`bin/`、`env.yaml`、服务级扩展、default/migrate profile |
 | 02 | `02-complex-service/` | 复杂服务 | `tcp_check` readiness、`autostart`、command 数组、tags、`workdir` |
 | 03 | `03-on-demand-ext/` | on_demand 扩展 | 手动触发、多 action（greet/status）、`SUPD_ACTION` 区分 action、`button_style` |
 | 04 | `04-scheduled-ext/` | on_schedule 扩展 | cron 定时触发（每分钟）、单 action |
@@ -19,7 +19,7 @@
 
 ## 使用方法
 
-1. 复制对应目录到你的 workdir
+1. 示例目录前的数字仅用于索引；复制时必须按配置中的 `name` 重命名目录（如 `01-simple-service/` → `services/web-demo/`）
 2. 服务示例：放入 `<baseDir>/services/<name>/`
 3. 全局扩展：放入 `<baseDir>/extensions/<name>/`
 4. 服务级扩展：放入 `<baseDir>/services/<svc>/extensions/<name>/`（关联由目录位置决定，无需 meta.yaml 字段）

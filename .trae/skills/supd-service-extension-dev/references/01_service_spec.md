@@ -16,12 +16,12 @@
 ├── bin/                      # 必需：版本化、可替换的程序载荷
 │   ├── <service-binary>      #   服务主程序（command 应直接指向 ./bin/<binary>）
 │   └── share/                #   可选：随版本发布的只读资源（如 WebUI 模板）
-├── data/                     # 可选：实例私有、升级必须保留的数据
-│   ├── config/               #   用户配置（迁移导出时包含，共享导出时排除）
-│   ├── state/                #   运行状态（导出时排除）
-│   ├── cache/                #   可再生成缓存（导出时排除）
-│   ├── certs/                #   服务私有证书
-│   └── web/                  #   用户可修改或运行期下载的 WebUI
+├── data/                     # 可选：实例私有、升级必须保留的数据；允许按业务增加子目录
+│   ├── config/               #   推荐分类：用户配置（迁移导出时包含，共享导出时排除）
+│   ├── state/                #   推荐分类：运行状态（导出时排除）
+│   ├── cache/                #   推荐分类：可再生成缓存（导出时排除）
+│   ├── certs/                #   推荐分类：服务私有证书
+│   └── web/                  #   推荐分类：用户可修改或运行期下载的 WebUI
 ├── extensions/               # 可选：服务级扩展
 │   └── <ext-name>/
 │       ├── meta.yaml
@@ -100,8 +100,11 @@ command: [./start.sh]
 
 服务支持多份打包规则文件（`package.<profile>.yaml`），详见需求规格说明 §2.12.2。
 
-- **默认导出**：使用 `package.default.yaml`（可选），回退到内置规则（排除 `data/`）。
-- **按规则导出**：指定 `package.<name>.yaml`（必须存在），适用于迁移（含配置不含运行数据）或共享（仅程序不含数据）等场景。
+- **profile 名称**：`<profile>` 必须匹配 `^[a-z][a-z0-9-]*$`；`default` 始终可选用，其他名称只有对应文件存在时才可用。
+- **默认导出优先级**：`package.default.yaml` → `service.yaml` 内的 `package:` → 内置规则（`default: include` 且排除 `data/`）。
+- **命名 profile**：指定非 `default` 名称时，必须存在 `package.<name>.yaml`，不会回退到 `service.yaml` 或内置规则。
+- **规则语义**：`default` 仅允许 `include`/`exclude`；`default: include` 使用 `exclude`，`default: exclude` 使用 `include`。无论 profile 如何配置，`service.yaml` 强制包含，`*.bak`、`*.tmp`、`*.log`、`.cache/` 强制排除。
+- **典型用途**：迁移 profile 可包含配置而排除运行状态，共享 profile 可只包含程序和扩展；具体包含项由文件内容决定，文件名本身不附带隐式行为。
 
 ---
 
@@ -109,7 +112,7 @@ command: [./start.sh]
 
 **必填字段**：`name`、`version`、`command`
 
-> **`version` 格式校验**：必须匹配正则 `^[0-9]+\.[0-9]+\.[0-9]+$`（三段数字，如 `"1.0.0"`、`"0.0.41"`），不符合会被校验拒绝。
+> **`version` 格式校验**：需求规格 §2.3.2 要求匹配 `^[0-9]+\.[0-9]+\.[0-9]+$`（三段数字，如 `"1.0.0"`、`"0.0.41"`），`validate_dev.py` 会拒绝不符合的配置。当前 Go `ValidateService` 仅检查非空，尚未落实该格式校验；不要依赖这一实现缺口。
 
 > **`runtime` 别名前置**（可选）：设置时将 runtime 别名解析为绝对路径并前置到 command（如 `runtime: python3` + `command: [run.py]` → `[/usr/bin/python3, run.py]`）；省略时 command 数组本身即为完整命令。
 >

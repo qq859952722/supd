@@ -18,6 +18,9 @@ RED = "\033[91m"
 BLUE = "\033[94m"
 RESET = "\033[0m"
 
+FAIL_COUNT = 0
+WARN_COUNT = 0
+
 # supd 规格锁定集合与常量
 NAME_REGEX = re.compile(r"^[a-z][a-z0-9-]*$")
 # versionRegex 与 internal/config/service_validate.go:14 一致（三段数字）
@@ -51,9 +54,14 @@ def log_pass(msg):
     print(f"[{GREEN}PASS{RESET}] {msg}")
 
 def log_warn(msg):
+    global WARN_COUNT
+    WARN_COUNT += 1
     print(f"[{YELLOW}WARN{RESET}] {msg}")
 
+
 def log_fail(msg):
+    global FAIL_COUNT
+    FAIL_COUNT += 1
     print(f"[{RED}FAIL{RESET}] {msg}")
 
 def log_info(msg):
@@ -62,7 +70,7 @@ def log_info(msg):
 
 def validate_version(content, kind):
     """校验 version 字段格式：必须匹配 ^[0-9]+\\.[0-9]+\\.[0-9]+$（三段数字）。
-    与 internal/config/service_validate.go:14 versionRegex 对齐。"""
+    依据需求规格 §2.3.2；扩展 Go 校验已落实，服务侧在此补齐门禁。"""
     m_ver = re.search(r'^\s*version:\s*["\']?([^"\'#\s]+)["\']?', content, re.MULTILINE)
     if not m_ver:
         log_fail(f"{kind} 缺少必需的 version 字段")
@@ -173,7 +181,7 @@ def check_executable(filepath):
     if is_exec:
         log_pass(f"入口脚本 {filepath.name} 具备可执行权限 (0{oct(st.st_mode)[-3:]})")
     else:
-        log_warn(f"入口脚本 {filepath.name} 缺失执行权限，请运行: chmod +x {filepath}")
+        log_fail(f"直接执行的入口脚本 {filepath.name} 缺失执行权限，请运行: chmod +x {filepath}")
     return is_exec
 
 
@@ -294,26 +302,35 @@ def validate_service(service_dir):
     # 5. env.yaml 格式校验
     validate_env_yaml(service_dir)
 
-    # 6. 目录布局建议（bin/ + data/ 规范，仅 warning 不 fail）
+    # 6. 目录布局校验（Skill 生成规范要求 bin/，根目录禁止散落业务载荷）
     check_service_layout(service_dir, content)
+
+    # 7. 服务级扩展递归校验
+    extensions_dir = service_dir / "extensions"
+    if extensions_dir.is_dir():
+        for ext_dir in sorted(p for p in extensions_dir.iterdir() if p.is_dir()):
+            validate_extension(ext_dir)
     return valid
 
 
 def check_service_layout(service_dir, service_yaml_content):
-    """检查服务目录是否符合 bin/ + data/ 布局规范（仅 warning）"""
-    # 检查 bin/ 目录是否存在
+    """检查服务目录是否符合 bin/ + data/ 布局规范。"""
     bin_dir = service_dir / "bin"
-    if bin_dir.exists():
-        log_pass("服务包含 bin/ 目录（符合 bin/+data 布局规范）")
+    if bin_dir.is_dir():
+        log_pass("服务包含必需的 bin/ 目录（符合 bin/+data 布局规范）")
+    elif bin_dir.exists():
+        log_fail("服务根目录的 bin 必须是目录")
     else:
-        # 检查根目录是否有散落的二进制或脚本
-        root_files = [f for f in service_dir.iterdir()
-                      if f.is_file() and f.name not in
-                      ("service.yaml", "env.yaml", "README.md") and not f.name.startswith("package.")]
-        if root_files:
-            log_warn(f"根目录有散落文件 {len(root_files)} 个，建议移入 bin/（程序）或 data/（数据）")
-            for f in root_files[:5]:
-                log_warn(f"  - {f.name}")
+        log_fail("服务根目录缺少 Skill 生成规范要求的 bin/ 目录")
+
+    allowed_root_files = {"service.yaml", "env.yaml", "README.md"}
+    root_files = [f for f in service_dir.iterdir()
+                  if f.is_file() and f.name not in allowed_root_files
+                  and not re.fullmatch(r"package\.[a-z][a-z0-9-]*\.yaml", f.name)]
+    if root_files:
+        log_fail(f"服务根目录有散落业务文件 {len(root_files)} 个，程序应移入 bin/，持久化数据应移入 data/")
+        for f in root_files[:5]:
+            log_fail(f"  - {f.name}")
 
     # 检查 command 是否指向 bin/
     m_cmd = re.search(r"^\s*command:\s*\[?(.+)", service_yaml_content, re.MULTILINE)
@@ -505,7 +522,8 @@ def main():
         sys.exit(1)
 
     run_supd_validate(target_dir)
-    if not valid:
+    print(f"\n校验汇总: {FAIL_COUNT} 个错误, {WARN_COUNT} 个警告")
+    if not valid or FAIL_COUNT > 0:
         sys.exit(1)
 
 

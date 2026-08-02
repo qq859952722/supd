@@ -12,16 +12,17 @@
 ```
 <ext-name>/
 ├── meta.yaml          # 必需：扩展配置与触发器元数据
-├── run.sh             # 必需：入口脚本（需 chmod +x）
+├── <entry>            # 必需：meta.yaml entry 指向的相对路径，如 run.sh/run.js
 ├── env.yaml           # 可选：扩展专属环境变量（需包含 env: 包装层）
-└── <辅助资源/代码>     # 随扩展一同执行或打包
+├── data/              # 可选：需随扩展分发的资源；扩展打包不会默认排除
+└── <辅助资源/代码>     # 可选：随扩展一同执行或打包
 ```
 
 ---
 
 ## 2. meta.yaml 完整字段参考
 
-**必填字段**：`name`、`version`、`runtime`、`entry`、`timeout_seconds`
+**原始 YAML 必填字段**：`name`、`version`、`entry`。`timeout_seconds` 省略或为 `0` 时加载器填充 `600`；`runtime` 可选，省略时直接执行 `entry`。
 
 > **`version` 格式校验**：必须匹配正则 `^[0-9]+\.[0-9]+\.[0-9]+$`（三段数字，与服务相同）。
 >
@@ -33,9 +34,9 @@
 | `version` | string | 必填 | 扩展版本号，必须匹配 `^[0-9]+\.[0-9]+\.[0-9]+$`（如 `"1.0.0"`） |
 | `description` | string | `""` | 扩展功能描述 |
 | `enabled` | bool | `true` | 是否启用该扩展 |
-| `runtime` | string | 必填 | 运行时环境（如 `bash`, `sh`, `python3`, `node`, `tjs` 等） |
-| `entry` | string | 必填 | 入口脚本相对路径（如 `run.sh` 或 `run.js`），须具备执行权限；路径受安全校验（见上） |
-| `timeout_seconds` | int | `600` | 单次运行超时时限（须 > 0，硬上限 1800 秒；可通过 config.yaml `extension_hard_limit_seconds` 配置） |
+| `runtime` | string | `""` | 可选运行时别名（如 `bash`, `sh`, `python3`, `node`, `tjs`）；非空时由解释器执行 entry |
+| `entry` | string | 必填 | 入口文件相对路径（如 `run.sh` 或 `run.js`）；`runtime` 为空时须具备执行权限，非空时只要求文件可读；路径受安全校验（见上） |
+| `timeout_seconds` | int | `600` | 单次运行超时时限；省略/`0` 时加载器填充 600，生效值须 > 0 且不超过 `settings.extension_hard_limit_seconds`（默认 1800） |
 | `run_as` | string | `""` | 运行身份（User 模式）：`root` / `<用户名>` / 空（服务级扩展继承服务身份，全局扩展继承 supd 用户）。与 `run_as_uid` 互斥 |
 | `run_as_uid` | int | `0` | 直接指定 uid（UID 模式，与 `run_as` 互斥，不查 /etc/passwd，适用于 NAS 固定 uid 服务）；`0`=未设置 |
 | `run_as_gid` | int | `0` | 直接指定 gid（UID 模式下可选，`0`=等于 `run_as_uid`） |
@@ -154,7 +155,7 @@ triggers:
 | `SUPD_SERVICE_SIGNAL` | int | 仅 on_failure | 关联服务退出信号（数字，0 表示正常退出而非信号致死） |
 | `SUPD_SERVICE_RESTART_COUNT` | int | 仅 on_failure | 关联服务的当前已重启次数（数字） |
 
-> **额外变量 `SUPD_SCRIPT_TMP`**：扩展工作目录下的 `script_tmp/<service>+<ext>` 或 `script_tmp/global+<ext>` 子目录绝对路径，供扩展脚本写入临时文件；扩展应优先使用此目录而非 `/tmp`。
+> **额外变量 `SUPD_SCRIPT_TMP`**：supd 扩展执行器管理的 `script_tmp/<service>+<ext>` 或 `script_tmp/global+<ext>` 子目录绝对路径，供扩展脚本写入临时文件；扩展应优先使用此目录而非 `/tmp`，不得把运行期临时文件写回扩展代码目录。
 >
 > **注入顺序**：`os.Environ()` → 4 层 env.yaml 合并 → `SUPD_*` 上下文变量（后者可覆盖同名系统变量）。
 
@@ -198,9 +199,9 @@ echo '正常打印执行日志'
 
 - [ ] `name` 匹配 `^[a-z][a-z0-9-]*$` 且与所在目录名完全一致
 - [ ] `version` 匹配 `^[0-9]+\.[0-9]+\.[0-9]+$`（三段数字，如 `1.0.0`）
-- [ ] `entry` 脚本路径正确（无 `..`、无 shell 元字符、无冗余分隔符）且已具备可执行权限（`chmod +x run.sh`）；tjs 扩展的 `run.js` 也建议 `chmod +x` 保持一致性
-- [ ] `timeout_seconds` > 0 且 ≤ 1800（硬上限，可通过 config.yaml 调整）
-- [ ] `runtime` 已选择合适的运行时别名（`bash`/`sh`/`python3`/`node`/`tjs` 或自定义）
+- [ ] `entry` 路径正确且文件存在（无 `..`、无 shell 元字符、无冗余分隔符）；`runtime` 为空时已具备执行权限，非空时由解释器执行
+- [ ] `timeout_seconds` > 0 且不超过 config.yaml 生效的硬上限（默认 1800）
+- [ ] 需要解释器时配置合适的 `runtime` 别名（`bash`/`sh`/`python3`/`node`/`tjs` 或自定义）；直接执行入口时可省略
 - [ ] 触发器 `service_lifecycle.event` 仅使用 `pre_start`/`post_ready`/`on_failure`/`pre_stop`
 - [ ] 触发器 `supd_lifecycle.event` 仅使用 `pre_start`/`post_ready`/`pre_shutdown`
 - [ ] `actions[].id` 唯一（重复 id 校验报错）；`actions[].label` 必填（非空字符串）

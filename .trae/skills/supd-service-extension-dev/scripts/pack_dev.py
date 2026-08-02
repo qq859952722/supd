@@ -19,6 +19,7 @@ import os
 import fnmatch
 import tarfile
 import argparse
+import re
 from pathlib import Path
 
 # 强制排除项（与 supd 后端 forcedExcludes 一致）
@@ -30,6 +31,7 @@ EXT_FORCED_EXCLUDES = {"*.bak", "*.tmp", "*.log", ".cache/",
 
 # 服务默认排除项（与 DefaultPackageProfile 一致）
 SERVICE_DEFAULT_EXCLUDES = ["data/"]
+PROFILE_NAME_REGEX = re.compile(r"^[a-z][a-z0-9-]*$")
 
 # 通用排除目录（不参与打包）
 COMMON_SKIP_DIRS = {".git", ".svn", "__pycache__", "node_modules", ".cache"}
@@ -118,25 +120,85 @@ def _parse_simple_profile_yaml(text: str):
     return result
 
 
-def load_package_profile(svc_dir: Path, profile_name: str):
-    """加载服务目录下的 package.<profile>.yaml。返回 dict 或 None。"""
-    if not profile_name:
-        return None
-    path = svc_dir / f"package.{profile_name}.yaml"
-    if not path.exists():
-        print(f"错误: profile 文件不存在: {path}", file=sys.stderr)
-        sys.exit(2)
+def load_package_profile_file(path: Path):
+    """加载并校验一个 package profile 文件。"""
     with open(path, encoding="utf-8") as f:
         data = _parse_simple_profile_yaml(f.read())
     default = data.get("default", "include")
     if default not in ("include", "exclude"):
         print(f"错误: package.default 必须为 include 或 exclude，当前: {default}", file=sys.stderr)
         sys.exit(2)
-    return {
-        "include": data.get("include") or [],
-        "exclude": data.get("exclude") or [],
-        "default": default,
-    }
+    include = data.get("include") or []
+    exclude = data.get("exclude") or []
+    if not isinstance(include, list) or not all(isinstance(item, str) for item in include):
+        print("错误: package.include 必须是字符串列表", file=sys.stderr)
+        sys.exit(2)
+    if not isinstance(exclude, list) or not all(isinstance(item, str) for item in exclude):
+        print("错误: package.exclude 必须是字符串列表", file=sys.stderr)
+        sys.exit(2)
+    return {"include": include, "exclude": exclude, "default": default}
+
+
+def load_package_profile(svc_dir: Path, profile_name: str, required: bool = True):
+    """加载 package.<profile>.yaml；名称规则与 Go ProfileNamePattern 对齐。"""
+    if not PROFILE_NAME_REGEX.fullmatch(profile_name):
+        print(f"错误: profile 名称 '{profile_name}' 必须匹配 ^[a-z][a-z0-9-]*$", file=sys.stderr)
+        sys.exit(2)
+    path = svc_dir / f"package.{profile_name}.yaml"
+    if not path.exists():
+        if required:
+            print(f"错误: profile 文件不存在: {path}", file=sys.stderr)
+            sys.exit(2)
+        return None
+    return load_package_profile_file(path)
+
+
+def load_service_yaml_package(svc_dir: Path):
+    """读取 service.yaml 的 package 块，作为默认 profile 的第二级回退。"""
+    text = (svc_dir / "service.yaml").read_text(encoding="utf-8")
+    try:
+        import yaml
+        data = yaml.safe_load(text) or {}
+        package = data.get("package")
+        if package is None:
+            return None
+        if not isinstance(package, dict):
+            print("错误: service.yaml package 必须是对象", file=sys.stderr)
+            sys.exit(2)
+        default = package.get("default", "include")
+        if default not in ("include", "exclude"):
+            print(f"错误: service.yaml package.default 必须为 include 或 exclude，当前: {default}", file=sys.stderr)
+            sys.exit(2)
+        include = package.get("include") or []
+        exclude = package.get("exclude") or []
+        if not isinstance(include, list) or not all(isinstance(item, str) for item in include):
+            print("错误: service.yaml package.include 必须是字符串列表", file=sys.stderr)
+            sys.exit(2)
+        if not isinstance(exclude, list) or not all(isinstance(item, str) for item in exclude):
+            print("错误: service.yaml package.exclude 必须是字符串列表", file=sys.stderr)
+            sys.exit(2)
+        return {"include": include, "exclude": exclude, "default": default}
+    except ImportError:
+        # 无 PyYAML 时仅提取 package: 缩进块，并复用受限解析器。
+        match = re.search(r"^package:\s*\n((?:[ \t]+.*\n?)*)", text, re.MULTILINE)
+        if not match:
+            return None
+        block = "\n".join(line[2:] if line.startswith("  ") else line.lstrip()
+                          for line in match.group(1).splitlines())
+        data = _parse_simple_profile_yaml(block)
+        default = data.get("default", "include")
+        include = data.get("include") or []
+        exclude = data.get("exclude") or []
+        if default not in ("include", "exclude"):
+            print(f"错误: service.yaml package.default 必须为 include 或 exclude，当前: {default}", file=sys.stderr)
+            sys.exit(2)
+        if not isinstance(include, list) or not all(isinstance(item, str) for item in include):
+            print("错误: service.yaml package.include 必须是字符串列表", file=sys.stderr)
+            sys.exit(2)
+        if not isinstance(exclude, list) or not all(isinstance(item, str) for item in exclude):
+            print("错误: service.yaml package.exclude 必须是字符串列表", file=sys.stderr)
+            sys.exit(2)
+        return {"include": include, "exclude": exclude, "default": default}
 
 
 def pack_directory(source_dir: Path, output_file: Path = None, profile_name: str = None,
@@ -178,15 +240,23 @@ def pack_directory(source_dir: Path, output_file: Path = None, profile_name: str
     if pack_type == "service":
         # 服务始终使用 FORCED_EXCLUDES（与后端 forcedExcludes 一致）
         forced_excludes = FORCED_EXCLUDES
-        if profile_name:
-            profile = load_package_profile(source_dir, profile_name)
+        resolved_name = profile_name or "default"
+        if resolved_name != "default":
+            profile = load_package_profile(source_dir, resolved_name)
+            source = f"package.{resolved_name}.yaml"
+        else:
+            profile = load_package_profile(source_dir, "default", required=False)
+            source = "package.default.yaml" if profile is not None else "service.yaml package"
+            if profile is None:
+                profile = load_service_yaml_package(source_dir)
+            if profile is None:
+                source = "内置默认规则"
+        if profile is not None:
             default_mode = profile["default"]
-            print(f"使用 profile: {profile_name} (default={default_mode}, "
+            print(f"使用服务导出规则: {source} (default={default_mode}, "
                   f"include={profile['include']}, exclude={profile['exclude']})")
         else:
-            # 默认排除 data/（与 supd 后端 DefaultPackageProfile 一致）
-            # 通过 SERVICE_DEFAULT_EXCLUDES 在 should_pack_entry 中处理
-            print(f"使用默认服务导出规则: 排除 data/，强制排除 {sorted(forced_excludes)}")
+            print(f"使用内置默认服务导出规则: 排除 data/，强制排除 {sorted(forced_excludes)}")
     else:
         # 扩展使用 EXT_FORCED_EXCLUDES，保留 data/，无 profile 机制
         forced_excludes = EXT_FORCED_EXCLUDES

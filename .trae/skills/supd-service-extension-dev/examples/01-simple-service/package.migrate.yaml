@@ -1,0 +1,5 @@
+default: include
+exclude:
+  - data/state/
+  - data/cache/
+  - data/certs/

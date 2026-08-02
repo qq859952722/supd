@@ -1,0 +1,14 @@
+name: health-action
+version: "1.0.0"
+description: "查询所属服务的健康状态"
+enabled: true
+runtime: bash
+entry: run.sh
+timeout_seconds: 30
+concurrency: replace
+actions:
+  - id: check
+    label: "检查健康状态"
+    button_style: default
+triggers:
+  on_demand: true

@@ -120,28 +120,20 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 
 ---
 
-## 八、最近会话重点（2026-07-31 Skill 全面验证与优化）
+## 八、最近会话重点（2026-08-02 Skill 配置结构与工具完善）
 
 ### 本次完成
 
-1. **pack_dev.py 修正**：修复致命 bug（`re.fnmatch` 不存在 → `fnmatch.fnmatch`）、清理冗余 forced_excludes 逻辑、添加 PyYAML 不可用时的极简 YAML 回退解析器；服务/扩展/profile 三场景打包输出与后端一致。
-2. **tjs 运行时指南验证**：通过 Dockerfile/release.yml/run_context.go/devlog 交叉验证全部 API 声明（BuildCommand、SUPD_ACTION、tjs 非内置、WASM SHA256、tjs.open/arrayBuffer/DirHandle/system Getter/spawn 死锁等）；修正 `supd runtimes install` 描述和 WASM 存储路径说明。
-3. **validate_dev.py 增强**：新增 version 正则、entry 路径安全、actions 校验（id/label/button_style/唯一性）、restart policy 枚举、debounce 上限 3600、ui.button_style 校验；全部与 Go 源码对齐。
-4. **修复 7 个示例 entry 路径**：`./run.sh` → `run.sh`（Go validator 的 filepath.Clean 拒绝 `./` 前缀）；修复 2 个 test_workdir version 格式问题。
-5. **SKILL.md 结构优化**：导航重构为按需读取表格、新增工具脚本和 WASM 资产章节、约束表扩充 restart policy/version 格式/entry 安全。
-6. **回归测试**：Go build/vet/test 全通过、前端 pnpm build 通过、validate_dev.py 在所有示例正常工作、pack_dev.py 输出与后端一致。
-
-### 续接修正（二次核对源码）
-
-7. **validate_dev.py tjs 执行权限误报修复**：`runtime` 非空时通过解释器执行（`BuildCommand` 产出 `[runtimePath, entry]`），无需执行权限；仅 `runtime` 为空（默认 shell/bash）时检查。`10-binary-updater-ext` 不再误报。
-8. **validate_dev.py 多行 command 解析修复**：去除多行 YAML 数组格式的 `- ` 前缀；仅对路径类命令检查 bin/ 布局，跳过解释器。`02-complex-service` 正确识别为指向 bin/。
-9. **01-simple-service 布局修正**：`run.py` → `bin/run.py`，消除散落文件 WARN，与 README"应放在 bin/"说明一致。
-10. **03_modification_matrix.md 热重载矩阵 6 处修正**（依据 `reload_classifier.go`）：`depends_on` 即时→下次启动生效；`command/args/runtime`→`command/runtime/workdir`（args 字段不存在）；`user/group` 与 `uid/gid/groups` 下次启动→标记为待重启；扩展 `timeout_seconds` 即时→下次执行生效；新增 `signals` 即时生效行。
-11. **核对结论**：API 端点 ✅、CLI 命令 ✅、状态机 ✅、环境变量（14 SUPD_* + SUPD_SCRIPT_TMP）✅、4 层 env 合并 ✅、触发器/并发策略 ✅。
+1. **统一目录契约**：补齐 `<baseDir>`、服务、全局扩展、服务级扩展与 runtime 的发现规则，并明确 watcher 和运行期写入边界。
+2. **规格纠偏**：修正扩展 `entry`/`runtime`/timeout、服务与扩展 env 来源、package profile 名称及三级回退语义。
+3. **开发工具修复**：`validate_dev.py` 的所有 FAIL 现在返回非零，并递归校验服务级扩展；`pack_dev.py` 对齐 Go profile 解析和非法名称拒绝规则。
+4. **示例完善**：简单服务补充 env、default/migrate profile 和服务级扩展；复杂服务补齐实际入口 `bin/myapp`。
+5. **源码印证**：对照 discovery、watcher、config、dispatcher、package profile、packer、CLI init/run；服务 version 三段数字来自需求规格 §2.3.2，当前 Go 服务校验仅检查非空，Skill 已显式说明并补齐门禁。
+6. **验证**：正例、目录名负例、非法 profile、默认/命名 profile 打包、Python 编译、diff check、Go build/vet/test 全部通过。
 
 ### 遗留事项
 
-- 无阻断项。skill 验证与优化任务全部完成。
+- Go `ValidateService` 尚未调用已定义的 `versionRegex`；本次仅修复 Skill，未改动 Go 源码。
 
 ---
 

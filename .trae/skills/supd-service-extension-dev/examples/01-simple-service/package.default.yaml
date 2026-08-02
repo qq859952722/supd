@@ -1,0 +1,3 @@
+default: include
+exclude:
+  - data/
