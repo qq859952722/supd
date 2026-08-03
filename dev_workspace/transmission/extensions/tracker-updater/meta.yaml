@@ -1,11 +1,12 @@
 name: tracker-updater
-version: "1.0.0"
-description: "通过 Transmission RPC 更新全局默认 Tracker 列表（session-set + default_trackers，数据源：adysec/tracker，新种子自动获得）"
+version: "1.3.0"
+description: "通过 Transmission RPC 更新全局默认 Tracker 列表（3 源合并去重：newtrackon + ngosang + adysec，本地测速排序：优质独立 tier 置顶 + 其余合并 1 tier 垫底，≤50 组）"
 runtime: tjs
 entry: run.js
-timeout_seconds: 120
+timeout_seconds: 300
 concurrency: serialize
-run_as: root
+run_as_uid: 1000
+run_as_gid: 1000
 ui:
   show_logs: true
   button_style: default

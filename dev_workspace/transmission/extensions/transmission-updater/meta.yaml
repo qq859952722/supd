@@ -1,11 +1,12 @@
 name: transmission-updater
-version: "1.0.0"
-description: "检测并更新 transmission-daemon 二进制 + trwm WebUI（从 GitHub Releases 下载）"
+version: "1.1.0"
+description: "检测并更新 transmission-daemon 二进制 + trwm WebUI（从 GitHub Releases 下载，非特权运行 uid 1000）"
 runtime: tjs
 entry: run.js
 timeout_seconds: 300
 concurrency: replace
-run_as: root
+run_as_uid: 1000
+run_as_gid: 1000
 ui:
   show_logs: true
   button_style: primary

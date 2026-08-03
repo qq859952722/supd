@@ -1,0 +1,23 @@
+name: pre-start-fixperms
+version: "1.1.0"
+description: "服务启动前(pre_start)以 root 修复权限：config/→nobody, bin/+web/→uid1000(供 updater 扩展写入), 下载目录→nobody"
+runtime: bash
+entry: run.sh
+timeout_seconds: 60
+enabled: true
+run_as: root
+concurrency: replace
+ui:
+  show_logs: true
+  button_style: default
+  icon: shield
+actions:
+  - id: fix-perms
+    label: "修复权限"
+    button_style: primary
+triggers:
+  on_demand: true
+  service_lifecycle:
+    - event: pre_start
+      action: fix-perms
+
