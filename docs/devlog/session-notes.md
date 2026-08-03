@@ -11,7 +11,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：⭐ 优秀（满分 100），1000+ 单元测试通过（Go + 前端），零竞态；staticcheck/go vet 零警告
-- **当前版本**：v0.0.39（版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.0.42（版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -117,10 +117,58 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-07-29 | 运行状态测试 + serialize 队列满记录修复（F2-001） | A～K 组运行测试全通过；发现并修复 serialize queue full 的 failed 记录因 StartedAt 零值被 lazyCleanup 误删；dispatcher.go 补全 result 元数据；skill 更新并发策略详解 | [notes/2026-07-29.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-29.md) |
 | 2026-07-30 | clear-failed 状态重置由 pending 改为 down | 诊断远程实例 code-server 卡 pending 根因（clear-failed 不触发启动 + 无上游依赖无法被依赖协调器唤醒）；ClearFailedState 改为 ResetTo(StateDown)，避免无依赖服务永久卡 pending | [notes/2026-07-30.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-30.md) |
 | 2026-07-30 | 审计+运行状态测试+错误码修复+skill 更新+v0.0.41 发版 | 审计新增代码（符合规格 §2.8.1）；A～F 六组运行状态测试全通过；E 组发现并修复"非 failed 状态调用 clear-failed 误返 500"（改返 400 INVALID_REQUEST）；skill 同步更新 clear-failed 行为与 API；发版 v0.0.41 | [notes/2026-07-30.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-07-30.md) |
+| 2026-08-02 | Skill 完善与远程服务优化 + code-server 修复 | Skill 目录契约/校验/打包修复（详见同日早段）；远程 192.168.31.188:7979 code-server 启动修复（versioned wrapper 缺失 + 入口错误 + glibc node fcntl64 缺失）；root 空白密码解锁 SSH 调试；12 个服务 README 编写；11 ready / 1 down / 0 failed | [notes/2026-08-02.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-02.md) |
+| 2026-08-02 | tracker-updater v1.3.0 测速分组 + 两个下载扩展 uid 1000 | ngosang 源加入（持续更新）；BEP-15 UDP CONNECT 测速（tjs UDPSocket）；3 源合并 563→测速存活 325（含 147 UDP）→49 优质独立 tier+1 垫底=50 tier；transmission-updater 路径修复+chown 非致命；pre-start-fixperms 分层 chown（bin/+web/→uid1000）；两扩展 run_as_uid 1000 验证通过 | [notes/2026-08-02.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-02.md) |
+| 2026-08-03 | 修复多服务同名扩展查找竞态 + v0.0.42 发版 | `GetExtension(name)` 在多服务同名扩展时随机匹配（Go map 随机序）→ 偶发 404 + Update/Delete/SaveEnv 静默数据损坏/丢失；新增 `GetExtensionForService(service, name)` 精确查找；5 个 provider 方法 + 2 个 handler 改用；7 新测试（含 80 请求 handler 压测 + 数据不串扰回归）；go test/race/pnpm build 全通过；推 v0.0.42 | [notes/2026-08-03.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-03.md) |
 
 ---
 
-## 八、最近会话重点（2026-08-02 Skill 配置结构与工具完善）
+## 八、最近会话重点（2026-08-03 修复多服务同名扩展查找竞态 + v0.0.42 发版）
+
+### 本次完成
+
+1. **修复多服务同名扩展查找竞态（根因彻底修复）**：
+   - 原缺陷：`GetExtension(name)` 遍历 `Discovery.Services`（Go map 随机序），多服务同名扩展时返回项不确定
+   - 影响远超偶发 404：`UpdateExtension` 写错 meta.yaml（数据损坏）、`DeleteExtension` 删错目录（数据丢失）、`SaveExtensionEnv` 写错 env（数据损坏）
+   - 修复：接口新增 `GetExtensionForService(service, name)` 精确查找（`Discovery.Services[service].Extensions[name]` 直接索引）；5 个 provider 方法 + 2 个 handler 全部改用；service="" 退化为 GetExtension 语义（导入预览兼容）
+2. **充分运行状态测试**：
+   - 7 个新测试：provider 层（精确匹配/50 次确定性/NotFound/全局退化/Update/Delete/SaveEnv 不串扰）+ handler 层（真实 CoreExtensionProvider，2 服务 × 20 次 GET + 20 次 POST run = 80 请求验证从不 404）
+   - `go build`/`go vet`/`go test ./... -count=1` 全通过；`go test -race ./internal/api/...` 无竞态；`pnpm build` 通过
+3. **代码审计**：全局 handler 保持 `GetExtension(name)` 无回归；Discovery 读取模式与现有一致无新竞态；2 个 mock（fakeExtensionProvider + mockExtensionProvider）同步更新
+4. **v0.0.42 发版**：README 3 处版本号更新；本地 ldflags 注入验证 `supd 0.0.42` ✓；推送 GitHub
+
+### 关键技术点
+
+- **Go map 迭代随机化**：`for _, v := range map` 起始 bucket/offset 由运行时随机化，多服务同名扩展时 `GetExtension` 返回项不确定 → 偶发 404 + 静默误操作
+- **service="" 退化语义**：导入预览 `handleImportExtension` 用 `GetExtension(meta.Name)` 检查"任意作用域存在即可"——新方法 service="" 退化保持此行为
+- **全局 handler 无回归**：`handleGetExtension`/`handleUpdateExtension`/`handleExportExtension`/`handleImportExtension`/`handleRunExtension` 均操作全局命名空间（GlobalExts 扩展名唯一），保持 `GetExtension(name)` 不变
+- **生命周期触发不受影响**：dispatcher 的 `findMatchingExtensions` 按服务作用域精确匹配（pre_start/post_ready 等），原本就正确，只有 on-demand HTTP 触发端点有此 bug
+
+### 遗留事项
+
+- 无。本次彻底修复多服务同名扩展查找竞态，覆盖 404（flaky）+ 数据损坏/丢失（silent）两类后果。
+
+---
+
+## 附：2026-08-02 tracker-updater v1.3.0 测速分组 + 两个下载扩展 uid 1000
+
+> 历史详情见 [notes/2026-08-02.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-02.md)
+
+### 本次完成
+
+1. **tracker-updater v1.2.0 → v1.3.0**：ngosang 源加入；BEP-15 UDP CONNECT 测速；3 源合并 563→存活 325→49 优质 tier+1 垫底=50 tier
+2. **两个下载扩展 uid 1000**：tracker-updater + transmission-updater v1.1.0（路径修复+chown 非致命）run_as_uid 1000
+3. **pre-start-fixperms v1.1.0**：分层 chown（config/→nobody, bin/+web/→uid1000）
+
+### 遗留事项（已在 2026-08-03 解决）
+
+- ~~service-scoped 扩展触发端点多服务同名 404 问题~~ → **2026-08-03 已彻底修复**
+
+---
+
+## 附：2026-08-02 Skill 配置结构与工具完善（同日早段）
+
+> 历史详情见 [notes/2026-08-02.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-02.md)
 
 ### 本次完成
 

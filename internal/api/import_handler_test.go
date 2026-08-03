@@ -50,6 +50,24 @@ func (m *mockExtensionProvider) GetExtension(name string) (*ExtensionInfo, bool)
 	return e, true
 }
 
+// GetExtensionForService 按服务作用域精确查找。
+// service 为空时退化为 GetExtension（导入预览检查"任意作用域存在即可"使用此路径）；
+// service 非空时校验 exts[name].Service 是否等于 service。导入测试仅用单实例，
+// 多服务同名场景由 adapters_test.go 中真实 CoreExtensionProvider 测试覆盖。
+func (m *mockExtensionProvider) GetExtensionForService(service, name string) (*ExtensionInfo, bool) {
+	if service == "" {
+		return m.GetExtension(name)
+	}
+	e, ok := m.exts[name]
+	if !ok {
+		return nil, false
+	}
+	if e.Service != service {
+		return nil, false
+	}
+	return e, true
+}
+
 func (m *mockExtensionProvider) CreateExtension(meta *config.ExtensionMeta, service string) error {
 	return nil
 }

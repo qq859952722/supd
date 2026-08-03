@@ -49,6 +49,28 @@ func (f *fakeExtensionProvider) GetExtension(name string) (*ExtensionInfo, bool)
 	return e, ok
 }
 
+// GetExtensionForService 按服务作用域精确查找。
+//
+// service 为空时退化为 GetExtension（用于导入预览等"任意作用域存在即可"的检查）；
+// service 非空时校验 exts[name].Service 是否等于 service，不匹配返回 false。
+//
+// 注意：fake 的 exts 按 name 单值索引，无法表达"多服务同名扩展"。
+// 多服务同名扩展的 handler 测试请使用真实 CoreExtensionProvider（见 adapters_test.go
+// 中 TestHandleServiceExtension_MultipleSameName 系列），fake 仅用于单实例场景。
+func (f *fakeExtensionProvider) GetExtensionForService(service, name string) (*ExtensionInfo, bool) {
+	if service == "" {
+		return f.GetExtension(name)
+	}
+	e, ok := f.exts[name]
+	if !ok {
+		return nil, false
+	}
+	if e.Service != service {
+		return nil, false
+	}
+	return e, true
+}
+
 func (f *fakeExtensionProvider) CreateExtension(meta *config.ExtensionMeta, service string) error {
 	return f.createErr
 }
@@ -799,6 +821,75 @@ func TestServiceScopedExtensionHandlers(t *testing.T) {
 	resp = doAPICall(t, server, http.MethodPost, "/api/services/other/extensions/ext-a/run", []byte(`{"action":"a"}`))
 	if resp.Code != http.StatusNotFound {
 		t.Errorf("run svc ext mismatch: expected 404, got %d (body: %s)", resp.Code, resp.Body.String())
+	}
+}
+
+// TestServiceScopedExtensionHandlers_MultipleSameName 验证修复后多服务同名扩展不再偶发 404。
+//
+// 场景：transmission 与 qbittorrent 两个服务都存在名为 shared-ext 的服务级扩展。
+// 修复前：handleGetServiceExtension/handleRunServiceExtension 调用 GetExtension(extName)
+//   遍历 Discovery.Services（Go map 随机序）返回首个同名匹配，再校验 Service != svcName
+//   → 命中错误服务时返回 404（偶发，依赖运行时 map 哈希布局）。
+// 修复后：改用 GetExtensionForService(svcName, extName) 按服务作用域精确查找，结果确定。
+//
+// 本测试对每个服务的 GET 详情 + POST 运行端点各连续请求 20 次，验证：
+//  1. 每次都返回 200，从不返回 404（杜绝偶发）
+//  2. GET 详情返回的 Service 字段与 URL 中的服务一致（精确匹配正确服务）
+//
+// 使用真实 CoreExtensionProvider（非 fake）以覆盖实际 Discovery 查找路径。
+func TestServiceScopedExtensionHandlers_MultipleSameName(t *testing.T) {
+	discovery, _, _ := testBuildMultiSameNameDiscovery(t)
+	// Executor 设为空结构体：dry_run 路径在检查完 Executor 非 nil 后立即返回，
+	// 不会真正调用 Execute 方法，故空结构体即可。
+	provider := &CoreExtensionProvider{
+		Discovery: discovery,
+		Executor:  &extension.Executor{},
+	}
+	server := NewServer(&config.Config{Settings: config.Settings{AuthMode: "none"}})
+	server.extProvider = provider
+	server.pathValidator = NewPathValidator(t.TempDir())
+	server.eventRing = NewEventRingBuffer(200)
+
+	services := []string{"transmission", "qbittorrent"}
+	const iterations = 20
+
+	for _, svc := range services {
+		// GET /api/services/{svc}/extensions/shared-ext → 必须 200，且 Service == svc
+		for i := 0; i < iterations; i++ {
+			resp := doAPICall(t, server, http.MethodGet,
+				"/api/services/"+svc+"/extensions/shared-ext", nil)
+			if resp.Code != http.StatusOK {
+				t.Fatalf("%s GET detail iter %d: expected 200, got %d (body: %s) — 偶发 404 未修复",
+					svc, i, resp.Code, resp.Body.String())
+			}
+			var detail ExtensionDetail
+			if err := json.Unmarshal(resp.Body.Bytes(), &detail); err != nil {
+				t.Fatalf("%s GET detail iter %d: unmarshal: %v", svc, i, err)
+			}
+			if detail.Service != svc {
+				t.Errorf("%s GET detail iter %d: Service = %q, want %q (命中错误服务)",
+					svc, i, detail.Service, svc)
+			}
+		}
+
+		// POST /api/services/{svc}/extensions/shared-ext/run?dry_run=true → 必须 200
+		// dry_run=true 避免真正 fork 进程，仅验证查找与 action 校验路径不再 404
+		for i := 0; i < iterations; i++ {
+			resp := doAPICall(t, server, http.MethodPost,
+				"/api/services/"+svc+"/extensions/shared-ext/run?dry_run=true",
+				[]byte(`{"action":"run"}`))
+			if resp.Code != http.StatusOK {
+				t.Fatalf("%s POST run iter %d: expected 200, got %d (body: %s) — 偶发 404 未修复",
+					svc, i, resp.Code, resp.Body.String())
+			}
+		}
+	}
+
+	// 交叉验证：请求不存在的服务作用域 → 必须 404（精确查找不误判）
+	resp := doAPICall(t, server, http.MethodGet,
+		"/api/services/ghost-svc/extensions/shared-ext", nil)
+	if resp.Code != http.StatusNotFound {
+		t.Errorf("ghost-svc GET: expected 404, got %d", resp.Code)
 	}
 }
 

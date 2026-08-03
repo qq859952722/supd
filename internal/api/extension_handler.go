@@ -695,8 +695,11 @@ func (s *Server) handleGetServiceExtension(w http.ResponseWriter, r *http.Reques
 	svcName := chi.URLParam(r, "name")
 	extName := chi.URLParam(r, "ext")
 
-	ext, ok := s.extProvider.GetExtension(extName)
-	if !ok || ext.Service != svcName {
+	// 修复多服务同名扩展偶发 404：原 GetExtension(extName) 遍历 Discovery.Services
+	// （Go map 随机序）返回首个同名匹配，再校验 ext.Service != svcName → 偶发 404。
+	// 改用 GetExtensionForService 按服务作用域精确查找，结果确定。
+	ext, ok := s.extProvider.GetExtensionForService(svcName, extName)
+	if !ok {
 		respondError(w, errors.ErrExtensionNotFound, "extension not found")
 		return
 	}
@@ -874,8 +877,11 @@ func (s *Server) handleRunServiceExtension(w http.ResponseWriter, r *http.Reques
 		req.DryRun = true
 	}
 
-	info, ok := s.extProvider.GetExtension(extName)
-	if !ok || info.Service != svcName {
+	// 修复多服务同名扩展偶发 404：原 GetExtension(extName) 遍历 Discovery.Services
+	// （Go map 随机序）返回首个同名匹配，再校验 info.Service != svcName → 偶发 404。
+	// 改用 GetExtensionForService 按服务作用域精确查找，结果确定。
+	info, ok := s.extProvider.GetExtensionForService(svcName, extName)
+	if !ok {
 		respondError(w, errors.ErrExtensionNotFound, "extension not found")
 		return
 	}

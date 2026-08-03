@@ -143,6 +143,9 @@ func (p *CoreExtensionProvider) GetExtension(name string) (*ExtensionInfo, bool)
 		return &info, true
 	}
 	// 再搜索服务级扩展
+	// 注意：当多个服务存在同名服务级扩展时，Go map 迭代顺序随机，返回首个匹配不确定。
+	// 服务级扩展操作应使用 GetExtensionForService 精确查找。本方法仅用于全局命名空间
+	// （GlobalExts 中扩展名唯一）或导入预览等"任意作用域存在即可"的检查。
 	for _, svcEntry := range p.Discovery.Services {
 		if extEntry, ok := svcEntry.Extensions[name]; ok {
 			info := p.extEntryToInfo(name, extEntry, svcEntry.Name)
@@ -150,6 +153,36 @@ func (p *CoreExtensionProvider) GetExtension(name string) (*ExtensionInfo, bool)
 		}
 	}
 	return nil, false
+}
+
+// GetExtensionForService 按服务作用域精确查找服务级扩展。
+//
+// service 非空时直接定位 Discovery.Services[service].Extensions[name]，无 map 遍历，
+// 结果确定，杜绝多服务同名扩展时的随机匹配。service 为空时退化为 GetExtension 语义。
+//
+// 修复多服务同名扩展查找竞态：GetExtension 在该场景下随机返回首个匹配，导致
+// handleRunServiceExtension/handleGetServiceExtension 偶发 404，且 UpdateExtension/
+// DeleteExtension/SaveExtensionEnv/RunExtension/GetExtensionStatus 可能静默误操作
+// 到错误服务的扩展（写错 meta.yaml / 删错目录 / 写错 env）。
+func (p *CoreExtensionProvider) GetExtensionForService(service, name string) (*ExtensionInfo, bool) {
+	// service 为空：退化为按名查找（用于"任意作用域存在即可"的场景，如导入预览）
+	if service == "" {
+		return p.GetExtension(name)
+	}
+	// D-05-1 修复：Discovery 为 nil 时返回 nil, false（热重载期间可能短暂为 nil）
+	if p.Discovery == nil {
+		return nil, false
+	}
+	svcEntry, ok := p.Discovery.Services[service]
+	if !ok {
+		return nil, false
+	}
+	extEntry, ok := svcEntry.Extensions[name]
+	if !ok {
+		return nil, false
+	}
+	info := p.extEntryToInfo(name, extEntry, service)
+	return &info, true
 }
 
 func (p *CoreExtensionProvider) CreateExtension(meta *config.ExtensionMeta, service string) error {
@@ -171,7 +204,9 @@ func (p *CoreExtensionProvider) CreateExtension(meta *config.ExtensionMeta, serv
 }
 
 func (p *CoreExtensionProvider) UpdateExtension(name string, meta *config.ExtensionMeta, service string) error {
-	info, ok := p.GetExtension(name)
+	// 修复多服务同名扩展误操作：service 非空时按服务作用域精确查找，
+	// 避免写入到错误服务的 meta.yaml（configPath 来自查找结果）。
+	info, ok := p.GetExtensionForService(service, name)
 	if !ok {
 		return fmt.Errorf("extension %s not found", name)
 	}
@@ -215,7 +250,9 @@ func (p *CoreExtensionProvider) refreshDiscoveryMeta(service, name string, meta 
 }
 
 func (p *CoreExtensionProvider) DeleteExtension(name string, service string) error {
-	info, ok := p.GetExtension(name)
+	// 修复多服务同名扩展误操作：service 非空时按服务作用域精确查找，
+	// 避免备份并删除错误服务的扩展目录（数据丢失）。
+	info, ok := p.GetExtensionForService(service, name)
 	if !ok {
 		// N-03-DELETE-404 修复：返回 ErrExtensionNotFound 以便 handler 映射为 404
 		return errors.NewServiceError(errors.ErrExtensionNotFound,
@@ -266,7 +303,9 @@ func cleanupOldBackups(parentDir, prefix string) {
 }
 
 func (p *CoreExtensionProvider) SaveExtensionEnv(name string, envData *config.EnvFile, service string) error {
-	info, ok := p.GetExtension(name)
+	// 修复多服务同名扩展误操作：service 非空时按服务作用域精确查找，
+	// 避免将 env.yaml 写入到错误服务的扩展目录。
+	info, ok := p.GetExtensionForService(service, name)
 	if !ok {
 		return fmt.Errorf("extension %s not found", name)
 	}
@@ -289,7 +328,10 @@ func (p *CoreExtensionProvider) RunExtension(ctx context.Context, name string, a
 		return nil, fmt.Errorf("extension executor not configured")
 	}
 
-	info, ok := p.GetExtension(name)
+	// 修复多服务同名扩展误操作：service 非空时按服务作用域精确查找，
+	// 避免执行到错误服务作用域下同名扩展的 Meta（workDir/serviceDir/serviceSpec
+	// 均来自查找结果，误匹配会导致在错误目录下执行错误扩展）。
+	info, ok := p.GetExtensionForService(service, name)
 	if !ok {
 		return nil, fmt.Errorf("extension %s not found", name)
 	}
@@ -421,7 +463,9 @@ func (p *CoreExtensionProvider) RunExtension(ctx context.Context, name string, a
 }
 
 func (p *CoreExtensionProvider) GetExtensionStatus(name string, service string) (map[string]any, error) {
-	info, ok := p.GetExtension(name)
+	// 修复多服务同名扩展误操作：service 非空时按服务作用域精确查找，
+	// 避免返回错误服务作用域下同名扩展的状态。
+	info, ok := p.GetExtensionForService(service, name)
 	if !ok {
 		return nil, fmt.Errorf("extension %s not found", name)
 	}

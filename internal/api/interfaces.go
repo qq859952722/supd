@@ -67,7 +67,26 @@ type ExtensionInfo struct {
 // ExtensionProvider 提供扩展信息与操作
 type ExtensionProvider interface {
 	ListExtensions() []ExtensionInfo
+	// GetExtension 按扩展名查找，返回首个匹配项。
+	//
+	// 适用场景：全局扩展管理端点（GET/PUT/DELETE /api/extensions/{name} 等），
+	// 此时扩展名在 GlobalExts 命名空间内唯一。
+	//
+	// 注意：当多个服务存在同名服务级扩展时，本方法遍历 Discovery.Services（Go map，
+	// 迭代顺序随机），返回的匹配项不确定。服务级扩展操作必须使用
+	// GetExtensionForService 按服务作用域精确查找，避免误操作到错误服务的扩展。
 	GetExtension(name string) (*ExtensionInfo, bool)
+	// GetExtensionForService 按服务作用域精确查找服务级扩展。
+	//
+	// service 非空时，直接定位 Discovery.Services[service].Extensions[name]，无 map
+	// 遍历，结果确定。service 为空时退化为 GetExtension 的语义（用于不区分服务作用域
+	// 的场景，如导入预览检查"该扩展名是否已存在于任意作用域"）。
+	//
+	// 修复：原 GetExtension(name) 在多服务同名服务级扩展时按 Go map 随机顺序返回首个
+	// 匹配，导致 handleRunServiceExtension/handleGetServiceExtension 偶发 404，且
+	// UpdateExtension/DeleteExtension/SaveExtensionEnv/RunExtension/GetExtensionStatus
+	// 可能静默误操作到错误服务的扩展（写错 meta.yaml / 删错目录 / 写错 env）。
+	GetExtensionForService(service, name string) (*ExtensionInfo, bool)
 	CreateExtension(meta *config.ExtensionMeta, service string) error
 	UpdateExtension(name string, meta *config.ExtensionMeta, service string) error
 	DeleteExtension(name string, service string) error

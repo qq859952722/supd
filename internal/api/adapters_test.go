@@ -1492,6 +1492,258 @@ func TestCoreExtensionProvider_GetExtension_GlobalAndService(t *testing.T) {
 	}
 }
 
+// testBuildMultiSameNameDiscovery 构造"多服务同名扩展"的 Discovery：
+// transmission 与 qbittorrent 两个服务下都存在名为 shared-ext 的服务级扩展，
+// ConfigPath 指向各自独立目录，用于验证按服务作用域精确查找。
+//
+// 返回 (discovery, transmissionMetaPath, qbittorrentMetaPath)。
+func testBuildMultiSameNameDiscovery(t *testing.T) (*watch.DiscoveryResult, string, string) {
+	t.Helper()
+	transDir := t.TempDir()
+	transMetaPath := filepath.Join(transDir, "services", "transmission", "extensions", "shared-ext", "meta.yaml")
+	qbDir := t.TempDir()
+	qbMetaPath := filepath.Join(qbDir, "services", "qbittorrent", "extensions", "shared-ext", "meta.yaml")
+	for _, p := range []string{transMetaPath, qbMetaPath} {
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(p), err)
+		}
+	}
+	discovery := &watch.DiscoveryResult{
+		GlobalExts: map[string]*watch.ExtensionEntry{},
+		Services: map[string]*watch.ServiceEntry{
+			"transmission": {
+				Name: "transmission",
+				Extensions: map[string]*watch.ExtensionEntry{
+					"shared-ext": {
+						Name:        "shared-ext",
+						ConfigPath:  transMetaPath,
+						ServiceName: "transmission",
+						Meta:        testBuildMeta("shared-ext", true),
+					},
+				},
+			},
+			"qbittorrent": {
+				Name: "qbittorrent",
+				Extensions: map[string]*watch.ExtensionEntry{
+					"shared-ext": {
+						Name:        "shared-ext",
+						ConfigPath:  qbMetaPath,
+						ServiceName: "qbittorrent",
+						Meta:        testBuildMeta("shared-ext", true),
+					},
+				},
+			},
+		},
+	}
+	return discovery, transMetaPath, qbMetaPath
+}
+
+// TestCoreExtensionProvider_GetExtensionForService_MultipleSameName 验证多服务同名扩展时
+// 按服务作用域精确查找返回正确服务的扩展，杜绝 GetExtension 的随机匹配。
+func TestCoreExtensionProvider_GetExtensionForService_MultipleSameName(t *testing.T) {
+	discovery, transMetaPath, qbMetaPath := testBuildMultiSameNameDiscovery(t)
+	p := &CoreExtensionProvider{Discovery: discovery}
+
+	// transmission 作用域 → 必须命中 transmission 的扩展
+	info, ok := p.GetExtensionForService("transmission", "shared-ext")
+	if !ok {
+		t.Fatalf("GetExtensionForService(transmission, shared-ext) not found")
+	}
+	if info.Service != "transmission" {
+		t.Errorf("Service = %q, want 'transmission'", info.Service)
+	}
+	if info.ConfigPath != transMetaPath {
+		t.Errorf("ConfigPath = %q, want %q", info.ConfigPath, transMetaPath)
+	}
+
+	// qbittorrent 作用域 → 必须命中 qbittorrent 的扩展
+	info, ok = p.GetExtensionForService("qbittorrent", "shared-ext")
+	if !ok {
+		t.Fatalf("GetExtensionForService(qbittorrent, shared-ext) not found")
+	}
+	if info.Service != "qbittorrent" {
+		t.Errorf("Service = %q, want 'qbittorrent'", info.Service)
+	}
+	if info.ConfigPath != qbMetaPath {
+		t.Errorf("ConfigPath = %q, want %q", info.ConfigPath, qbMetaPath)
+	}
+}
+
+// TestCoreExtensionProvider_GetExtensionForService_Deterministic 验证多次调用结果稳定。
+// 原缺陷：GetExtension 遍历 Go map（随机序），多次调用可能返回不同服务的同名扩展。
+// 修复后 GetExtensionForService 直接 map 索引，结果确定。
+func TestCoreExtensionProvider_GetExtensionForService_Deterministic(t *testing.T) {
+	discovery, transMetaPath, _ := testBuildMultiSameNameDiscovery(t)
+	p := &CoreExtensionProvider{Discovery: discovery}
+
+	// 连续 50 次查找 transmission 作用域，每次都必须命中 transmission
+	// （若回退到随机 map 遍历，大概率会出现命中 qbittorrent 的情况）
+	for i := 0; i < 50; i++ {
+		info, ok := p.GetExtensionForService("transmission", "shared-ext")
+		if !ok {
+			t.Fatalf("iter %d: not found", i)
+		}
+		if info.ConfigPath != transMetaPath {
+			t.Fatalf("iter %d: ConfigPath = %q, want %q (随机匹配到错误服务)", i, info.ConfigPath, transMetaPath)
+		}
+	}
+}
+
+// TestCoreExtensionProvider_GetExtensionForService_NotFound 验证查找不存在场景。
+func TestCoreExtensionProvider_GetExtensionForService_NotFound(t *testing.T) {
+	discovery, _, _ := testBuildMultiSameNameDiscovery(t)
+	p := &CoreExtensionProvider{Discovery: discovery}
+
+	// 服务不存在
+	if _, ok := p.GetExtensionForService("ghost-svc", "shared-ext"); ok {
+		t.Errorf("GetExtensionForService(ghost-svc, shared-ext) = true, want false")
+	}
+	// 服务存在但扩展不存在
+	if _, ok := p.GetExtensionForService("transmission", "ghost-ext"); ok {
+		t.Errorf("GetExtensionForService(transmission, ghost-ext) = true, want false")
+	}
+	// Discovery 为 nil
+	nilP := &CoreExtensionProvider{}
+	if _, ok := nilP.GetExtensionForService("transmission", "shared-ext"); ok {
+		t.Errorf("GetExtensionForService with nil Discovery = true, want false")
+	}
+}
+
+// TestCoreExtensionProvider_GetExtensionForService_GlobalFallback 验证 service 为空时
+// 退化为 GetExtension 语义（用于导入预览"任意作用域存在即可"的检查）。
+func TestCoreExtensionProvider_GetExtensionForService_GlobalFallback(t *testing.T) {
+	discovery, transMetaPath, _ := testBuildMultiSameNameDiscovery(t)
+	p := &CoreExtensionProvider{Discovery: discovery}
+
+	// service="" 退化为 GetExtension：应能在多服务同名中找到（任一即可，符合"存在性"语义）
+	info, ok := p.GetExtensionForService("", "shared-ext")
+	if !ok {
+		t.Fatalf("GetExtensionForService('', shared-ext) not found (应退化到 GetExtension)")
+	}
+	// 命中 transmission 或 qbittorrent 任一即可（退化语义不保证确定性）
+	if info.ConfigPath != transMetaPath && !strings.Contains(info.ConfigPath, "qbittorrent") {
+		t.Errorf("ConfigPath = %q, 不在预期服务作用域内", info.ConfigPath)
+	}
+}
+
+// TestCoreExtensionProvider_UpdateExtension_ServiceScoped 验证 UpdateExtension 在多服务
+// 同名扩展时只写目标服务的 meta.yaml，不污染其他服务的同名扩展（数据损坏回归）。
+func TestCoreExtensionProvider_UpdateExtension_ServiceScoped(t *testing.T) {
+	discovery, transMetaPath, qbMetaPath := testBuildMultiSameNameDiscovery(t)
+	// 写入初始 meta.yaml，便于后续断言"未被修改"
+	origContent := []byte("name: shared-ext\nversion: \"1.0.0\"\nentry: run.sh\n")
+	if err := os.WriteFile(transMetaPath, origContent, 0644); err != nil {
+		t.Fatalf("write trans meta: %v", err)
+	}
+	if err := os.WriteFile(qbMetaPath, origContent, 0644); err != nil {
+		t.Fatalf("write qb meta: %v", err)
+	}
+	p := &CoreExtensionProvider{Discovery: discovery}
+
+	// 更新 transmission 的扩展，版本升到 2.0.0
+	newMeta := testBuildMeta("shared-ext", true)
+	newMeta.Version = "2.0.0"
+	if err := p.UpdateExtension("shared-ext", newMeta, "transmission"); err != nil {
+		t.Fatalf("UpdateExtension: %v", err)
+	}
+
+	// transmission 的 meta.yaml 应被更新为 2.0.0
+	transData, err := os.ReadFile(transMetaPath)
+	if err != nil {
+		t.Fatalf("read trans meta: %v", err)
+	}
+	if !strings.Contains(string(transData), "2.0.0") {
+		t.Errorf("transmission meta.yaml 未被更新为 2.0.0, 内容:\n%s", transData)
+	}
+
+	// qbittorrent 的 meta.yaml 必须保持原样（未被误写）
+	qbData, err := os.ReadFile(qbMetaPath)
+	if err != nil {
+		t.Fatalf("read qb meta: %v", err)
+	}
+	if string(qbData) != string(origContent) {
+		t.Errorf("qbittorrent meta.yaml 被误修改（数据损坏）:\n原: %s\n现: %s", origContent, qbData)
+	}
+}
+
+// TestCoreExtensionProvider_DeleteExtension_ServiceScoped 验证 DeleteExtension 在多服务
+// 同名扩展时只删除（备份）目标服务的扩展目录，不删除其他服务的同名扩展（数据丢失回归）。
+func TestCoreExtensionProvider_DeleteExtension_ServiceScoped(t *testing.T) {
+	discovery, transMetaPath, qbMetaPath := testBuildMultiSameNameDiscovery(t)
+	// 写入初始 meta.yaml 文件（helper 只创建目录，文件需测试自行写入）
+	origContent := []byte("name: shared-ext\nversion: \"1.0.0\"\nentry: run.sh\n")
+	if err := os.WriteFile(transMetaPath, origContent, 0644); err != nil {
+		t.Fatalf("write trans meta: %v", err)
+	}
+	if err := os.WriteFile(qbMetaPath, origContent, 0644); err != nil {
+		t.Fatalf("write qb meta: %v", err)
+	}
+	p := &CoreExtensionProvider{Discovery: discovery}
+	transDir := filepath.Dir(transMetaPath) // transmission/extensions/shared-ext
+	qbDir := filepath.Dir(qbMetaPath)       // qbittorrent/extensions/shared-ext
+
+	// 删除 qbittorrent 的 shared-ext
+	if err := p.DeleteExtension("shared-ext", "qbittorrent"); err != nil {
+		t.Fatalf("DeleteExtension: %v", err)
+	}
+
+	// qbittorrent 的扩展目录应被备份（重命名为 .bak.<timestamp>）
+	qbParent := filepath.Dir(qbDir)
+	entries, err := os.ReadDir(qbParent)
+	if err != nil {
+		t.Fatalf("read qb parent: %v", err)
+	}
+	bakCount := 0
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "shared-ext.bak.") {
+			bakCount++
+		}
+	}
+	if bakCount == 0 {
+		t.Errorf("qbittorrent shared-ext 未被备份删除（应为 .bak.* 目录）")
+	}
+
+	// transmission 的扩展目录必须原样存在（未被误删）
+	if _, err := os.Stat(transDir); err != nil {
+		t.Errorf("transmission shared-ext 目录被误删除（数据丢失）: %v", err)
+	}
+	if _, err := os.Stat(transMetaPath); err != nil {
+		t.Errorf("transmission meta.yaml 被误删除（数据丢失）: %v", err)
+	}
+}
+
+// TestCoreExtensionProvider_SaveExtensionEnv_ServiceScoped 验证 SaveExtensionEnv 在多服务
+// 同名扩展时只写目标服务的 env.yaml，不污染其他服务（数据损坏回归）。
+func TestCoreExtensionProvider_SaveExtensionEnv_ServiceScoped(t *testing.T) {
+	discovery, transMetaPath, qbMetaPath := testBuildMultiSameNameDiscovery(t)
+	// 显式设置 EnvPath 为各自目录下的 env.yaml
+	transEnvPath := filepath.Join(filepath.Dir(transMetaPath), "env.yaml")
+	qbEnvPath := filepath.Join(filepath.Dir(qbMetaPath), "env.yaml")
+	discovery.Services["transmission"].Extensions["shared-ext"].EnvPath = transEnvPath
+	discovery.Services["qbittorrent"].Extensions["shared-ext"].EnvPath = qbEnvPath
+	p := &CoreExtensionProvider{Discovery: discovery}
+
+	// 保存 transmission 的 env
+	envData := &config.EnvFile{Env: map[string]config.EnvVar{"TOKEN": {Value: "trans-secret"}}}
+	if err := p.SaveExtensionEnv("shared-ext", envData, "transmission"); err != nil {
+		t.Fatalf("SaveExtensionEnv: %v", err)
+	}
+
+	// transmission 的 env.yaml 应被写入
+	transData, err := os.ReadFile(transEnvPath)
+	if err != nil {
+		t.Fatalf("read trans env: %v", err)
+	}
+	if !strings.Contains(string(transData), "trans-secret") {
+		t.Errorf("transmission env.yaml 未写入 TOKEN, 内容:\n%s", transData)
+	}
+
+	// qbittorrent 的 env.yaml 必须不存在（未被误写）
+	if _, err := os.Stat(qbEnvPath); !os.IsNotExist(err) {
+		t.Errorf("qbittorrent env.yaml 被误写入（数据污染）: exists=%v", err == nil)
+	}
+}
+
 // TestCoreExtensionProvider_CreateExtension 验证创建扩展写入 meta.yaml。
 func TestCoreExtensionProvider_CreateExtension(t *testing.T) {
 	baseDir := t.TempDir()
