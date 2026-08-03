@@ -120,33 +120,45 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-08-02 | Skill 完善与远程服务优化 + code-server 修复 | Skill 目录契约/校验/打包修复（详见同日早段）；远程 192.168.31.188:7979 code-server 启动修复（versioned wrapper 缺失 + 入口错误 + glibc node fcntl64 缺失）；root 空白密码解锁 SSH 调试；12 个服务 README 编写；11 ready / 1 down / 0 failed | [notes/2026-08-02.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-02.md) |
 | 2026-08-02 | tracker-updater v1.3.0 测速分组 + 两个下载扩展 uid 1000 | ngosang 源加入（持续更新）；BEP-15 UDP CONNECT 测速（tjs UDPSocket）；3 源合并 563→测速存活 325（含 147 UDP）→49 优质独立 tier+1 垫底=50 tier；transmission-updater 路径修复+chown 非致命；pre-start-fixperms 分层 chown（bin/+web/→uid1000）；两扩展 run_as_uid 1000 验证通过 | [notes/2026-08-02.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-02.md) |
 | 2026-08-03 | 修复多服务同名扩展查找竞态 + v0.0.42 发版 | `GetExtension(name)` 在多服务同名扩展时随机匹配（Go map 随机序）→ 偶发 404 + Update/Delete/SaveEnv 静默数据损坏/丢失；新增 `GetExtensionForService(service, name)` 精确查找；5 个 provider 方法 + 2 个 handler 改用；7 新测试（含 80 请求 handler 压测 + 数据不串扰回归）；go test/race/pnpm build 全通过；推 v0.0.42 | [notes/2026-08-03.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-03.md) |
+| 2026-08-04 | 远程服务目录结构优化 + SSH 空密码连接固化 | smartdns rules 迁入 config/rules/ + 8 服务绝对路径相对化（含 transmission/env.yaml）；新建 `remote_ssh.sh` 封装脚本（SSH_ASKPASS 注入空密码，不改 ssh 配置）；skill 文档补 §3.1 SSH 连接 + §3.2 smartdns 路径基准差异；清理 s-ui 残留备份扩展目录；12 服务 ready，update-gfw-china 扩展验证通过 | [notes/2026-08-04.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-04.md) |
 
 ---
 
-## 八、最近会话重点（2026-08-03 修复多服务同名扩展查找竞态 + v0.0.42 发版）
+## 八、最近会话重点（2026-08-04 远程服务目录结构优化 + SSH 空密码连接固化）
 
 ### 本次完成
 
-1. **修复多服务同名扩展查找竞态（根因彻底修复）**：
-   - 原缺陷：`GetExtension(name)` 遍历 `Discovery.Services`（Go map 随机序），多服务同名扩展时返回项不确定
-   - 影响远超偶发 404：`UpdateExtension` 写错 meta.yaml（数据损坏）、`DeleteExtension` 删错目录（数据丢失）、`SaveExtensionEnv` 写错 env（数据损坏）
-   - 修复：接口新增 `GetExtensionForService(service, name)` 精确查找（`Discovery.Services[service].Extensions[name]` 直接索引）；5 个 provider 方法 + 2 个 handler 全部改用；service="" 退化为 GetExtension 语义（导入预览兼容）
-2. **充分运行状态测试**：
-   - 7 个新测试：provider 层（精确匹配/50 次确定性/NotFound/全局退化/Update/Delete/SaveEnv 不串扰）+ handler 层（真实 CoreExtensionProvider，2 服务 × 20 次 GET + 20 次 POST run = 80 请求验证从不 404）
-   - `go build`/`go vet`/`go test ./... -count=1` 全通过；`go test -race ./internal/api/...` 无竞态；`pnpm build` 通过
-3. **代码审计**：全局 handler 保持 `GetExtension(name)` 无回归；Discovery 读取模式与现有一致无新竞态；2 个 mock（fakeExtensionProvider + mockExtensionProvider）同步更新
-4. **v0.0.42 发版**：README 3 处版本号更新；本地 ldflags 注入验证 `supd 0.0.42` ✓；推送 GitHub
+1. **smartdns 目录结构优化**：
+   - `rules/`（顶层）→ `config/rules/`，规则文件归入 config 命名空间
+   - smartdns.conf 路径相对化：`domain-set -file rules/xxx.txt`（基准=config/）、`plugin ../bin/smartdns_ui.so`（基准=config/）、`cache-file config/smartdns.cache`（基准=服务根）
+   - 清理路径基准错误产生的空目录 `config/config/`
+   - 验证：smartdns restart 后 ready，update-gfw-china 扩展 6s 更新 110878+26079+4189/1605 条
+2. **全量绝对路径扫描与修复**：通过 SSH 全面扫描 12 个服务的 service.yaml / env.yaml / config/ / 扩展脚本，修复所有实际问题：
+   - 8 个服务的 service.yaml + config 文件绝对路径相对化（smartdns/dnscrypt-proxy/code-server/openlist/backrest/filebrowser/adguardhome + 之前已修复的）
+   - `transmission/env.yaml`：`TRANSMISSION_HOME`/`TRANSMISSION_WEB_HOME` 绝对路径 → 相对路径（`config`/`web`），重启验证 ready
+   - 清理 `s-ui/extensions/fix-sui-perm.bak.20260726-145818/` 残留备份目录（会被 supd 发现为扩展）
+   - VSCode 自管理元数据（extensions.json 等）和 filebrowser.db 二进制数据库不改（前者 VSCode 自管理，后者被 `--root data` 命令行参数覆盖）
+   - `${SUPD_SERVICE_DIR:-/etc/supd/...}` fallback 模式（shell + JS）可接受，supd 运行时注入环境变量覆盖
+3. **SSH 空密码连接方式固化**：
+   - 新建 `scripts/remote_ssh.sh`：自动创建 askpass + 自动启动 dropbear-ssh + 支持交互/命令/SFTP 上传下载
+   - 设计原则：不修改 dropbear-ssh 服务配置，仅依赖现有 `-B` 空密码模式；通过 `SSH_ASKPASS` 注入空密码，不依赖 sshpass
+   - `ensure_dropbear` 改用 grep 替代 python3（远程容器无 python3）
+   - skill 文档 `04_online_dev_guide.md` §3.1 新增 SSH 客户端空密码连接章节（前置条件 + 封装脚本 + 手动命令 + 运维示例 + 注意事项）
+4. **smartdns 路径基准差异文档化**：skill §3.2 新增路径基准对照表（`cache-file` 基准=CWD vs `domain-set/ip-set/plugin/conf-file` 基准=配置文件目录）+ 推荐目录结构 + 常见错误
 
 ### 关键技术点
 
-- **Go map 迭代随机化**：`for _, v := range map` 起始 bucket/offset 由运行时随机化，多服务同名扩展时 `GetExtension` 返回项不确定 → 偶发 404 + 静默误操作
-- **service="" 退化语义**：导入预览 `handleImportExtension` 用 `GetExtension(meta.Name)` 检查"任意作用域存在即可"——新方法 service="" 退化保持此行为
-- **全局 handler 无回归**：`handleGetExtension`/`handleUpdateExtension`/`handleExportExtension`/`handleImportExtension`/`handleRunExtension` 均操作全局命名空间（GlobalExts 扩展名唯一），保持 `GetExtension(name)` 不变
-- **生命周期触发不受影响**：dispatcher 的 `findMatchingExtensions` 按服务作用域精确匹配（pre_start/post_ready 等），原本就正确，只有 on-demand HTTP 触发端点有此 bug
+- **smartdns 路径基准双重性**：`cache-file` 基准 = 进程 CWD（service.yaml 未设 workdir 时 = 服务根目录）；`domain-set -file`/`ip-set -file`/`plugin`/`conf-file` 基准 = 配置文件所在目录（config/）。故 `cache-file config/smartdns.cache` 与 `domain-set -file rules/xxx.txt` 路径基准不同但都能正确解析
+- **SSH 空密码注入**：`SSH_ASKPASS=<script> SSH_ASKPASS_REQUIRE=force setsid -w ssh ...` 通过 askpass 脚本输出空密码，绕过交互式密码提示
+- **dropbear -B 模式**：允许空密码登录，但要求 `/etc/shadow` 中密码字段为空（`NP` 状态）；账号锁定（`L` 状态）会拒绝
+- **容器重启恢复**：`/etc/shadow` 在 overlay 文件系统，容器重启后 root 密码恢复，需重新 `passwd -d root`
+- **远程容器无 python3**：仅含 busybox + curl，JSON 解析用 `grep -o` 提取字段
+- **环境变量相对路径**：supd 启动服务时 CWD=服务根目录（service.yaml 未设 workdir），故 env.yaml 中的 `TRANSMISSION_HOME=config` 等相对路径会被进程正确解析为 `<服务根>/config/`
+- **扩展脚本 fallback 模式可接受**：`${SUPD_SERVICE_DIR:-/etc/supd/...}`（shell）和 `tjs.env.SUPD_SERVICE_DIR || '/etc/supd/...'`（JS）是标准防御性编码，supd 运行时注入环境变量覆盖
 
 ### 遗留事项
 
-- 无。本次彻底修复多服务同名扩展查找竞态，覆盖 404（flaky）+ 数据损坏/丢失（silent）两类后果。
+- 无。本次彻底完成目录结构优化和 SSH 连接方式固化，所有管理的配置文件均已相对路径化。
 
 ---
 

@@ -78,6 +78,143 @@ curl -X POST "$API/services/dropbear-ssh/start"
 
 > 启动 dropbear-ssh 必须以 root 运行 supd（或 `run_as: root`）；非 root 环境下 `run.sh` 会主动 `exit 1` 报错。`run.sh` 同时会自动为 `supd` 与 `root` 用户写入 `authorized_keys` 或清空密码。
 
+### 3.1 SSH 客户端空密码连接（推荐运维通道）
+
+dropbear-ssh 配置了 `-B` 选项允许空密码登录。当 root 密码为空（`passwd -S root` 显示 `NP`）时，客户端通过 `SSH_ASKPASS` 注入空密码即可无交互登录，**不依赖 sshpass**，**不修改 ssh 服务配置**。
+
+#### 前置条件
+
+1. **dropbear-ssh 已启动**：默认 `autostart: false`，需通过 API 或 Web UI 启动（封装脚本会自动处理）
+2. **root 空密码**：容器内执行 `passwd -d root` 清空密码（状态变为 `NP`）
+   - **首次或容器重启后**需执行一次：`docker exec <容器名> passwd -d root`
+   - `/etc/shadow` 在容器 overlay 文件系统，重启会恢复
+   - 验证：`passwd -S root` 输出 `root NP ...`
+
+#### 连接方式 A：封装脚本（推荐）
+
+使用 skill 自带的 `scripts/remote_ssh.sh`，自动处理 askpass 创建 + dropbear 启动：
+
+```bash
+# 交互式 shell
+./.trae/skills/supd-service-extension-dev/scripts/remote_ssh.sh
+
+# 执行单条命令
+./.trae/skills/supd-service-extension-dev/scripts/remote_ssh.sh 'ls /etc/supd/services/'
+
+# SFTP 上传文件
+./.trae/skills/supd-service-extension-dev/scripts/remote_ssh.sh -f <本地文件> <远程路径>
+
+# SFTP 下载文件
+./.trae/skills/supd-service-extension-dev/scripts/remote_ssh.sh -g <远程路径> <本地文件>
+
+# 连接其他实例（覆盖环境变量）
+REMOTE_HOST=192.168.1.100 ./scripts/remote_ssh.sh 'supd status'
+```
+
+#### 连接方式 B：手动 SSH 命令
+
+```bash
+# 1. 创建 askpass 脚本（输出空密码）
+cat > /tmp/ssh-askpass-empty.sh << 'EOF'
+#!/bin/sh
+echo ""
+EOF
+chmod +x /tmp/ssh-askpass-empty.sh
+
+# 2. 确保 dropbear-ssh 已启动
+curl -s -X POST http://192.168.31.188:7979/api/services/dropbear-ssh/start
+
+# 3. SSH 连接（空密码注入）
+SSH_ASKPASS=/tmp/ssh-askpass-empty.sh SSH_ASKPASS_REQUIRE=force setsid -w ssh \
+  -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+  -o LogLevel=ERROR -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+  -o NumberOfPasswordPrompts=1 \
+  -p 2222 root@192.168.31.188 'whoami; hostname'
+```
+
+#### 连接验证
+
+连接成功时输出（远程主机名 `inas`）：
+
+```
+root
+inas
+```
+
+#### 运维操作示例
+
+SSH 连通后，后续服务优化**优先用 SSH** 而非 HTTP API（更高效，可批量操作）：
+
+```bash
+# 查看服务目录结构
+remote_ssh.sh 'ls /etc/supd/services/smartdns/config/'
+
+# 编辑配置文件（cat 查看 + sed 替换 + 写回）
+remote_ssh.sh 'sed -i "s|/etc/supd/services/smartdns/rules/|config/rules/|g" /etc/supd/services/smartdns/config/smartdns.conf'
+
+# 重启服务（仍走 HTTP API，因为 supd CLI 不在容器 PATH）
+remote_ssh.sh 'curl -s -X POST http://localhost:7979/api/services/smartdns/restart'
+
+# 检查服务状态（远程容器无 python3，用 grep 提取字段）
+remote_ssh.sh 'curl -s http://localhost:7979/api/services/smartdns | grep -o "\"status\":\"[^\"]*\""'
+```
+
+#### 注意事项
+
+- **不修改 ssh 服务配置**：仅依赖现有 `-B` 空密码模式，不改 `service.yaml` / `env.yaml`
+- **仅内网可信场景**：空密码无认证，仅适用于内网；用完可 `curl -X POST .../dropbear-ssh/stop` 关闭
+- **容器重启恢复**：`/etc/shadow` 在 overlay，重启后 root 密码恢复，需重新 `passwd -d root`
+- **用完关闭**：dropbear-ssh 默认 `autostart: false`，调试完可停止服务
+- **远程无 python3**：容器内仅含 busybox + curl，JSON 解析用 `grep -o` 提取字段，避免依赖 python3
+
+### 3.2 smartdns 配置路径基准差异（重要）
+
+smartdns 的 `smartdns.conf` 中不同指令的**相对路径基准不同**，配置时必须区分，否则会触发 `file not readable` / `plugin not exists` 启动失败：
+
+| 指令类型 | 基准目录 | 示例 | 解析结果 |
+|---|---|---|---|
+| `cache-file` | 进程 CWD（服务根目录） | `cache-file config/smartdns.cache` | `<svc>/config/smartdns.cache` |
+| `domain-set -file` | 配置文件所在目录（`config/`） | `domain-set -file rules/cn_domain.txt` | `<svc>/config/rules/cn_domain.txt` |
+| `ip-set -file` | 配置文件所在目录（`config/`） | `ip-set -file rules/china_ip.txt` | `<svc>/config/rules/china_ip.txt` |
+| `plugin` | 配置文件所在目录（`config/`） | `plugin ../bin/smartdns_ui.so` | `<svc>/bin/smartdns_ui.so` |
+| `conf-file` | 配置文件所在目录（`config/`） | `conf-file extra.conf` | `<svc>/config/extra.conf` |
+
+> service.yaml 未设 `workdir` 时，smartdns 进程 CWD = 服务根目录（`<svc>/`）。
+> 配置文件路径由 `command` 的 `-c config/smartdns.conf` 参数指定，故配置文件位于 `<svc>/config/smartdns.conf`。
+
+#### 目录结构（推荐）
+
+```
+services/smartdns/
+├── service.yaml          # command: [bin/smartdns-wrapper, -c, config/smartdns.conf, -f]
+├── bin/
+│   ├── smartdns-wrapper
+│   └── smartdns_ui.so    # plugin 引用：../bin/smartdns_ui.so（基准=config/）
+└── config/
+    ├── smartdns.conf     # 主配置
+    ├── smartdns.cache    # cache-file 引用：config/smartdns.cache（基准=服务根）
+    └── rules/            # domain-set/ip-set 引用：rules/xxx.txt（基准=config/）
+        ├── cn_domain.txt
+        ├── gfw_domain.txt
+        └── china_ip.txt
+```
+
+#### 常见错误
+
+- ❌ `domain-set -file config/rules/cn_domain.txt` → 解析为 `config/config/rules/...`（双重 config）
+- ❌ `plugin bin/smartdns_ui.so` → 解析为 `config/bin/smartdns_ui.so`（不存在）
+- ❌ `cache-file smartdns.cache` → 解析为 `<svc>/smartdns.cache`（不在 config/ 下）
+
+#### update-gfw-china 扩展
+
+规则文件由 `services/smartdns/extensions/update-gfw-china` 扩展生成，写入 `config/rules/` 目录：
+
+- `cn_domain.txt` — 中国域名列表（direct-list，约 11 万条）
+- `gfw_domain.txt` — GFW 域名列表（proxy-list，约 2.6 万条）
+- `china_ip.txt` — 中国 IP v4+v6 列表（约 4189+1605 条）
+
+扩展 `run.js` 通过 `SUPD_SERVICE_DIR` 环境变量定位服务根目录，输出到 `${SVCDIR}/config/rules/`，与 smartdns.conf 的 `rules/xxx.txt` 引用路径一致。
+
 ---
 
 ## 4. HTTP API 端点完整对照表
