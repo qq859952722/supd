@@ -166,9 +166,10 @@ func (o *CoreServiceOperator) startServiceLocked(name string) error {
 
 	// 构建命令（runtime 解析）
 	// REQ-F-028, REQ-F-029: runtime 别名解析
-	command := svcConfig.Command
+	serviceRoot := filepath.Dir(svcEntry.ConfigPath)
+	command := core.ResolveCommandPath(serviceRoot, svcConfig.Command)
 	if svcConfig.Runtime != "" {
-		registry := config.BuildRegistry(o.Config.Runtimes, o.Discovery.Runtimes)
+		registry := config.BuildRegistryAt(o.BaseDir, o.Config.Runtimes, o.Discovery.Runtimes)
 		rt, err := config.Resolve(registry, svcConfig.Runtime)
 		if err != nil {
 			return fmt.Errorf("service %s runtime %q: %w", name, svcConfig.Runtime, err)
@@ -287,7 +288,7 @@ func (o *CoreServiceOperator) startServiceLocked(name string) error {
 			// fd_notify: 使用在 StartProcess 前创建的 checker
 			go o.runReadinessCheck(context.Background(), name, svcConfig.Readiness, sm, proc, engine, preChecker)
 		} else {
-			checker, cerr := core.NewReadinessChecker(svcConfig.Readiness, workdir, env)
+			checker, cerr := core.NewReadinessChecker(svcConfig.Readiness, workdir, env, serviceRoot)
 			if cerr != nil {
 				slog.Error("create readiness checker failed", "service", name, "error", cerr)
 				sm.Transition(core.EventReadinessTimeout)
@@ -387,7 +388,7 @@ func (o *CoreServiceOperator) superviseService(ctx context.Context, name string,
 
 	// 有意策略变更：一次性构建 RuntimeRegistry（与 bootstrap 一致），而非原每次重建
 	// 实际场景中 runtime discovery 在运行期间变化极罕见
-	registry := config.BuildRegistry(o.Config.Runtimes, o.Discovery.Runtimes)
+	registry := config.BuildRegistryAt(o.BaseDir, o.Config.Runtimes, o.Discovery.Runtimes)
 
 	callbacks := core.SupervisorCallbacks{
 		AcquireLifecycleLock: o.LifecycleLocks.Lock,
@@ -436,7 +437,7 @@ func (o *CoreServiceOperator) superviseService(ctx context.Context, name string,
 				// 构建工作目录（允许相对路径，基于服务根目录解析）
 				workdir := core.ResolveWorkdir(entry.Config, entry)
 				env := core.BuildServiceProcessEnv(o.BaseDir, n, o.Config.EnvFiles)
-				checker, cerr := core.NewReadinessChecker(entry.Config.Readiness, workdir, env)
+				checker, cerr := core.NewReadinessChecker(entry.Config.Readiness, workdir, env, filepath.Dir(entry.ConfigPath))
 				if cerr != nil {
 					slog.Error("create readiness checker failed on restart", "service", n, "error", cerr)
 					s.Transition(core.EventReadinessTimeout)

@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -583,7 +584,7 @@ func TestGetExtensionStatus(t *testing.T) {
 // TestExportExtension 覆盖 handleExportExtension：成功(打包gzip)、不存在404、目录不存在404。
 func TestExportExtension(t *testing.T) {
 	extDir := t.TempDir()
-	metaYAML := "name: ext-x\nversion: \"1.0.0\"\nentry: run.sh\n"
+	metaYAML := fmt.Sprintf("name: ext-x\nversion: \"1.0.0\"\nentry: %s\n", filepath.Join(extDir, "run.sh"))
 	if err := os.WriteFile(filepath.Join(extDir, "meta.yaml"), []byte(metaYAML), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -621,6 +622,28 @@ func TestExportExtension(t *testing.T) {
 	resp = doAPICall(t, server, http.MethodGet, "/api/extensions/ext-bad/export", nil)
 	if resp.Code != http.StatusNotFound {
 		t.Errorf("export missing dir: expected 404, got %d", resp.Code)
+	}
+}
+
+func TestValidateExtensionForExportPathRoots(t *testing.T) {
+	baseDir := t.TempDir()
+	extDir := filepath.Join(baseDir, "custom-exts", "demo")
+	if err := os.MkdirAll(extDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(extDir, "run.sh")
+	if err := os.WriteFile(entry, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	metaPath := filepath.Join(extDir, "meta.yaml")
+	for _, configuredEntry := range []string{"custom-exts/demo/run.sh", entry} {
+		meta := fmt.Sprintf("name: demo\nversion: \"1.0.0\"\nentry: %s\n", configuredEntry)
+		if err := os.WriteFile(metaPath, []byte(meta), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateExtensionForExport(extDir, metaPath, baseDir, extDir); err != nil {
+			t.Fatalf("entry %q: %v", configuredEntry, err)
+		}
 	}
 }
 
@@ -713,7 +736,7 @@ func TestImportExtensionConfirm(t *testing.T) {
 
 	// 成功 → 201（watchProvider 未配置，triggerReload 返回 nil，走跳过分支）
 	archiveData = buildTarGz(t, map[string]string{
-		"meta.yaml": "name: myext\nversion: \"1.0.0\"\nentry: run.sh\n",
+		"meta.yaml": "name: myext\nversion: \"1.0.0\"\nentry: extensions/myext/run.sh\n",
 		"run.sh":    "#!/bin/sh\n",
 	})
 	req = newUploadRequest(t, "/api/extensions/import/confirm", "file", "myext.tar.gz", archiveData, map[string]string{"name": "myext"})
@@ -828,8 +851,10 @@ func TestServiceScopedExtensionHandlers(t *testing.T) {
 //
 // 场景：transmission 与 qbittorrent 两个服务都存在名为 shared-ext 的服务级扩展。
 // 修复前：handleGetServiceExtension/handleRunServiceExtension 调用 GetExtension(extName)
-//   遍历 Discovery.Services（Go map 随机序）返回首个同名匹配，再校验 Service != svcName
-//   → 命中错误服务时返回 404（偶发，依赖运行时 map 哈希布局）。
+//
+//	遍历 Discovery.Services（Go map 随机序）返回首个同名匹配，再校验 Service != svcName
+//	→ 命中错误服务时返回 404（偶发，依赖运行时 map 哈希布局）。
+//
 // 修复后：改用 GetExtensionForService(svcName, extName) 按服务作用域精确查找，结果确定。
 //
 // 本测试对每个服务的 GET 详情 + POST 运行端点各连续请求 20 次，验证：

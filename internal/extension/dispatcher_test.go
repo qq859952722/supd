@@ -21,8 +21,8 @@ func boolPtr(v bool) *bool {
 func testExtWithOnDemand(name, entry string) *watch.ExtensionEntry {
 	configPath := filepath.Join(filepath.Dir(entry), "meta.yaml")
 	return &watch.ExtensionEntry{
-		Name:        name,
-		ConfigPath:  configPath,
+		Name:       name,
+		ConfigPath: configPath,
 		Meta: &config.ExtensionMeta{
 			Name:           name,
 			Enabled:        boolPtr(true),
@@ -42,8 +42,8 @@ func testExtWithOnDemand(name, entry string) *watch.ExtensionEntry {
 func testExtWithServiceLifecycle(name, entry, event, action string) *watch.ExtensionEntry {
 	configPath := filepath.Join(filepath.Dir(entry), "meta.yaml")
 	return &watch.ExtensionEntry{
-		Name:        name,
-		ConfigPath:  configPath,
+		Name:       name,
+		ConfigPath: configPath,
 		Meta: &config.ExtensionMeta{
 			Name:           name,
 			Enabled:        boolPtr(true),
@@ -66,8 +66,8 @@ func testExtWithServiceLifecycle(name, entry, event, action string) *watch.Exten
 func testExtWithSupdLifecycle(name, entry, event, action string) *watch.ExtensionEntry {
 	configPath := filepath.Join(filepath.Dir(entry), "meta.yaml")
 	return &watch.ExtensionEntry{
-		Name:        name,
-		ConfigPath:  configPath,
+		Name:       name,
+		ConfigPath: configPath,
 		Meta: &config.ExtensionMeta{
 			Name:           name,
 			Enabled:        boolPtr(true),
@@ -90,8 +90,8 @@ func testExtWithSupdLifecycle(name, entry, event, action string) *watch.Extensio
 func testExtWithSchedule(name, entry, cron, action string) *watch.ExtensionEntry {
 	configPath := filepath.Join(filepath.Dir(entry), "meta.yaml")
 	return &watch.ExtensionEntry{
-		Name:        name,
-		ConfigPath:  configPath,
+		Name:       name,
+		ConfigPath: configPath,
 		Meta: &config.ExtensionMeta{
 			Name:           name,
 			Enabled:        boolPtr(true),
@@ -111,7 +111,7 @@ func testExtWithSchedule(name, entry, cron, action string) *watch.ExtensionEntry
 }
 
 // TestBuildWorkDirGlobal 测试全局扩展工作目录构造
-// 工作目录为扩展自身目录（meta.yaml 所在目录）
+// 工作目录为默认工作目录
 func TestBuildWorkDirGlobal(t *testing.T) {
 	tmpDir := t.TempDir()
 	extDir := filepath.Join(tmpDir, "extensions", "my-ext")
@@ -130,9 +130,9 @@ func TestBuildWorkDirGlobal(t *testing.T) {
 	}
 	workDir := buildWorkDir(tmpDir, extEntry)
 
-	// 工作目录应为扩展目录本身
-	if workDir != extDir {
-		t.Errorf("expected workDir %s, got %s", extDir, workDir)
+	// 全局扩展工作目录应为默认工作目录
+	if workDir != tmpDir {
+		t.Errorf("expected workDir %s, got %s", tmpDir, workDir)
 	}
 
 	// 验证 script_tmp 临时目录已创建
@@ -143,7 +143,7 @@ func TestBuildWorkDirGlobal(t *testing.T) {
 }
 
 // TestBuildWorkDirService 测试服务级扩展工作目录构造
-// 工作目录为扩展自身目录（meta.yaml 所在目录）
+// 工作目录为服务根目录
 func TestBuildWorkDirService(t *testing.T) {
 	tmpDir := t.TempDir()
 	extDir := filepath.Join(tmpDir, "services", "my-service", "extensions", "my-ext")
@@ -162,9 +162,10 @@ func TestBuildWorkDirService(t *testing.T) {
 	}
 	workDir := buildWorkDir(tmpDir, extEntry)
 
-	// 工作目录应为扩展目录本身
-	if workDir != extDir {
-		t.Errorf("expected workDir %s, got %s", extDir, workDir)
+	// 服务级扩展工作目录应为服务根目录
+	expectedWorkDir := filepath.Join(tmpDir, "services", "my-service")
+	if workDir != expectedWorkDir {
+		t.Errorf("expected workDir %s, got %s", expectedWorkDir, workDir)
 	}
 
 	// 验证 script_tmp 临时目录已创建
@@ -505,8 +506,8 @@ func TestDispatchFailureDoesNotBlockNext(t *testing.T) {
 
 	discovery := &watch.DiscoveryResult{
 		GlobalExts: map[string]*watch.ExtensionEntry{
-			"alpha-fail":    testExtWithOnDemand("alpha-fail", filepath.Join(tmpDir, "fail.sh")),
-			"beta-success":  testExtWithOnDemand("beta-success", filepath.Join(tmpDir, "success.sh")),
+			"alpha-fail":   testExtWithOnDemand("alpha-fail", filepath.Join(tmpDir, "fail.sh")),
+			"beta-success": testExtWithOnDemand("beta-success", filepath.Join(tmpDir, "success.sh")),
 		},
 		Services: map[string]*watch.ServiceEntry{},
 	}
@@ -618,8 +619,16 @@ func TestDispatchWorkDirForServiceExtension(t *testing.T) {
 	executor := NewExecutor(logDir, tmpDir)
 	dispatcher := NewDispatcher(executor, tmpDir, logDir, 1800)
 
-	svcExt := testExtWithOnDemand("my-ext", scriptPath)
-	svcExt.ServiceName = "my-service" // 服务级扩展需设置 ServiceName
+	svcExtDir := filepath.Join(tmpDir, "services", "my-service", "extensions", "my-ext")
+	if err := os.MkdirAll(svcExtDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	svcScriptPath := filepath.Join(svcExtDir, "svc_ext.sh")
+	if err := os.Rename(scriptPath, svcScriptPath); err != nil {
+		t.Fatal(err)
+	}
+	svcExt := testExtWithOnDemand("my-ext", svcScriptPath)
+	svcExt.ServiceName = "my-service"
 
 	discovery := &watch.DiscoveryResult{
 		GlobalExts: map[string]*watch.ExtensionEntry{},

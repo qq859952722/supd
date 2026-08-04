@@ -265,7 +265,8 @@ func validateServiceImport(stagingDir, expectedName string) error {
 		if meta.Name != entry.Name() {
 			return fmt.Errorf("extension directory/name mismatch: %s/%s", entry.Name(), meta.Name)
 		}
-		if err := validateExtensionForExport(filepath.Join(stagingDir, "extensions", entry.Name()), filepath.Join(stagingDir, "extensions", entry.Name(), "meta.yaml")); err != nil {
+		extDir := filepath.Join(stagingDir, "extensions", entry.Name())
+		if err := validateExtensionForExport(extDir, filepath.Join(extDir, "meta.yaml"), stagingDir, ""); err != nil {
 			return err
 		}
 	}
@@ -283,7 +284,7 @@ func importErrorCode(err error) errors.ErrorCode {
 	return errors.ErrInternal
 }
 
-func validateExtensionImport(stagingDir, expectedName string) error {
+func validateExtensionImport(stagingDir, expectedName, entryRoot, finalExtDir string) error {
 	metaPath := filepath.Join(stagingDir, "meta.yaml")
 	meta, err := config.LoadExtension(metaPath)
 	if err != nil {
@@ -292,7 +293,7 @@ func validateExtensionImport(stagingDir, expectedName string) error {
 	if meta.Name != expectedName {
 		return fmt.Errorf("extension name mismatch: archive=%s request=%s", meta.Name, expectedName)
 	}
-	return validateExtensionForExport(stagingDir, metaPath)
+	return validateExtensionForExport(stagingDir, metaPath, entryRoot, finalExtDir)
 }
 
 // ImportPreviewResponse 导入预览响应

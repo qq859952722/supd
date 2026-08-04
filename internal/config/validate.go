@@ -93,9 +93,6 @@ func ValidateConfig(cfg *Config) error {
 		if v == "" {
 			return fmt.Errorf("runtimes.%s: path must not be empty", k)
 		}
-		if !strings.HasPrefix(v, "/") {
-			return fmt.Errorf("runtimes.%s: path %q must be absolute", k, v)
-		}
 	}
 
 	// K-NEW-01 修复：将 config.yaml 的 extension_hard_limit_seconds 注入校验器

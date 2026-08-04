@@ -39,9 +39,12 @@ type TriggerContext struct {
 	// TempEnv 运行时临时环境变量（仅本次执行，不持久化）
 	// 由前端"运行时参数编辑抽屉"传入，覆盖 env.yaml 同名变量
 	TempEnv map[string]string
-	// WorkDir 工作目录
-	// REQ-F-022: 扩展执行时的工作目录，非空时优先使用；为空时使用 Executor.baseDir
+	// WorkDir 扩展进程工作目录，也是相对 entry 的解析根：全局扩展为默认工作目录，服务级扩展为服务根目录。
 	WorkDir string
+	// ExtensionEnvPath 当前扩展的 env.yaml 绝对路径；为空表示没有私有环境文件。
+	ExtensionEnvPath string
+	// ServiceLevel 标识当前扩展是否为服务级扩展，避免全局扩展被服务生命周期触发时误加载同名服务扩展环境。
+	ServiceLevel bool
 	// RunID 预先生成的 run_id，非空时 Execute 使用此值，为空时自动生成
 	// 用于异步执行场景：调用方预生成 run_id 并记录到 TaskManager，Execute 使用同一 run_id
 	RunID string

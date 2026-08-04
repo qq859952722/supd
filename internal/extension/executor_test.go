@@ -36,6 +36,30 @@ func testMeta(name, entry string) *config.ExtensionMeta {
 	}
 }
 
+func TestBuildExecContextResolvesEntryFromWorkDir(t *testing.T) {
+	baseDir := t.TempDir()
+	serviceRoot := filepath.Join(baseDir, "services", "demo")
+	executor := NewExecutor(filepath.Join(baseDir, "logs"), baseDir)
+
+	relative, err := executor.buildExecContext("run-relative", testMeta("relative", "scripts/run.sh"), TriggerContext{WorkDir: serviceRoot}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRelative := filepath.Join(serviceRoot, "scripts", "run.sh")
+	if relative.command[0] != wantRelative {
+		t.Fatalf("relative entry = %q, want %q", relative.command[0], wantRelative)
+	}
+
+	absolutePath := filepath.Join(t.TempDir(), "run.sh")
+	absolute, err := executor.buildExecContext("run-absolute", testMeta("absolute", absolutePath), TriggerContext{WorkDir: serviceRoot}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if absolute.command[0] != absolutePath {
+		t.Fatalf("absolute entry = %q, want %q", absolute.command[0], absolutePath)
+	}
+}
+
 // TestSimpleScriptSuccess 测试简单脚本执行成功
 // REQ-F-016: exit 0 → TaskSuccess
 func TestSimpleScriptSuccess(t *testing.T) {

@@ -16,12 +16,16 @@ type scriptChecker struct {
 	env   []string // 规格 §2.2.3: 继承服务进程的环境变量，使 check 脚本能访问服务 env
 }
 
-func newScriptChecker(cfg *config.ReadinessConfig, dir string, env []string) (*scriptChecker, error) {
+func newScriptChecker(cfg *config.ReadinessConfig, dir string, env []string, serviceRoot ...string) (*scriptChecker, error) {
 	if len(cfg.Check) == 0 {
 		return nil, fmt.Errorf("readiness script: check command is required")
 	}
+	root := dir
+	if len(serviceRoot) > 0 && serviceRoot[0] != "" {
+		root = serviceRoot[0]
+	}
 	return &scriptChecker{
-		check: cfg.Check,
+		check: ResolveCommandPath(root, cfg.Check),
 		dir:   dir,
 		env:   env,
 	}, nil

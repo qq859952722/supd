@@ -416,7 +416,12 @@ func (s *Server) handleExportExtension(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := validateExtensionForExport(extDir, info.ConfigPath); err != nil {
+	baseDir := s.pathValidator.baseDir
+	entryRoot := baseDir
+	if info.Service != "" {
+		entryRoot = filepath.Join(baseDir, "services", info.Service)
+	}
+	if err := validateExtensionForExport(extDir, info.ConfigPath, entryRoot, extDir); err != nil {
 		respondError(w, errors.ErrServiceConfigInvalid, fmt.Sprintf("extension export validation failed: %v", err))
 		return
 	}
@@ -431,15 +436,19 @@ func (s *Server) handleExportExtension(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func validateExtensionForExport(extDir, metaPath string) error {
+func validateExtensionForExport(extDir, metaPath, entryRoot, finalExtDir string) error {
 	meta, err := config.LoadExtension(metaPath)
 	if err != nil {
 		return fmt.Errorf("load meta.yaml: %w", err)
 	}
-	if filepath.IsAbs(meta.Entry) || strings.Contains(meta.Entry, "..") {
-		return fmt.Errorf("entry must be a safe relative path: %s", meta.Entry)
+	entryPath := config.ResolvePath(entryRoot, meta.Entry)
+	// 扩展单独导入时 staging 目录并不位于最终层级。若 entry 最终落在扩展目录内，
+	// 将最终路径映射回 staging；绝对路径或扩展目录外的相对路径按运行时真实路径校验。
+	if finalExtDir != "" {
+		if rel, relErr := filepath.Rel(finalExtDir, entryPath); relErr == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			entryPath = filepath.Join(extDir, rel)
+		}
 	}
-	entryPath := filepath.Join(extDir, meta.Entry)
 	info, err := os.Stat(entryPath)
 	if err != nil {
 		return fmt.Errorf("entry file %s: %w", meta.Entry, err)
@@ -577,13 +586,15 @@ func (s *Server) handleImportExtensionConfirm(w http.ResponseWriter, r *http.Req
 		baseDir = "/etc/supd/"
 	}
 
+	entryRoot := baseDir
 	var targetDir string
 	if service != "" {
 		if !isValidServiceName(service) {
 			respondError(w, errors.ErrInvalidRequest, "invalid service name")
 			return
 		}
-		targetDir = filepath.Join(baseDir, "services", service, "extensions", name)
+		entryRoot = filepath.Join(baseDir, "services", service)
+		targetDir = filepath.Join(entryRoot, "extensions", name)
 	} else {
 		targetDir = filepath.Join(baseDir, "extensions", name)
 	}
@@ -604,7 +615,9 @@ func (s *Server) handleImportExtensionConfirm(w http.ResponseWriter, r *http.Req
 		Reader:    file,
 		Name:      name,
 		KeepData:  false,
-		Validator: func(stagingDir string) error { return validateExtensionImport(stagingDir, name) },
+		Validator: func(stagingDir string) error {
+			return validateExtensionImport(stagingDir, name, entryRoot, targetDir)
+		},
 	})
 	if err != nil {
 		slog.Error("extension import transaction failed", "extension", name, "error", err)

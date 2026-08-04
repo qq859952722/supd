@@ -349,12 +349,13 @@ func (p *CoreExtensionProvider) RunExtension(ctx context.Context, name string, a
 	// 3. 立即返回预记录结果，前端可通过 runs API 轮询进度和日志
 	runID := uuid.New().String()
 
-	// 工作目录为扩展自身目录（meta.yaml 所在目录），这样 entry 中的相对路径（如 run.sh）可以正确定位
-	workDir := filepath.Dir(info.ConfigPath)
+	// 全局扩展以默认工作目录为 CWD；服务级扩展以服务根目录为 CWD。
+	workDir := p.BaseDir
 	serviceDir := ""
 	var serviceSpec identity.CredentialSpec
 	if svcName != "" && p.BaseDir != "" {
 		serviceDir = filepath.Join(p.BaseDir, "services", svcName)
+		workDir = serviceDir
 	}
 	// REQ-F-023, §2.2.13: 服务级扩展 on_demand 触发时携带服务的身份配置，供 ResolveRunAs 继承
 	if svcName != "" && p.Discovery != nil {
@@ -364,15 +365,17 @@ func (p *CoreExtensionProvider) RunExtension(ctx context.Context, name string, a
 	}
 
 	tc := extension.TriggerContext{
-		EventType:     "on_demand",
-		TriggerSource: "webui",
-		ActionID:      resolvedActionID,
-		TempEnv:       env, // 运行时临时环境变量（仅本次执行，不持久化）
-		ServiceName:   svcName,
-		ServiceDir:    serviceDir,
-		ServiceSpec:   serviceSpec,
-		WorkDir:       workDir,
-		RunID:         runID,
+		EventType:        "on_demand",
+		TriggerSource:    "webui",
+		ActionID:         resolvedActionID,
+		TempEnv:          env, // 运行时临时环境变量（仅本次执行，不持久化）
+		ServiceName:      svcName,
+		ServiceDir:       serviceDir,
+		ServiceSpec:      serviceSpec,
+		WorkDir:          workDir,
+		ExtensionEnvPath: info.EnvPath,
+		ServiceLevel:     svcName != "",
+		RunID:            runID,
 	}
 
 	// N-03-01 修复：dry_run 模式 — 不 fork 进程，仅记录任务并返回成功

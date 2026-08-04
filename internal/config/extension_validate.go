@@ -37,15 +37,17 @@ func SetExtensionHardLimit(seconds int) {
 	}
 }
 
-// validateEntryPath 校验扩展 entry 路径安全性
-// S-04: 防止 entry 指向白名单外二进制（绝对路径/..路径/shell元字符）
+// validateEntryPath 校验扩展 entry 路径安全性。
+// entry 支持绝对路径和相对路径；相对路径由执行器基于扩展所属层级的工作目录解析。
 func validateEntryPath(entry string) error {
 	if entry == "" {
 		return fmt.Errorf("entry: must not be empty")
 	}
-	// 不含 ..
-	if strings.Contains(entry, "..") {
-		return fmt.Errorf("entry: must not contain '..': %s", entry)
+	// 禁止独立的 .. 路径段，允许文件名中合法包含连续点字符。
+	for _, part := range strings.Split(filepath.ToSlash(entry), "/") {
+		if part == ".." {
+			return fmt.Errorf("entry: must not contain '..' path segments: %s", entry)
+		}
 	}
 	// 不含 shell 元字符
 	for _, ch := range entry {
@@ -55,8 +57,11 @@ func validateEntryPath(entry string) error {
 	}
 	// 清理后与原始值一致（防止多余路径分隔符等）
 	cleaned := filepath.Clean(entry)
+	if cleaned == "." {
+		return fmt.Errorf("entry: must identify an executable file, got %q", entry)
+	}
 	if cleaned != entry {
-		return fmt.Errorf("entry: contains redundant path components: %s", entry)
+		return fmt.Errorf("entry: contains redundant path components: %q", entry)
 	}
 	return nil
 }

@@ -72,14 +72,19 @@ func (e *Executor) buildExecContext(runID string, meta *config.ExtensionMeta, tc
 	// REQ-F-028, REQ-F-029: runtime 别名解析（三层来源：config > scan > builtin）
 	runtimePath := ""
 	if meta.Runtime != "" {
-		registry := config.BuildRegistry(e.runtimes, e.discoveredRuntimes)
+		registry := config.BuildRegistryAt(e.baseDir, e.runtimes, e.discoveredRuntimes)
 		rt, err := config.Resolve(registry, meta.Runtime)
 		if err != nil {
 			return nil, fmt.Errorf("extension %s runtime %q: %w", meta.Name, meta.Runtime, err)
 		}
 		runtimePath = rt.AbsPath
 	}
-	command := BuildCommand(meta.Runtime, runtimePath, meta.Entry)
+	entryRoot := tc.WorkDir
+	if entryRoot == "" {
+		entryRoot = e.baseDir
+	}
+	entryPath := config.ResolvePath(entryRoot, meta.Entry)
+	command := BuildCommand(meta.Runtime, runtimePath, entryPath)
 	if len(command) == 0 {
 		return nil, fmt.Errorf("extension %s: command is empty", meta.Name)
 	}

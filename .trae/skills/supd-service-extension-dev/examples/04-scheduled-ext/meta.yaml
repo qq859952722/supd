@@ -3,7 +3,7 @@ version: "1.0.0"
 description: "Scheduled ping extension (cron every minute)"
 enabled: true
 runtime: bash
-entry: run.sh
+entry: extensions/scheduled-ext/run.sh
 timeout_seconds: 10
 ui:
   show_logs: true

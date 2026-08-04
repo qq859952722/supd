@@ -16,10 +16,16 @@ type ConfigRuntimeProvider struct {
 }
 
 func (p *ConfigRuntimeProvider) ListRuntimes() []RuntimeInfo {
-	discovery := watch.NewDiscovery(p.BaseDir, "")
+	var extensionDirs []string
+	var configuredRuntimes map[string]string
+	if p.Config != nil {
+		extensionDirs = p.Config.ExtensionDirs
+		configuredRuntimes = p.Config.Runtimes
+	}
+	discovery := watch.NewDiscovery(p.BaseDir, "", extensionDirs...)
 	discResult := discovery.Scan()
 
-	registry := config.BuildRegistry(p.Config.Runtimes, discResult.Runtimes)
+	registry := config.BuildRegistryAt(p.BaseDir, configuredRuntimes, discResult.Runtimes)
 	entries := config.List(registry)
 
 	result := make([]RuntimeInfo, 0, len(entries))

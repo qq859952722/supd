@@ -4,14 +4,14 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"strings"
+	"path/filepath"
 )
 
 // ValidateRuntime 校验单个运行时的可用性。
 // REQ-F-029: 绝对路径检查文件存在 + 可执行；PATH 查找用 exec.LookPath
 // REQ-F-030: 运行时路径不注入 PATH，仅用于构造命令
 func ValidateRuntime(entry *RuntimeEntry) {
-	if strings.HasPrefix(entry.Path, "/") {
+	if filepath.IsAbs(entry.Path) {
 		// 绝对路径：检查文件存在 + 是普通文件 + 可执行位
 		validateAbsolutePath(entry)
 	} else {

@@ -113,6 +113,47 @@ func TestWatcher_NewSubDirWatched(t *testing.T) {
 	}
 }
 
+func TestWatcher_CustomExtensionDirNewChild(t *testing.T) {
+	baseDir := t.TempDir()
+	extRoot := filepath.Join(baseDir, "custom-exts")
+	if err := os.MkdirAll(extRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	w, err := NewWatcher(baseDir, "custom-exts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Start()
+	defer w.Stop()
+
+	extDir := filepath.Join(extRoot, "new-ext")
+	if err := os.Mkdir(extDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-w.Events():
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for custom extension directory event")
+	}
+
+	time.Sleep(600 * time.Millisecond)
+	metaPath := filepath.Join(extDir, "meta.yaml")
+	if err := os.WriteFile(metaPath, []byte("name: new-ext"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case batch := <-w.Events():
+		for _, event := range batch {
+			if event.Path == metaPath {
+				return
+			}
+		}
+		t.Fatalf("expected event for %s, got %+v", metaPath, batch)
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for custom extension meta event")
+	}
+}
+
 // REQ-F-026: 删除文件，验证收到 remove 事件
 func TestWatcher_RemoveFile(t *testing.T) {
 	tmpDir := t.TempDir()

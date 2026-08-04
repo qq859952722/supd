@@ -1016,6 +1016,34 @@ func TestDiscoverServiceExtensions_SkipsBackupDirs(t *testing.T) {
 	}
 }
 
+func TestDiscoverGlobalExtensionsConfiguredDirs(t *testing.T) {
+	baseDir := t.TempDir()
+	absoluteRoot := t.TempDir()
+	for root, name := range map[string]string{
+		filepath.Join(baseDir, "custom-extensions"): "relative-ext",
+		absoluteRoot: "absolute-ext",
+	} {
+		extDir := filepath.Join(root, name)
+		if err := os.MkdirAll(extDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		meta := "name: " + name + "\nversion: \"1.0.0\"\nentry: /bin/true\n"
+		if err := os.WriteFile(filepath.Join(extDir, "meta.yaml"), []byte(meta), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	result := NewDiscovery(baseDir, "", "custom-extensions", absoluteRoot).Scan()
+	if len(result.Errors) != 0 {
+		t.Fatalf("discovery errors: %v", result.Errors)
+	}
+	for _, name := range []string{"relative-ext", "absolute-ext"} {
+		if _, ok := result.GlobalExts[name]; !ok {
+			t.Errorf("extension %s not discovered", name)
+		}
+	}
+}
+
 // TestDiscoverServices_SkipsBackupDirs 验证服务扫描跳过 .bak 备份目录
 func TestDiscoverServices_SkipsBackupDirs(t *testing.T) {
 	dir := createTestDir(t)

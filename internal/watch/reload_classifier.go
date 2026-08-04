@@ -302,6 +302,10 @@ func classifyConfigChange(filePath string, old, new_ *config.Config) []Classifie
 	if !sliceEqual(old.Settings.LocalNetworks, new_.Settings.LocalNetworks) {
 		needSupdRestartFields = append(needSupdRestartFields, "settings.local_networks")
 	}
+	// extension_dirs 的扫描结果可立即刷新，但 fsnotify 根集合仅在启动时建立。
+	if !sliceEqual(old.ExtensionDirs, new_.ExtensionDirs) {
+		needSupdRestartFields = append(needSupdRestartFields, "extension_dirs")
+	}
 	if len(needSupdRestartFields) > 0 {
 		changes = append(changes, ClassifiedChange{
 			File:     filePath,

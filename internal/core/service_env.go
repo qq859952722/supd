@@ -34,10 +34,7 @@ func BuildServiceProcessEnv(baseDir, serviceName string, envFiles []string) []st
 		if relPath == "" {
 			continue
 		}
-		p := relPath
-		if !filepath.IsAbs(p) {
-			p = filepath.Join(baseDir, relPath)
-		}
+		p := config.ResolvePath(baseDir, relPath)
 		ef, err := config.LoadEnv(p)
 		if err != nil {
 			// 文件不存在是正常情况（用户可能未创建该 env 文件），静默跳过

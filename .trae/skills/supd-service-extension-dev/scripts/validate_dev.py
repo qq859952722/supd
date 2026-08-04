@@ -84,13 +84,13 @@ def validate_version(content, kind):
 
 def validate_entry_path(entry, kind):
     """校验扩展 entry 路径安全性，与 internal/config/extension_validate.go:42-62 对齐。
-    禁止：..  路径穿越、shell 元字符、冗余路径分隔符（filepath.Clean 后须与原值一致）。"""
+    支持绝对路径和配置根相对路径；禁止独立 .. 路径段、shell 元字符和冗余路径分隔符。"""
     if not entry:
         log_fail(f"{kind} entry 为空")
         return
     issues = []
-    if ".." in entry:
-        issues.append("包含 '..'（路径穿越）")
+    if ".." in Path(entry).parts:
+        issues.append("包含独立 '..' 路径段（路径穿越）")
     for ch in entry:
         if ch in SHELL_META_CHARS:
             issues.append(f"包含 shell 元字符 '{ch}'")
@@ -393,7 +393,15 @@ def validate_extension(ext_dir):
     if m_entry:
         entry = m_entry.group(1)
         validate_entry_path(entry, "extension")
-        entry_path = ext_dir / entry.lstrip("./")
+        configured = Path(entry)
+        if configured.is_absolute():
+            entry_path = configured
+        elif ext_dir.parent.name == "extensions":
+            entry_path = ext_dir.parent.parent / configured
+        elif len(configured.parts) >= 3 and configured.parts[0] == "extensions":
+            entry_path = ext_dir.joinpath(*configured.parts[2:])
+        else:
+            entry_path = ext_dir / configured
         if not entry_path.exists():
             log_fail(f"入口文件 {entry} 不存在")
         elif runtime:

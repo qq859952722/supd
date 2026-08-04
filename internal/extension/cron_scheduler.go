@@ -16,10 +16,10 @@ import (
 type CronScheduler struct {
 	cron         *cron.Cron
 	dispatcher   *Dispatcher
-	taskMgr      *TaskManager // 用于记录 cron 触发的执行结果
-	cronTrigger  *CronTrigger // REQ-D-004: retry_on_failure 处理器
-	entries      map[string]cron.EntryID            // key = "extName:actionID"
-	retryConfigs map[string]*RetryConfig            // key = "extName:actionID"
+	taskMgr      *TaskManager            // 用于记录 cron 触发的执行结果
+	cronTrigger  *CronTrigger            // REQ-D-004: retry_on_failure 处理器
+	entries      map[string]cron.EntryID // key = "extName:actionID"
+	retryConfigs map[string]*RetryConfig // key = "extName:actionID"
 	mu           sync.Mutex
 }
 
@@ -97,30 +97,32 @@ func (s *CronScheduler) AddJob(extName, actionID, schedule string, retryCfg *Ret
 		workDir := buildWorkDir(s.dispatcher.baseDir, extEntry)
 
 		tc := TriggerContext{
-			EventType:     "on_schedule",
-			TriggerSource: "schedule",
-			ActionID:      resolvedActionID,
-			ServiceName:   svcName,
-			WorkDir:       workDir,
+			EventType:        "on_schedule",
+			TriggerSource:    "schedule",
+			ActionID:         resolvedActionID,
+			ServiceName:      svcName,
+			WorkDir:          workDir,
+			ExtensionEnvPath: extEntry.EnvPath,
+			ServiceLevel:     extEntry.ServiceName != "",
 		}
 
 		// B-05-001 修复：通过 ConcurrencyManager 执行，应用 concurrency 策略
-	result, err := s.dispatcher.executeWithConcurrency(ctx, extEntry.Meta, tc, resolvedActionID, nil)
-	if err != nil {
-		slog.Error("cron trigger: execution failed", "extension", extName, "error", err)
-		return
-	}
+		result, err := s.dispatcher.executeWithConcurrency(ctx, extEntry.Meta, tc, resolvedActionID, nil)
+		if err != nil {
+			slog.Error("cron trigger: execution failed", "extension", extName, "error", err)
+			return
+		}
 
-	// 记录执行结果到 TaskManager，使前端可以看到 cron 触发的执行历史
-	// B-04-RACE-001 修复：读取 taskMgr 字段时加锁，防止与 SetTaskManager 写入竞态
-	s.mu.Lock()
-	taskMgr := s.taskMgr
-	s.mu.Unlock()
-	if taskMgr != nil && result != nil {
-		taskMgr.RecordRun(result)
-	}
+		// 记录执行结果到 TaskManager，使前端可以看到 cron 触发的执行历史
+		// B-04-RACE-001 修复：读取 taskMgr 字段时加锁，防止与 SetTaskManager 写入竞态
+		s.mu.Lock()
+		taskMgr := s.taskMgr
+		s.mu.Unlock()
+		if taskMgr != nil && result != nil {
+			taskMgr.RecordRun(result)
+		}
 
-	// REQ-D-004: retry_on_failure — 失败后由 CronTrigger.HandleResult 调度重试
+		// REQ-D-004: retry_on_failure — 失败后由 CronTrigger.HandleResult 调度重试
 		if result != nil && result.State != TaskSuccess {
 			slog.Warn("cron trigger: extension failed",
 				"extension", extName,

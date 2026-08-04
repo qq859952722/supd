@@ -154,11 +154,12 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 	executor := extension.NewExecutor(logDir, dir)
 	dispatcher := extension.NewDispatcher(executor, dir, logDir, hardLimit)
+	dispatcher.SetGlobalEnvFiles(cfg.EnvFiles)
 	// P-03-001 修复：给 dispatcher 注入事件发布器，发布扩展执行相关事件
 	dispatcher.SetEventPublisher(eventRing)
 
 	// 预扫描 Discovery，供 LifecycleTrigger 在 Bootstrap 期间使用
-	preDiscovery := watch.NewDiscovery(dir, logDir).Scan()
+	preDiscovery := watch.NewDiscovery(dir, logDir, cfg.ExtensionDirs...).Scan()
 	serviceLifecycleTrigger := extension.NewServiceLifecycleTrigger(dispatcher, preDiscovery)
 	supdLifecycleTrigger := extension.NewSupdLifecycleTrigger(dispatcher, preDiscovery)
 
@@ -332,7 +333,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	// Watcher 事件处理 goroutine（SIGHUP 热重载）
 	// N-04-01/N-04-02: 传入 lifecycle triggers、cron scheduler、event ring 以便热重载后同步更新
 	// N-04-001: 传入 apiServer 以便热重载后更新 providers 的 Discovery 引用
-	reloadMgr := watch.NewReloadManager(watch.NewDiscovery(dir, logDir))
+	reloadMgr := watch.NewReloadManager(watch.NewDiscovery(dir, logDir, cfg.ExtensionDirs...))
 	go handleWatcherEvents(result.Watcher, reloadMgr, result, dir, logDir,
 		serviceLifecycleTrigger, supdLifecycleTrigger, cronScheduler, eventRing, apiServer, dispatcher, svcOperator)
 
@@ -495,6 +496,7 @@ func injectProviders(server *api.Server, result *core.BootstrapResult, cfg *conf
 			Discovery: result.Discovery,
 			BaseDir:   baseDir,
 			LogDir:    logDir,
+			Config:    cfg,
 		},
 		&api.CoreHistoryGetter{
 			ProcessMgr:    result.ProcessMgr,
@@ -582,7 +584,20 @@ func applyReload(
 ) {
 	slog.Info("检测到配置变更，执行热重载", "source", source)
 	oldDiscovery := result.Discovery
-	disc := watch.NewDiscovery(baseDir, logDir)
+	var newCfg *config.Config
+	extensionDirs := []string(nil)
+	if result.Config != nil {
+		extensionDirs = result.Config.ExtensionDirs
+		cfgPath := filepath.Join(baseDir, "config.yaml")
+		loaded, cfgErr := config.LoadConfig(cfgPath)
+		if cfgErr != nil {
+			slog.Warn("config.yaml 加载失败，保留当前全局配置", "error", cfgErr)
+		} else {
+			newCfg = loaded
+			extensionDirs = newCfg.ExtensionDirs
+		}
+	}
+	disc := watch.NewDiscovery(baseDir, logDir, extensionDirs...)
 	newDiscovery := disc.Scan()
 
 	// B-05-002: 清理被删除扩展的 ConcurrencyManager tracker，避免内存泄漏
@@ -597,16 +612,18 @@ func applyReload(
 	// 由调用方独立加载 baseDir/config.yaml，复用 ReloadConfig() 完成分类并合并到主结果
 	if result.Config != nil {
 		cfgPath := filepath.Join(baseDir, "config.yaml")
-		newCfg, cfgErr := config.LoadConfig(cfgPath)
-		if cfgErr != nil {
-			slog.Warn("config.yaml 加载失败，跳过配置变更分类", "error", cfgErr)
-			reloadResult.Errors = append(reloadResult.Errors, fmt.Errorf("config.yaml load failed: %w", cfgErr))
+		if newCfg == nil {
+			reloadResult.Errors = append(reloadResult.Errors, fmt.Errorf("config.yaml load failed"))
 		} else {
 			cfgResult := reloadMgr.ReloadConfig(cfgPath, result.Config, newCfg)
 			reloadResult.ImmediateChanges = append(reloadResult.ImmediateChanges, cfgResult.ImmediateChanges...)
 			reloadResult.PendingChanges = append(reloadResult.PendingChanges, cfgResult.PendingChanges...)
-			// 更新 result.Config 为最新，供下次重载对比使用
-			result.Config = newCfg
+			// 扫描、runtime 与 env_files 使用最新配置；新增 watcher 根需重启 supd 后生效。
+			*result.Config = *newCfg
+			if dispatcher != nil {
+				dispatcher.SetGlobalEnvFiles(newCfg.EnvFiles)
+				dispatcher.SetRuntimes(newCfg.Runtimes, newDiscovery.Runtimes)
+			}
 		}
 	}
 

@@ -145,7 +145,7 @@ func (b *Bootstrap) Run(ctx context.Context) (*BootstrapResult, error) {
 
 	// Step 4: 扫描配置
 	// REQ-F-033: services/ + extensions/ + env/ + 服务级 extensions/
-	disc := watch.NewDiscovery(b.cfg.BaseDir, b.cfg.LogDir)
+	disc := watch.NewDiscovery(b.cfg.BaseDir, b.cfg.LogDir, cfg.ExtensionDirs...)
 	result.Discovery = disc.Scan()
 
 	// 收集发现过程中的非致命错误
@@ -158,7 +158,7 @@ func (b *Bootstrap) Run(ctx context.Context) (*BootstrapResult, error) {
 	// REQ-F-029: 运行时可用性校验
 	configRuntimes := cfg.Runtimes
 	scanRuntimes := result.Discovery.Runtimes
-	registry := config.BuildRegistry(configRuntimes, scanRuntimes)
+	registry := config.BuildRegistryAt(b.cfg.BaseDir, configRuntimes, scanRuntimes)
 	result.RuntimeRegistry = registry
 
 	// Step 5: 构建依赖图 + 循环检测（含自引用检测）
@@ -179,7 +179,7 @@ func (b *Bootstrap) Run(ctx context.Context) (*BootstrapResult, error) {
 
 	// Step 6: 启动 fsnotify 监听
 	// REQ-F-033: fsnotify 初始化失败 → 拒绝启动
-	watcher, err := watch.NewWatcher(b.cfg.BaseDir)
+	watcher, err := watch.NewWatcher(b.cfg.BaseDir, cfg.ExtensionDirs...)
 	if err != nil {
 		return result, fmt.Errorf("step 6 init fsnotify watcher: %w", err)
 	}
@@ -403,7 +403,8 @@ func (b *Bootstrap) startService(ctx context.Context, name string, svcEntry *wat
 
 	// 构建命令（runtime 解析）
 	// REQ-F-028, REQ-F-029: runtime 别名解析
-	command := svcConfig.Command
+	serviceRoot := filepath.Dir(svcEntry.ConfigPath)
+	command := ResolveCommandPath(serviceRoot, svcConfig.Command)
 	if svcConfig.Runtime != "" {
 		rt, err := config.Resolve(b.result.RuntimeRegistry, svcConfig.Runtime)
 		if err != nil {
@@ -510,7 +511,7 @@ func (b *Bootstrap) startService(ctx context.Context, name string, svcEntry *wat
 
 	// readiness 检查
 	if svcConfig.Readiness != nil {
-		err := b.checkReadiness(ctx, name, svcConfig.Readiness, sm, proc, engine, preChecker, workdir, env)
+		err := b.checkReadiness(ctx, name, svcConfig.Readiness, sm, proc, engine, preChecker, workdir, env, serviceRoot)
 		return proc, svcLogger, engine, svcCancel, err
 	}
 
@@ -534,6 +535,7 @@ func (b *Bootstrap) checkReadiness(
 	preChecker ReadinessChecker,
 	workdir string,
 	env []string,
+	serviceRoot string,
 ) error {
 	var checker ReadinessChecker
 	if preChecker != nil {
@@ -541,7 +543,7 @@ func (b *Bootstrap) checkReadiness(
 		checker = preChecker
 	} else {
 		var err error
-		checker, err = NewReadinessChecker(readinessCfg, workdir, env)
+		checker, err = NewReadinessChecker(readinessCfg, workdir, env, serviceRoot)
 		if err != nil {
 			sm.Transition(EventReadinessTimeout)
 			return fmt.Errorf("readiness checker for %s: %w", name, err)
@@ -803,7 +805,7 @@ func (b *Bootstrap) superviseService(ctx context.Context, name string, svcEntry 
 			workdir := ResolveWorkdir(entry.Config, entry)
 			env := BuildServiceProcessEnv(b.cfg.BaseDir, n, b.result.Config.EnvFiles)
 			// 返回 error，供 RunSupervisor 区分进程退出 vs 超时
-			return b.checkReadiness(rCtx, n, entry.Config.Readiness, s, p, engine, pre, workdir, env)
+			return b.checkReadiness(rCtx, n, entry.Config.Readiness, s, p, engine, pre, workdir, env, filepath.Dir(entry.ConfigPath))
 		},
 		Source: "cli",
 	}

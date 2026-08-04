@@ -30,11 +30,11 @@ type ExtensionEntry struct {
 
 // REQ-F-025: 服务条目
 type ServiceEntry struct {
-	Name       string                      // 服务名
-	ConfigPath string                      // service.yaml 路径
-	EnvPath    string                      // env.yaml 路径（可选）
-	Config     *config.ServiceConfig       // 解析后的配置
-	Extensions map[string]*ExtensionEntry  // 服务级扩展
+	Name       string                     // 服务名
+	ConfigPath string                     // service.yaml 路径
+	EnvPath    string                     // env.yaml 路径（可选）
+	Config     *config.ServiceConfig      // 解析后的配置
+	Extensions map[string]*ExtensionEntry // 服务级扩展
 }
 
 // REQ-F-025: 发现结果
@@ -47,16 +47,21 @@ type DiscoveryResult struct {
 
 // REQ-F-025: 文件发现器
 type Discovery struct {
-	baseDir string // /etc/supd/
-	logDir  string // /var/log/supd/
+	baseDir       string   // /etc/supd/
+	logDir        string   // /var/log/supd/
+	extensionDirs []string // 全局扩展目录；相对路径基于 baseDir
 }
 
-// NewDiscovery 创建文件发现器
-// REQ-F-025: baseDir 为 supd 基础目录（如 /etc/supd/），logDir 为日志目录（如 /var/log/supd/）
-func NewDiscovery(baseDir, logDir string) *Discovery {
+// NewDiscovery 创建文件发现器。
+// extensionDirs 省略时扫描默认 extensions/；配置项同时支持绝对路径和相对路径。
+func NewDiscovery(baseDir, logDir string, extensionDirs ...string) *Discovery {
+	if len(extensionDirs) == 0 {
+		extensionDirs = []string{"extensions/"}
+	}
 	return &Discovery{
-		baseDir: baseDir,
-		logDir:  logDir,
+		baseDir:       baseDir,
+		logDir:        logDir,
+		extensionDirs: extensionDirs,
 	}
 }
 
@@ -157,8 +162,16 @@ func (d *Discovery) discoverServices(result *DiscoveryResult) {
 // discoverGlobalExtensions 全局扩展发现
 // REQ-F-025: 扫描 baseDir/extensions/ 目录，每个子目录对应一个全局扩展，必须包含 meta.yaml
 func (d *Discovery) discoverGlobalExtensions(result *DiscoveryResult) {
-	extDir := filepath.Join(d.baseDir, "extensions")
+	for _, configuredDir := range d.extensionDirs {
+		if configuredDir == "" {
+			continue
+		}
+		extDir := config.ResolvePath(d.baseDir, configuredDir)
+		d.discoverGlobalExtensionsDir(extDir, result)
+	}
+}
 
+func (d *Discovery) discoverGlobalExtensionsDir(extDir string, result *DiscoveryResult) {
 	entries, err := os.ReadDir(extDir)
 	if err != nil {
 		if os.IsNotExist(err) {

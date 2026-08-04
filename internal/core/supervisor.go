@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -308,7 +309,8 @@ func doRestartProcess(name string, svcEntry *watch.ServiceEntry, sm *StateMachin
 	svcConfig := svcEntry.Config
 
 	// 构建命令（runtime 解析）
-	command := svcConfig.Command
+	serviceRoot := filepath.Dir(svcEntry.ConfigPath)
+	command := ResolveCommandPath(serviceRoot, svcConfig.Command)
 	if svcConfig.Runtime != "" {
 		rt, err := config.Resolve(cb.RuntimeRegistry, svcConfig.Runtime)
 		if err != nil {

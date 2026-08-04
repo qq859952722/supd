@@ -61,12 +61,14 @@ func (t *OnDemandTrigger) triggerDirect(ctx context.Context, extEntry *watch.Ext
 	// A-05-001 修复：TriggerSource 使用调用方传入的值（webui/cli），不再硬编码 "on_demand"
 	// "on_demand" 是 EventType 值，不是 TriggerSource（规格 §2.2.5）
 	tc := TriggerContext{
-		EventType:     "on_demand",
-		TriggerSource: triggerSource,
-		TriggerUser:   triggerUser,
-		ActionID:      actionID,
-		ServiceName:   svcName,
-		WorkDir:       workDir,
+		EventType:        "on_demand",
+		TriggerSource:    triggerSource,
+		TriggerUser:      triggerUser,
+		ActionID:         actionID,
+		ServiceName:      svcName,
+		WorkDir:          workDir,
+		ExtensionEnvPath: extEntry.EnvPath,
+		ServiceLevel:     extEntry.ServiceName != "",
 	}
 
 	// B-05-001 修复：通过 ConcurrencyManager 执行，应用 concurrency 策略

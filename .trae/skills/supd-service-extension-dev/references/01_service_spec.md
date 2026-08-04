@@ -135,14 +135,14 @@ command: [./start.sh]
 | `description` | string | `""` | 服务描述 |
 | `icon` | string | `"box"` | 图标名称，使用前端 IconPicker |
 | `autostart` | bool | `true` | supd 启动时是否自动拉起服务；`autostart: false` 时服务初始状态为 `down` |
-| `command` | list[string] | 必填 | 启动命令与参数数组（至少 1 个元素），如 `["python3", "run.py"]` 或 `["bash", "run.sh"]` |
-| `runtime` | string | `""` | 运行时别名（可选），设置时前置到 command（见上表） |
+| `command` | list[string] | 必填 | 启动命令与参数数组（至少 1 个元素）；`command[0]` 为绝对路径时直接使用，为含路径分隔符的相对路径时基于服务根解析，`python3` 等裸命令保留 PATH 查找 |
+| `runtime` | string | `""` | 运行时别名（可选），设置时前置到 command（见上表）；`config.yaml` 中 runtime 路径支持绝对路径和基于 `<baseDir>` 的相对路径 |
 | `user` | string | `""` | 运行用户（User 模式）；留空则继承 supd 启动用户。与 `uid` 互斥 |
 | `group` | string | `""` | 运行组（User 模式下可选，覆盖主组 gid，保留补充组）；留空则同 user |
 | `uid` | int | `0` | 直接指定 uid（UID 模式，与 `user` 互斥，不查 /etc/passwd，适用于 NAS 固定 uid 服务）；`0`=未设置 |
 | `gid` | int | `0` | 直接指定 gid（UID 模式下可选，`0`=等于 uid） |
 | `groups` | list[int] | `[]` | 补充组 gid 列表（UID 模式下可选） |
-| `workdir` | string | `""` | 工作目录，必须为绝对路径；默认服务自身目录 |
+| `workdir` | string | `""` | 工作目录；支持绝对路径和基于服务根的相对路径，空值默认服务根目录 |
 | `depends_on` | list[string] | `[]` | 依赖的服务名称列表；不能包含自身 |
 | `tags` | list[string] | `[]` | 服务分类标签，如 `["web", "demo"]` |
 | `readiness` | struct | nil | 就绪检测配置 |
@@ -306,7 +306,7 @@ pending → starting → up → ready → stopping → down
 - [ ] `version` 匹配 `^[0-9]+\.[0-9]+\.[0-9]+$`（三段数字，如 `1.0.0`）
 - [ ] 服务根目录包含中文 `README.md`，覆盖服务信息、目录权限、启动就绪、配置环境、扩展 actions、持久化升级、运维及安全备份，且不含敏感数据
 - [ ] `command` 为非空字符串数组（至少 1 个元素），相对路径处于服务目录内
-- [ ] `workdir` 如设置必须为绝对路径（以 `/` 开头）
+- [ ] `workdir` 如设置可为绝对路径或相对服务根的路径；已确认目标目录在运行时存在
 - [ ] `readiness` 类型在 `fd_notify`/`tcp_check`/`http_check`/`script` 内
 - [ ] `readiness.type: script` 时，配置键名为 `check:` 而不是 `command:`，且至少 1 个元素
 - [ ] `readiness.type: fd_notify` 时，配置包含必填正整数 `fd:`

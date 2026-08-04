@@ -35,7 +35,7 @@
 | `description` | string | `""` | 扩展功能描述 |
 | `enabled` | bool | `true` | 是否启用该扩展 |
 | `runtime` | string | `""` | 可选运行时别名（如 `bash`, `sh`, `python3`, `node`, `tjs`）；非空时由解释器执行 entry |
-| `entry` | string | 必填 | 入口文件相对路径（如 `run.sh` 或 `run.js`）；`runtime` 为空时须具备执行权限，非空时只要求文件可读；路径受安全校验（见上） |
+| `entry` | string | 必填 | 入口文件绝对路径或相对所属配置根的路径；全局扩展根为 `<baseDir>`，服务扩展根为服务根；`runtime` 为空时须具备执行权限，非空时只要求文件可读 |
 | `timeout_seconds` | int | `600` | 单次运行超时时限；省略/`0` 时加载器填充 600，生效值须 > 0 且不超过 `settings.extension_hard_limit_seconds`（默认 1800） |
 | `run_as` | string | `""` | 运行身份（User 模式）：`root` / `<用户名>` / 空（服务级扩展继承服务身份，全局扩展继承 supd 用户）。与 `run_as_uid` 互斥 |
 | `run_as_uid` | int | `0` | 直接指定 uid（UID 模式，与 `run_as` 互斥，不查 /etc/passwd，适用于 NAS 固定 uid 服务）；`0`=未设置 |
@@ -199,7 +199,7 @@ echo '正常打印执行日志'
 
 - [ ] `name` 匹配 `^[a-z][a-z0-9-]*$` 且与所在目录名完全一致
 - [ ] `version` 匹配 `^[0-9]+\.[0-9]+\.[0-9]+$`（三段数字，如 `1.0.0`）
-- [ ] `entry` 路径正确且文件存在（无 `..`、无 shell 元字符、无冗余分隔符）；`runtime` 为空时已具备执行权限，非空时由解释器执行
+- [ ] `entry` 为绝对路径或所属配置根相对路径且文件存在（无独立 `..` 路径段、无 shell 元字符、无冗余分隔符）；`runtime` 为空时已具备执行权限
 - [ ] `timeout_seconds` > 0 且不超过 config.yaml 生效的硬上限（默认 1800）
 - [ ] 需要解释器时配置合适的 `runtime` 别名（`bash`/`sh`/`python3`/`node`/`tjs` 或自定义）；直接执行入口时可省略
 - [ ] 触发器 `service_lifecycle.event` 仅使用 `pre_start`/`post_ready`/`on_failure`/`pre_stop`

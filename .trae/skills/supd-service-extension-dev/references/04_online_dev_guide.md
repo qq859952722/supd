@@ -30,7 +30,7 @@
 | `supd run --workdir <path>` | 指定工作目录 |
 | `supd validate [path] [-o json]` | 校验 `config.yaml` 语法（**仅支持 config.yaml，不直接校验服务/扩展目录**；服务/扩展用本 skill 的 `scripts/validate_dev.py`） |
 | `supd runtimes list` | 列出已注册运行时（含 source/available） |
-| `supd runtimes install <name> <path>` | 注册运行时别名（写入 `config.yaml` 的 `runtimes` 映射；`path` 必须是绝对路径，不下载二进制） |
+| `supd runtimes install <name> <path>` | 注册运行时别名（写入 `config.yaml` 的 `runtimes` 映射；支持绝对路径或相对 `<baseDir>` 的路径，不下载二进制） |
 | `supd runtimes remove <name>` | 移除运行时别名（从 `config.yaml` 删除映射，不删除二进制文件） |
 
 > 启动常用：`SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run`

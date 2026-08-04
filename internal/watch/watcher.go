@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/supdorg/supd/internal/config"
 )
 
 // DefaultDebounceInterval fsnotify 事件防抖间隔
@@ -20,11 +21,12 @@ const DefaultDebounceInterval = 500 * time.Millisecond
 // REQ-F-026: fsnotify 监听器，监听 /etc/supd/ 下所有子目录
 // 防抖500ms，按文件路径去重，原子写关注 rename 事件
 type Watcher struct {
-	fswatcher *fsnotify.Watcher // fsnotify 实例
-	debouncer *Debouncer        // 500ms 防抖器
-	baseDir   string            // 监控的根目录
-	done      chan struct{}     // 停止信号
-	stopOnce  sync.Once         // A-08-001: 保护 Stop 仅执行一次，避免重复 close panic
+	fswatcher      *fsnotify.Watcher // fsnotify 实例
+	debouncer      *Debouncer        // 500ms 防抖器
+	baseDir        string            // 默认工作目录
+	extensionRoots []string          // 已解析的全局扩展目录
+	done           chan struct{}     // 停止信号
+	stopOnce       sync.Once         // A-08-001: 保护 Stop 仅执行一次，避免重复 close panic
 
 	// A-08-001 修复：运行时 fd 耗尽检测
 	// 连续 addWatch 失败计数，超过阈值时发出警告（疑似 fd 耗尽）
@@ -48,7 +50,7 @@ const consecutiveAddFailureThreshold = 5
 // NewWatcher 创建 fsnotify 监听器
 // REQ-F-026: baseDir 为 supd 基础目录（如 /etc/supd/），
 // 递归添加 baseDir 下所有子目录到监控，防抖间隔 500ms
-func NewWatcher(baseDir string) (*Watcher, error) {
+func NewWatcher(baseDir string, extensionDirs ...string) (*Watcher, error) {
 	fsw, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, fmt.Errorf("REQ-F-026: create fsnotify watcher: %w", err)
@@ -56,13 +58,23 @@ func NewWatcher(baseDir string) (*Watcher, error) {
 
 	// REQ-F-026: 防抖间隔 500ms（数值锁定）
 	debouncer := NewDebouncer(DefaultDebounceInterval)
+	if len(extensionDirs) == 0 {
+		extensionDirs = []string{"extensions/"}
+	}
+	extensionRoots := make([]string, 0, len(extensionDirs))
+	for _, dir := range extensionDirs {
+		if dir != "" {
+			extensionRoots = append(extensionRoots, config.ResolvePath(baseDir, dir))
+		}
+	}
 
 	w := &Watcher{
-		fswatcher: fsw,
-		debouncer: debouncer,
-		baseDir:   baseDir,
-		done:      make(chan struct{}),
-		disableCh: make(chan struct{}),
+		fswatcher:      fsw,
+		debouncer:      debouncer,
+		baseDir:        baseDir,
+		extensionRoots: extensionRoots,
+		done:           make(chan struct{}),
+		disableCh:      make(chan struct{}),
 	}
 
 	// REQ-F-026: 初始目录监控必须完整建立，否则拒绝启动。
@@ -200,7 +212,7 @@ func (w *Watcher) handleNewDir(path string) {
 		return
 	}
 	// 白名单过滤：只监控配置目录
-	if !shouldWatchDir(w.baseDir, path) {
+	if !w.shouldWatchDir(path) {
 		return
 	}
 	// 递归添加该目录及其子目录
@@ -209,7 +221,7 @@ func (w *Watcher) handleNewDir(path string) {
 			slog.Warn("walk new dir entry error", "path", p, "err", err)
 			return nil
 		}
-		if d.IsDir() && shouldWatchDir(w.baseDir, p) {
+		if d.IsDir() && w.shouldWatchDir(p) {
 			if err := w.addWatch(p); err != nil {
 				w.disable(err.Error())
 				return err
@@ -260,27 +272,49 @@ func (w *Watcher) addWatch(path string) error {
 // walkAndWatch 递归添加 baseDir 下白名单子目录到监控
 // REQ-F-026: 监听 /etc/supd/ 下配置文件目录
 func (w *Watcher) walkAndWatch() error {
-	if err := filepath.WalkDir(w.baseDir, func(path string, d os.DirEntry, err error) error {
+	if err := w.walkRoot(w.baseDir, func(path string) bool { return shouldWatchDir(w.baseDir, path) }); err != nil {
+		return err
+	}
+	for _, root := range w.extensionRoots {
+		if root == filepath.Join(w.baseDir, "extensions") {
+			continue
+		}
+		if _, err := os.Stat(root); os.IsNotExist(err) {
+			continue
+		}
+		if err := w.walkRoot(root, func(path string) bool {
+			rel, relErr := filepath.Rel(root, path)
+			if relErr != nil || rel == "." {
+				return relErr == nil
+			}
+			return len(strings.Split(rel, string(filepath.Separator))) == 1
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *Watcher) walkRoot(root string, shouldWatch func(string) bool) error {
+	if err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			slog.Warn("walk base dir entry error", "path", path, "err", err)
+			slog.Warn("walk config dir entry error", "path", path, "err", err)
 			return nil
 		}
 		if !d.IsDir() {
 			return nil
 		}
-		// 跳过不需要遍历的目录（性能优化，避免遍历 data/bin/logs 等运行时数据目录）
-		if shouldSkipDir(w.baseDir, path) {
+		if path != root && shouldSkipDir(root, path) {
 			return filepath.SkipDir
 		}
-		// 白名单过滤：只监控配置目录
-		if shouldWatchDir(w.baseDir, path) {
+		if shouldWatch(path) {
 			if err := w.addWatch(path); err != nil {
 				return err
 			}
 		}
 		return nil
 	}); err != nil {
-		return fmt.Errorf("initialize watcher for %s: %w", w.baseDir, err)
+		return fmt.Errorf("initialize watcher for %s: %w", root, err)
 	}
 	return nil
 }
@@ -301,6 +335,25 @@ func shouldSkipDir(baseDir, path string) bool {
 	switch base {
 	case "data", "bin", "logs", "history", "cache", "tmp", "temp", "run":
 		return true
+	}
+	return false
+}
+
+func (w *Watcher) shouldWatchDir(path string) bool {
+	if shouldWatchDir(w.baseDir, path) {
+		return true
+	}
+	for _, root := range w.extensionRoots {
+		rel, err := filepath.Rel(root, path)
+		if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+			if err == nil && rel == "." {
+				return true
+			}
+			continue
+		}
+		if len(strings.Split(rel, string(filepath.Separator))) == 1 {
+			return true
+		}
 	}
 	return false
 }

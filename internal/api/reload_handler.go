@@ -17,7 +17,11 @@ func (s *Server) triggerReload() (newDiscovery *watch.DiscoveryResult, errCount 
 	}
 
 	oldDiscovery := wp.Discovery
-	disc := watch.NewDiscovery(wp.BaseDir, wp.LogDir)
+	var extensionDirs []string
+	if wp.Config != nil {
+		extensionDirs = wp.Config.ExtensionDirs
+	}
+	disc := watch.NewDiscovery(wp.BaseDir, wp.LogDir, extensionDirs...)
 	newDiscovery = disc.Scan()
 
 	// N-04-I2 修复：配置错误时保留旧配置（不中断服务）

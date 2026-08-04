@@ -184,11 +184,12 @@ func TestValidateHardLimitTooSmall(t *testing.T) {
 func TestValidateRuntimeRelativePath(t *testing.T) {
 	cfg := &Config{}
 	SetDefaults(cfg)
+	cfg.Settings.AuthMode = "none"
 	cfg.Runtimes = map[string]string{
 		"test": "relative/path",
 	}
-	if err := ValidateConfig(cfg); err == nil {
-		t.Error("expected error for relative runtime path")
+	if err := ValidateConfig(cfg); err != nil {
+		t.Fatalf("relative runtime path should be valid: %v", err)
 	}
 }
 

@@ -20,9 +20,9 @@ type CronTrigger struct {
 	// key = "extName:actionID"
 	retryAttempts map[string]int
 	// retryCtx/retryCancel 用于取消所有待执行的重试 goroutine（热重载时调用 ClearRetryState）
-	retryCtx     context.Context
-	retryCancel  context.CancelFunc
-	mu           sync.Mutex // B-05-001 修复：保护 retryAttempts 的并发访问
+	retryCtx    context.Context
+	retryCancel context.CancelFunc
+	mu          sync.Mutex // B-05-001 修复：保护 retryAttempts 的并发访问
 }
 
 // NewCronTrigger 创建 cron 触发器
@@ -135,11 +135,13 @@ func (ct *CronTrigger) executeRetry(ctx context.Context, extName, actionID strin
 
 	// REQ-D-004: 每次重试生成新的 run_id（由 Executor.Execute 内部 uuid.New() 生成）
 	tc := TriggerContext{
-		EventType:     "on_schedule",
-		TriggerSource: "schedule", // A-04-003 修复：使用规格枚举值，不使用 "schedule_retry"
-		ActionID:      resolvedActionID,
-		ServiceName:   svcName,
-		WorkDir:       workDir,
+		EventType:        "on_schedule",
+		TriggerSource:    "schedule", // A-04-003 修复：使用规格枚举值，不使用 "schedule_retry"
+		ActionID:         resolvedActionID,
+		ServiceName:      svcName,
+		WorkDir:          workDir,
+		ExtensionEnvPath: extEntry.EnvPath,
+		ServiceLevel:     extEntry.ServiceName != "",
 	}
 
 	slog.Info("cron retry: executing",

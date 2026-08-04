@@ -67,7 +67,11 @@ func runValidate(cmd *cobra.Command, args []string) error {
 
 	// P-02-02: 校验 services 和 extensions 配置文件
 	workDir := filepath.Dir(cfgPath)
-	extraCount := validateServicesAndExtensions(workDir, &result)
+	var extensionDirs []string
+	if cfg, loadErr := config.LoadConfig(cfgPath); loadErr == nil {
+		extensionDirs = cfg.ExtensionDirs
+	}
+	extraCount := validateServicesAndExtensionsAt(workDir, extensionDirs, &result)
 	result.Valid = len(result.Errors) == 0
 
 	if format == OutputJSON {
@@ -155,6 +159,10 @@ func doValidate(path string) ValidateResult {
 // 以及服务级扩展 services/*/extensions/*/meta.yaml
 // 返回成功校验的文件数（不含 config.yaml）
 func validateServicesAndExtensions(workDir string, result *ValidateResult) int {
+	return validateServicesAndExtensionsAt(workDir, nil, result)
+}
+
+func validateServicesAndExtensionsAt(workDir string, extensionDirs []string, result *ValidateResult) int {
 	count := 0
 
 	// services/*/service.yaml
@@ -167,13 +175,23 @@ func validateServicesAndExtensions(workDir string, result *ValidateResult) int {
 		}
 	}
 
-	// extensions/*/meta.yaml（全局扩展）
-	extConfigs, _ := filepath.Glob(filepath.Join(workDir, "extensions", "*", "meta.yaml"))
-	for _, metaPath := range extConfigs {
-		if _, err := config.LoadExtension(metaPath); err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", metaPath, err))
-		} else {
-			count++
+	// extension_dirs/*/meta.yaml（全局扩展）
+	if len(extensionDirs) == 0 {
+		extensionDirs = []string{"extensions/"}
+	}
+	seen := make(map[string]struct{})
+	for _, configuredDir := range extensionDirs {
+		extConfigs, _ := filepath.Glob(filepath.Join(config.ResolvePath(workDir, configuredDir), "*", "meta.yaml"))
+		for _, metaPath := range extConfigs {
+			if _, ok := seen[metaPath]; ok {
+				continue
+			}
+			seen[metaPath] = struct{}{}
+			if _, err := config.LoadExtension(metaPath); err != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", metaPath, err))
+			} else {
+				count++
+			}
 		}
 	}
 

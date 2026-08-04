@@ -1,6 +1,7 @@
 package api
 
 import (
+	"github.com/supdorg/supd/internal/config"
 	"github.com/supdorg/supd/internal/watch"
 )
 
@@ -11,6 +12,7 @@ type CoreWatchProvider struct {
 	Discovery *watch.DiscoveryResult
 	BaseDir   string
 	LogDir    string
+	Config    *config.Config
 }
 
 // SetDiscovery 热重载时更新 Discovery 引用
@@ -36,7 +38,11 @@ func (p *CoreWatchProvider) Reason() string {
 }
 
 func (p *CoreWatchProvider) ReloadConfig() error {
-	disc := watch.NewDiscovery(p.BaseDir, p.LogDir)
+	var extensionDirs []string
+	if p.Config != nil {
+		extensionDirs = p.Config.ExtensionDirs
+	}
+	disc := watch.NewDiscovery(p.BaseDir, p.LogDir, extensionDirs...)
 	newDiscovery := disc.Scan()
 	p.Discovery = newDiscovery
 	return nil

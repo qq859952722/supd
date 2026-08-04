@@ -513,6 +513,19 @@ func TestBuildRegistry(t *testing.T) {
 	}
 }
 
+func TestBuildRegistryAtResolvesRelativeConfigPath(t *testing.T) {
+	baseDir := t.TempDir()
+	registry := BuildRegistryAt(baseDir, map[string]string{"custom": "bin/custom"}, nil)
+	entry := registry.entries["custom"]
+	want := filepath.Join(baseDir, "bin", "custom")
+	if entry.Path != want {
+		t.Fatalf("custom path = %q, want %q", entry.Path, want)
+	}
+	if entry.Source != RuntimeSourceConfig {
+		t.Fatalf("custom source = %q, want %q", entry.Source, RuntimeSourceConfig)
+	}
+}
+
 // TestBuildRegistryScanDoesNotOverrideConfig scan 不覆盖 config
 func TestBuildRegistryScanDoesNotOverrideConfig(t *testing.T) {
 	configRuntimes := map[string]string{

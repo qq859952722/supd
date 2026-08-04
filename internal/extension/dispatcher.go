@@ -58,6 +58,7 @@ type Dispatcher struct {
 	hardLimitSeconds int                 // REQ-F-019: config.yaml 的 extension_hard_limit_seconds
 	concurrencyMgr   *ConcurrencyManager // REQ-F-018: 并发策略管理器
 	eventPublisher   core.EventPublisher // P-03-001 修复：事件发布器
+	globalEnvFiles   []string            // config.yaml env_files；相对路径基于 baseDir
 }
 
 // NewDispatcher 创建触发调度器
@@ -76,6 +77,18 @@ func NewDispatcher(executor *Executor, baseDir, logDir string, hardLimitSeconds 
 // P-03-001 修复：用于发布扩展执行相关事件
 func (d *Dispatcher) SetEventPublisher(publisher core.EventPublisher) {
 	d.eventPublisher = publisher
+}
+
+// SetGlobalEnvFiles 注入 config.yaml 的全局环境文件加载顺序。
+func (d *Dispatcher) SetGlobalEnvFiles(paths []string) {
+	d.globalEnvFiles = append([]string(nil), paths...)
+}
+
+// SetRuntimes 更新扩展执行器使用的 runtime 配置与扫描结果。
+func (d *Dispatcher) SetRuntimes(configRuntimes, discoveredRuntimes map[string]string) {
+	if d.executor != nil {
+		d.executor.SetRuntimes(configRuntimes, discoveredRuntimes)
+	}
 }
 
 // GetConcurrencyManager 返回内部 ConcurrencyManager
@@ -349,11 +362,8 @@ func groupByService(matched []matchedExtension) map[string][]matchedExtension {
 	return groups
 }
 
-// buildWorkDir 构建扩展工作目录
-// 工作目录为扩展自身目录（meta.yaml 所在目录），这样 entry 中的相对路径（如 run.sh）可以正确定位
-// 同时创建 script_tmp 子目录供扩展脚本存放临时文件（通过 SUPD_SCRIPT_TMP 环境变量访问）
+// buildWorkDir 构建扩展工作目录和相对 entry 的解析根：全局扩展使用默认工作目录，服务级扩展使用服务根目录。
 func buildWorkDir(baseDir string, extEntry *watch.ExtensionEntry) string {
-	extDir := filepath.Dir(extEntry.ConfigPath)
 
 	// 创建 script_tmp 临时目录，供扩展脚本写入临时文件
 	var dirName string
@@ -367,7 +377,10 @@ func buildWorkDir(baseDir string, extEntry *watch.ExtensionEntry) string {
 		slog.Warn("create extension script_tmp dir failed", "dir", scriptTmp, "extension", extEntry.Name, "service", extEntry.ServiceName, "error", err)
 	}
 
-	return extDir
+	if extEntry.ServiceName != "" {
+		return filepath.Join(baseDir, "services", extEntry.ServiceName)
+	}
+	return baseDir
 }
 
 // executeForService 以服务为粒度执行扩展
@@ -412,19 +425,21 @@ func (d *Dispatcher) executeForService(ctx context.Context, serviceName string, 
 		// 让 ResolveRunAs 走全局分支继承 supd 用户。
 		// 服务级扩展的 serviceSpec 在 findMatchingExtensions 中已填充为 svcEntry.Config 的身份配置。
 		tc := TriggerContext{
-			EventType:       req.EventType,
-			TriggerSource:   req.EventType,
-			TriggerUser:     req.TriggerUser,
-			Phase:           req.Phase,
-			ServiceName:     svcName,
-			ServiceSpec:     ext.serviceSpec,
-			ServicePID:      req.ServicePID,
-			ServiceExitCode: req.ServiceExitCode,
-			ServiceSignal:   req.ServiceSignal,
-			RestartCount:    req.RestartCount,
-			ActionID:        ext.actionID,
-			WorkDir:         workDir,
-			TriggeredAt:     req.TriggeredAt,
+			EventType:        req.EventType,
+			TriggerSource:    req.EventType,
+			TriggerUser:      req.TriggerUser,
+			Phase:            req.Phase,
+			ServiceName:      svcName,
+			ServiceSpec:      ext.serviceSpec,
+			ServicePID:       req.ServicePID,
+			ServiceExitCode:  req.ServiceExitCode,
+			ServiceSignal:    req.ServiceSignal,
+			RestartCount:     req.RestartCount,
+			ActionID:         ext.actionID,
+			WorkDir:          workDir,
+			ExtensionEnvPath: ext.extEntry.EnvPath,
+			ServiceLevel:     ext.extEntry.ServiceName != "",
+			TriggeredAt:      req.TriggeredAt,
 		}
 
 		// REQ-F-022: 前一个失败不影响后一个执行
@@ -468,7 +483,7 @@ func (d *Dispatcher) executeWithConcurrency(ctx context.Context, meta *config.Ex
 	}
 
 	// J-02-001: 构建合并后的环境变量（REQ-F-015 4层合并）
-	mergedEnvSlice := d.buildMergedEnv(tc.ServiceName, meta.Name)
+	mergedEnvSlice := d.buildMergedEnv(tc)
 
 	// 合并运行时临时 Env（由前端"运行时参数编辑抽屉"传入）
 	// 追加到 mergedEnvSlice 之后，在 executor.go 中位于 supdEnv 之前，
@@ -556,70 +571,66 @@ func (d *Dispatcher) executeWithConcurrency(ctx context.Context, meta *config.Ex
 // J-02-001 修复：接入 REQ-F-015 的 4 层 env 合并逻辑
 // 合并顺序（后者覆盖前者）：
 //  1. 全局 env 文件（env/*.yaml，按文件名字母序）
-//  2. 全局扩展私有 env（extensions/<ext>/env.yaml）
+//  2. 当前全局扩展私有 env（由发现结果提供真实路径）
 //  3. 服务 env（services/<svc>/env.yaml）
-//  4. 服务级扩展私有 env（services/<svc>/extensions/<ext>/env.yaml）
-func (d *Dispatcher) buildMergedEnv(serviceName, extName string) []string {
+//  4. 当前服务级扩展私有 env（由发现结果提供真实路径）
+func (d *Dispatcher) buildMergedEnv(tc TriggerContext) []string {
 	var layers []*config.EnvFile
 
-	// Layer 1: 全局 env 文件（env/*.yaml，按文件名字母序）
-	globalEnvDir := filepath.Join(d.baseDir, "env")
-	if entries, err := os.ReadDir(globalEnvDir); err == nil {
-		// 按文件名字母序加载
-		var paths []string
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
+	// Layer 1: config.yaml env_files；未注入时保留旧行为，扫描 env/ 目录。
+	paths := make([]string, 0, len(d.globalEnvFiles))
+	if len(d.globalEnvFiles) > 0 {
+		for _, path := range d.globalEnvFiles {
+			if path != "" {
+				paths = append(paths, config.ResolvePath(d.baseDir, path))
 			}
-			name := entry.Name()
-			if !strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml") {
-				continue
-			}
-			paths = append(paths, filepath.Join(globalEnvDir, name))
 		}
-		sort.Strings(paths)
-		for _, p := range paths {
-			// C-01-01 修复：env.yaml 解析失败时记录警告，便于用户诊断
-			ef, err := config.LoadEnv(p)
-			if err != nil {
-				slog.Warn("load env file failed", "path", p, "error", err)
-				continue
+	} else {
+		globalEnvDir := filepath.Join(d.baseDir, "env")
+		if entries, err := os.ReadDir(globalEnvDir); err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() {
+					continue
+				}
+				name := entry.Name()
+				if strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml") {
+					paths = append(paths, filepath.Join(globalEnvDir, name))
+				}
 			}
-			layers = append(layers, ef)
+			sort.Strings(paths)
 		}
 	}
-
-	// Layer 2: 全局扩展私有 env（extensions/<ext>/env.yaml）
-	if extName != "" {
-		globalExtEnvPath := filepath.Join(d.baseDir, "extensions", extName, "env.yaml")
-		// C-01-01 修复：env.yaml 解析失败时记录警告
-		ef, err := config.LoadEnv(globalExtEnvPath)
-		if err != nil {
-			slog.Warn("load env file failed", "path", globalExtEnvPath, "error", err)
+	for _, path := range paths {
+		if ef, err := config.LoadEnv(path); err != nil {
+			slog.Warn("load env file failed", "path", path, "error", err)
 		} else {
 			layers = append(layers, ef)
 		}
 	}
 
-	// Layer 3: 服务 env（services/<svc>/env.yaml）
-	if serviceName != "" {
-		svcEnvPath := filepath.Join(d.baseDir, "services", serviceName, "env.yaml")
-		// C-01-01 修复：env.yaml 解析失败时记录警告
-		ef, err := config.LoadEnv(svcEnvPath)
-		if err != nil {
+	// Layer 2: 当前全局扩展私有 env。
+	if !tc.ServiceLevel && tc.ExtensionEnvPath != "" {
+		if ef, err := config.LoadEnv(tc.ExtensionEnvPath); err != nil {
+			slog.Warn("load env file failed", "path", tc.ExtensionEnvPath, "error", err)
+		} else {
+			layers = append(layers, ef)
+		}
+	}
+
+	// Layer 3: 服务 env。
+	if tc.ServiceLevel && tc.ServiceName != "" {
+		svcEnvPath := filepath.Join(d.baseDir, "services", tc.ServiceName, "env.yaml")
+		if ef, err := config.LoadEnv(svcEnvPath); err != nil {
 			slog.Warn("load env file failed", "path", svcEnvPath, "error", err)
 		} else {
 			layers = append(layers, ef)
 		}
 	}
 
-	// Layer 4: 服务级扩展私有 env（services/<svc>/extensions/<ext>/env.yaml）
-	if serviceName != "" && extName != "" {
-		svcExtEnvPath := filepath.Join(d.baseDir, "services", serviceName, "extensions", extName, "env.yaml")
-		// C-01-01 修复：env.yaml 解析失败时记录警告
-		ef, err := config.LoadEnv(svcExtEnvPath)
-		if err != nil {
-			slog.Warn("load env file failed", "path", svcExtEnvPath, "error", err)
+	// Layer 4: 当前服务级扩展私有 env。
+	if tc.ServiceLevel && tc.ExtensionEnvPath != "" {
+		if ef, err := config.LoadEnv(tc.ExtensionEnvPath); err != nil {
+			slog.Warn("load env file failed", "path", tc.ExtensionEnvPath, "error", err)
 		} else {
 			layers = append(layers, ef)
 		}

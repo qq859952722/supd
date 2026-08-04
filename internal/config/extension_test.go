@@ -429,6 +429,16 @@ func TestValidateExtensionSupdLifecycleValidEvents(t *testing.T) {
 	}
 }
 
+func TestValidateExtensionEntryAbsoluteAndSafeDots(t *testing.T) {
+	for _, entry := range []string{filepath.Join(t.TempDir(), "run.sh"), "extensions/release..candidate/run.sh"} {
+		meta := &ExtensionMeta{Name: "path-ext", Version: "1.0.0", Entry: entry}
+		SetExtensionDefaults(meta)
+		if err := ValidateExtension(meta); err != nil {
+			t.Fatalf("entry %q should be valid: %v", entry, err)
+		}
+	}
+}
+
 func TestLoadExtensionNonexistent(t *testing.T) {
 	_, err := LoadExtension("/nonexistent/meta.yaml")
 	if err == nil {
@@ -538,10 +548,10 @@ func TestValidateExtensionActionMissingLabel(t *testing.T) {
 func TestValidateExtensionInvalidCron(t *testing.T) {
 	invalidCrons := []string{
 		"invalid",
-		"100 * * * *",       // 分钟越界（>59）
-		"* 25 * * *",         // 小时越界（>23）
-		"* * * * * * *",      // 字段过多（7 字段，标准 5 字段）
-		"* * * *",            // 字段过少（4 字段）
+		"100 * * * *",         // 分钟越界（>59）
+		"* 25 * * *",          // 小时越界（>23）
+		"* * * * * * *",       // 字段过多（7 字段，标准 5 字段）
+		"* * * *",             // 字段过少（4 字段）
 		"abc def ghi jkl mno", // 非法字符
 	}
 	for _, cron := range invalidCrons {
@@ -549,7 +559,7 @@ func TestValidateExtensionInvalidCron(t *testing.T) {
 			Name:    "ext",
 			Version: "1.0.0",
 			Entry:   "run.sh",
-			Actions:  []Action{{ID: "run", Label: "Run"}},
+			Actions: []Action{{ID: "run", Label: "Run"}},
 			Triggers: Triggers{
 				OnSchedule: []TriggerSchedule{
 					{Cron: cron, Action: "run"},
@@ -571,19 +581,19 @@ func TestValidateExtensionInvalidCron(t *testing.T) {
 // TestValidateExtensionValidCron K-02-001 补充: 验证合法 cron 表达式被接受。
 func TestValidateExtensionValidCron(t *testing.T) {
 	validCrons := []string{
-		"* * * * *",       // 每分钟
-		"0 * * * *",       // 每小时整点
-		"0 0 * * *",       // 每天 0 点
-		"*/5 * * * *",     // 每 5 分钟
-		"0 9 * * 1-5",     // 工作日 9 点
-		"0 0 1 * *",       // 每月 1 号
+		"* * * * *",   // 每分钟
+		"0 * * * *",   // 每小时整点
+		"0 0 * * *",   // 每天 0 点
+		"*/5 * * * *", // 每 5 分钟
+		"0 9 * * 1-5", // 工作日 9 点
+		"0 0 1 * *",   // 每月 1 号
 	}
 	for _, cron := range validCrons {
 		meta := &ExtensionMeta{
 			Name:    "ext",
 			Version: "1.0.0",
 			Entry:   "run.sh",
-			Actions:  []Action{{ID: "run", Label: "Run"}},
+			Actions: []Action{{ID: "run", Label: "Run"}},
 			Triggers: Triggers{
 				OnSchedule: []TriggerSchedule{
 					{Cron: cron, Action: "run"},
@@ -654,10 +664,10 @@ func TestValidateEntryPath_ShellMetaChar(t *testing.T) {
 // TestValidateEntryPath_RedundantSlash K-02-002: 验证 entry 路径含冗余路径分隔符被拒绝。
 func TestValidateEntryPath_RedundantSlash(t *testing.T) {
 	redundantPaths := []string{
-		"./run.sh",       // 前缀 ./
-		"foo//bar",       // 双斜杠
-		"foo/",           // 末尾斜杠
-		"foo/./bar",      // 中间 ./
+		"./run.sh",  // 前缀 ./
+		"foo//bar",  // 双斜杠
+		"foo/",      // 末尾斜杠
+		"foo/./bar", // 中间 ./
 	}
 	for _, p := range redundantPaths {
 		meta := &ExtensionMeta{

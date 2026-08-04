@@ -109,6 +109,15 @@ func List(registry *RuntimeRegistry) []*RuntimeEntry {
 	return result
 }
 
+// BuildRegistryAt 按三层优先级构建运行时注册表，并将 config 来源的相对路径基于 baseDir 解析。
+func BuildRegistryAt(baseDir string, configRuntimes map[string]string, scanRuntimes map[string]string) *RuntimeRegistry {
+	resolved := make(map[string]string, len(configRuntimes))
+	for alias, path := range configRuntimes {
+		resolved[alias] = ResolvePath(baseDir, path)
+	}
+	return BuildRegistry(resolved, scanRuntimes)
+}
+
 // BuildRegistry 便捷函数：按三层优先级构建完整的运行时注册表。
 // REQ-F-028: 优先级 config > scan > builtin
 // REQ-F-029: 构建完成后校验所有运行时可用性

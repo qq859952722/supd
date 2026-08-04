@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -258,12 +259,12 @@ func TestDoValidate_MultipleErrors(t *testing.T) {
 // TestValidateSettingsV2_ValidSettings 测试合法 settings 通过校验
 func TestValidateSettingsV2_ValidSettings(t *testing.T) {
 	settings := map[string]interface{}{
-		"http_listen":                     ":7979",
-		"auth_mode":                       "local_skip",
-		"log_level":                       "info",
-		"log_max_size_mb":                 10,
-		"log_max_files":                   5,
-		"shutdown_grace_seconds":          30,
+		"http_listen":                       ":7979",
+		"auth_mode":                         "local_skip",
+		"log_level":                         "info",
+		"log_max_size_mb":                   10,
+		"log_max_files":                     5,
+		"shutdown_grace_seconds":            30,
 		"extension_default_timeout_seconds": 600,
 		"extension_hard_limit_seconds":      1800,
 		"run_history_retention_seconds":     604800,
@@ -441,6 +442,30 @@ triggers:
 }
 
 // TestRunValidate_ValidConfigText 测试 runValidate 文本输出（合法配置）
+func TestValidateServicesAndExtensions_CustomGlobalDirs(t *testing.T) {
+	baseDir := t.TempDir()
+	absoluteDir := t.TempDir()
+	for root, name := range map[string]string{
+		filepath.Join(baseDir, "custom-exts"): "relative-ext",
+		absoluteDir:                           "absolute-ext",
+	} {
+		extDir := filepath.Join(root, name)
+		if err := os.MkdirAll(extDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		meta := fmt.Sprintf("name: %s\nversion: \"1.0.0\"\nentry: extensions/%s/run.sh\n", name, name)
+		if err := os.WriteFile(filepath.Join(extDir, "meta.yaml"), []byte(meta), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	r := &ValidateResult{}
+	count := validateServicesAndExtensionsAt(baseDir, []string{"custom-exts", absoluteDir}, r)
+	if count != 2 || len(r.Errors) != 0 {
+		t.Fatalf("count=%d errors=%v, want 2 valid extensions", count, r.Errors)
+	}
+}
+
 func TestRunValidate_ValidConfigText(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "config.yaml")
