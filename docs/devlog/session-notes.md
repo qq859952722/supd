@@ -11,7 +11,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：⭐ 优秀（满分 100），1000+ 单元测试通过（Go + 前端），零竞态；staticcheck/go vet 零警告
-- **当前版本**：v0.0.42（版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.0.43（版本升级见 `version-upgrade-guide.md`；本地 commit 已完成，待推 GitHub）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -121,10 +121,41 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-08-02 | tracker-updater v1.3.0 测速分组 + 两个下载扩展 uid 1000 | ngosang 源加入（持续更新）；BEP-15 UDP CONNECT 测速（tjs UDPSocket）；3 源合并 563→测速存活 325（含 147 UDP）→49 优质独立 tier+1 垫底=50 tier；transmission-updater 路径修复+chown 非致命；pre-start-fixperms 分层 chown（bin/+web/→uid1000）；两扩展 run_as_uid 1000 验证通过 | [notes/2026-08-02.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-02.md) |
 | 2026-08-03 | 修复多服务同名扩展查找竞态 + v0.0.42 发版 | `GetExtension(name)` 在多服务同名扩展时随机匹配（Go map 随机序）→ 偶发 404 + Update/Delete/SaveEnv 静默数据损坏/丢失；新增 `GetExtensionForService(service, name)` 精确查找；5 个 provider 方法 + 2 个 handler 改用；7 新测试（含 80 请求 handler 压测 + 数据不串扰回归）；go test/race/pnpm build 全通过；推 v0.0.42 | [notes/2026-08-03.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-03.md) |
 | 2026-08-04 | 远程服务目录结构优化 + SSH 空密码连接固化 | smartdns rules 迁入 config/rules/ + 8 服务绝对路径相对化（含 transmission/env.yaml）；新建 `remote_ssh.sh` 封装脚本（SSH_ASKPASS 注入空密码，不改 ssh 配置）；skill 文档补 §3.1 SSH 连接 + §3.2 smartdns 路径基准差异；清理 s-ui 残留备份扩展目录；12 服务 ready，update-gfw-china 扩展验证通过 | [notes/2026-08-04.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-04.md) |
+| 2026-08-04 | workdir 相对路径支持 + v0.0.43 发版 + 远程验证 | 新增 `core.ResolveWorkdir` 统一解析函数；移除 workdir 绝对路径校验；统一 6 处 workdir 构建逻辑（含审计新发现 resource_handler 隐蔽缺陷）；新增 7 个测试用例；本地端到端测试通过；构建 v0.0.43 部署远程容器重启；adguardhome `workdir: .` 热重载+重启验证 CWD 正确解析 | [notes/2026-08-04.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-04.md) |
 
 ---
 
-## 八、最近会话重点（2026-08-04 远程服务目录结构优化 + SSH 空密码连接固化）
+## 八、最近会话重点（2026-08-04 workdir 相对路径支持 + v0.0.43 发版 + 远程验证）
+
+### 本次完成
+
+1. **代码修改：支持相对路径 workdir**：
+   - 新增 `core.ResolveWorkdir` 统一解析函数（空=服务根、绝对=清理、相对=Join+Clean 基于服务根目录）
+   - 移除 `service_validate.go` 中 workdir 必须绝对路径的校验
+   - 统一 6 处 workdir 构建逻辑为调用 `ResolveWorkdir`（此前每处手动写 `if workdir == "" { ... }`）
+   - **审计新发现第 6 处**：`resource_handler.go` 磁盘占用统计路径直接用 `info.Config.Workdir` 未解析相对路径，本次修复
+2. **规格与前端同步**：规格 workdir 字段描述更新；前端表单 placeholder 与 hint 更新
+3. **测试覆盖**：新增 `workdir_test.go` 7 个用例（空/绝对/相对/`./`/`.`/嵌套/逃逸/AdguardHome 场景）；更新 service_test.go 期望相对路径通过验证
+4. **本地端到端测试**：创建 `workdir-rel-test` 服务（`workdir: subdir`），启动后 CWD 正确解析为 `service_root/subdir`，服务 ready
+5. **v0.0.43 构建与部署**：构建 linux/amd64 二进制（25MB），SFTP 上传，原子替换远程 `/usr/local/bin/supd`，`kill -TERM 1` 容器重启加载新版本
+6. **远程 adguardhome 验证**：添加 `workdir: .`（相对路径，旧版本会拒绝），watcher 热重载成功接受，restart 后进程 CWD = `/etc/supd/services/adguardhome`（服务根），服务 2 秒内 ready
+
+### 关键技术点
+
+- **ResolveWorkdir 设计**：统一入口消除 6 处重复模式；相对路径用 `filepath.Join(root, workdir)` + `filepath.Clean` 清理
+- **resource_handler 隐蔽缺陷**：磁盘统计路径此前的 workdir 构建与启动路径不一致（直接用未解析的 `info.Config.Workdir`），相对 workdir 会导致 `syscall.Statfs` 路径错误
+- **容器重启策略**：supd 作为 PID 1 在 Docker 容器中，`kill -TERM 1` 触发优雅关机后容器自动重启
+- **dropbear-ssh autostart:false**：容器重启后需通过 API 手动启动 dropbear-ssh 恢复 SSH 访问
+- **热重载验证**：watcher 检测 service.yaml 变更后热重载，新版本验证器接受相对 workdir，服务无需重启即生效（CWD 在下次重启时应用）
+
+### 遗留事项
+
+- v0.0.43 尚未推送到 GitHub（本地 commit 已完成，待用户确认是否发版）
+- adguardhome service.yaml 中 `workdir: .` 为测试添加，可保留（功能等价于未设 workdir）或移除
+
+---
+
+## 附：2026-08-04 远程服务目录结构优化 + SSH 空密码连接固化（同日早段）
 
 ### 本次完成
 
@@ -146,19 +177,13 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
    - skill 文档 `04_online_dev_guide.md` §3.1 新增 SSH 客户端空密码连接章节（前置条件 + 封装脚本 + 手动命令 + 运维示例 + 注意事项）
 4. **smartdns 路径基准差异文档化**：skill §3.2 新增路径基准对照表（`cache-file` 基准=CWD vs `domain-set/ip-set/plugin/conf-file` 基准=配置文件目录）+ 推荐目录结构 + 常见错误
 
-### 关键技术点
+### 关键技术点（同日早段）
 
-- **smartdns 路径基准双重性**：`cache-file` 基准 = 进程 CWD（service.yaml 未设 workdir 时 = 服务根目录）；`domain-set -file`/`ip-set -file`/`plugin`/`conf-file` 基准 = 配置文件所在目录（config/）。故 `cache-file config/smartdns.cache` 与 `domain-set -file rules/xxx.txt` 路径基准不同但都能正确解析
+- **smartdns 路径基准双重性**：`cache-file` 基准 = 进程 CWD（service.yaml 未设 workdir 时 = 服务根目录）；`domain-set -file`/`ip-set -file`/`plugin`/`conf-file` 基准 = 配置文件所在目录（config/）
 - **SSH 空密码注入**：`SSH_ASKPASS=<script> SSH_ASKPASS_REQUIRE=force setsid -w ssh ...` 通过 askpass 脚本输出空密码，绕过交互式密码提示
-- **dropbear -B 模式**：允许空密码登录，但要求 `/etc/shadow` 中密码字段为空（`NP` 状态）；账号锁定（`L` 状态）会拒绝
+- **dropbear -B 模式**：允许空密码登录，但要求 `/etc/shadow` 中密码字段为空（`NP` 状态）
 - **容器重启恢复**：`/etc/shadow` 在 overlay 文件系统，容器重启后 root 密码恢复，需重新 `passwd -d root`
-- **远程容器无 python3**：仅含 busybox + curl，JSON 解析用 `grep -o` 提取字段
 - **环境变量相对路径**：supd 启动服务时 CWD=服务根目录（service.yaml 未设 workdir），故 env.yaml 中的 `TRANSMISSION_HOME=config` 等相对路径会被进程正确解析为 `<服务根>/config/`
-- **扩展脚本 fallback 模式可接受**：`${SUPD_SERVICE_DIR:-/etc/supd/...}`（shell）和 `tjs.env.SUPD_SERVICE_DIR || '/etc/supd/...'`（JS）是标准防御性编码，supd 运行时注入环境变量覆盖
-
-### 遗留事项
-
-- 无。本次彻底完成目录结构优化和 SSH 连接方式固化，所有管理的配置文件均已相对路径化。
 
 ---
 
