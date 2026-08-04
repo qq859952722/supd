@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -325,10 +324,8 @@ func doRestartProcess(name string, svcEntry *watch.ServiceEntry, sm *StateMachin
 	if cb.BuildEnv != nil {
 		env = cb.BuildEnv(name)
 	}
-	workdir := svcConfig.Workdir
-	if workdir == "" {
-		workdir = filepath.Dir(svcEntry.ConfigPath)
-	}
+	// 构建工作目录（允许相对路径，基于服务根目录解析）
+	workdir := ResolveWorkdir(svcConfig, svcEntry)
 
 	// A-03-002 修复：fd_notify readiness 需在 StartProcess 前创建 checker
 	var preChecker ReadinessChecker

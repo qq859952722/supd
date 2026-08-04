@@ -803,11 +803,11 @@ export function ServiceForm({ initial, onSubmit, onCancel, submitLabel = '提交
           />
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="工作目录">
+          <Field label="工作目录" hint="可选；支持绝对路径或相对路径（基于服务根目录解析）；留空则使用服务根目录">
             <Input
               value={form.workdir}
               onChange={(e) => set('workdir', e.target.value)}
-              placeholder="/etc/supd/services/<name>"
+              placeholder="留空=服务根目录；或绝对路径 /var/lib/app；或相对路径 config"
             />
           </Field>
           <Field label="运行时" hint="bash / sh / python3 / node 或可执行文件绝对路径">

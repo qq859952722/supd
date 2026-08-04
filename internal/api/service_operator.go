@@ -179,10 +179,8 @@ func (o *CoreServiceOperator) startServiceLocked(name string) error {
 	// 规格 §2.2.4: 服务进程合并 3 层 env（与 bootstrap.startService 一致）
 	// BUG 修复: 此前仅用 os.Environ()，未加载 services/<svc>/env.yaml，违反规格 §2.2.4
 	env := core.BuildServiceProcessEnv(o.BaseDir, name, o.Config.EnvFiles)
-	workdir := svcConfig.Workdir
-	if workdir == "" {
-		workdir = filepath.Dir(svcEntry.ConfigPath)
-	}
+	// 构建工作目录（允许相对路径，基于服务根目录解析）
+	workdir := core.ResolveWorkdir(svcConfig, svcEntry)
 
 	// REQ-D-004: service_lifecycle:pre_start — 服务启动前触发
 	if o.ServiceLifecycleTrigger != nil {
@@ -435,10 +433,8 @@ func (o *CoreServiceOperator) superviseService(ctx context.Context, name string,
 			if pre != nil {
 				go o.runReadinessCheck(rCtx, n, entry.Config.Readiness, s, p, engine, pre)
 			} else {
-				workdir := entry.Config.Workdir
-				if workdir == "" {
-					workdir = filepath.Dir(entry.ConfigPath)
-				}
+				// 构建工作目录（允许相对路径，基于服务根目录解析）
+				workdir := core.ResolveWorkdir(entry.Config, entry)
 				env := core.BuildServiceProcessEnv(o.BaseDir, n, o.Config.EnvFiles)
 				checker, cerr := core.NewReadinessChecker(entry.Config.Readiness, workdir, env)
 				if cerr != nil {

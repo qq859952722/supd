@@ -417,11 +417,8 @@ func (b *Bootstrap) startService(ctx context.Context, name string, svcEntry *wat
 	// BUG 修复: 此前仅用 os.Environ()，未加载 services/<svc>/env.yaml，违反规格 §2.2.4
 	env := BuildServiceProcessEnv(b.cfg.BaseDir, name, b.result.Config.EnvFiles)
 
-	// 构建工作目录
-	workdir := svcConfig.Workdir
-	if workdir == "" {
-		workdir = filepath.Dir(svcEntry.ConfigPath)
-	}
+	// 构建工作目录（允许相对路径，基于服务根目录解析）
+	workdir := ResolveWorkdir(svcConfig, svcEntry)
 
 	// 状态转移: pending → starting
 	// REQ-F-004: 规则1 pending→starting，所有 depends_on 服务进入 ready 后触发
@@ -802,10 +799,8 @@ func (b *Bootstrap) superviseService(ctx context.Context, name string, svcEntry 
 		},
 		RunReadiness: func(rCtx context.Context, n string, entry *watch.ServiceEntry,
 			s *StateMachine, p *Process, pre ReadinessChecker) error {
-			workdir := entry.Config.Workdir
-			if workdir == "" {
-				workdir = filepath.Dir(entry.ConfigPath)
-			}
+			// 构建工作目录（允许相对路径，基于服务根目录解析）
+			workdir := ResolveWorkdir(entry.Config, entry)
 			env := BuildServiceProcessEnv(b.cfg.BaseDir, n, b.result.Config.EnvFiles)
 			// 返回 error，供 RunSupervisor 区分进程退出 vs 超时
 			return b.checkReadiness(rCtx, n, entry.Config.Readiness, s, p, engine, pre, workdir, env)

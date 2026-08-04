@@ -107,10 +107,9 @@ func validateService(sc *ServiceConfig) error {
 		return fmt.Errorf("command: is required and must have at least one element")
 	}
 
-	// workdir 如果设置必须以 / 开头
-	if sc.Workdir != "" && !strings.HasPrefix(sc.Workdir, "/") {
-		return fmt.Errorf("workdir: must be an absolute path, got %q", sc.Workdir)
-	}
+	// workdir 校验：允许相对路径，相对路径在 core.ResolveWorkdir 中基于服务根目录解析为绝对路径。
+	// 不再强制绝对路径——相对路径便于服务配置迁移（service.yaml 整目录复制后无需改 workdir）。
+	// 此前强制绝对路径的校验已移除，仅保留隐式非空语义（空 workdir 由 ResolveWorkdir 兜底为服务根目录）。
 
 	// K-01-001 修复：depends_on 自引用检测（规格 §2.1.2: 服务 A 的 depends_on 包含 A 自己，视为循环依赖）
 	// 提前在配置解析阶段拦截，避免依赖图构建时才发现

@@ -9,7 +9,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/shirou/gopsutil/v4/mem"
 
+	"github.com/supdorg/supd/internal/core"
 	"github.com/supdorg/supd/internal/errors"
+	"github.com/supdorg/supd/internal/watch"
 )
 
 // REQ-I-006: 资源查询 API
@@ -103,10 +105,13 @@ func (s *Server) handleServiceResources(w http.ResponseWriter, r *http.Request) 
 	resources.Ports = collectProcessPorts(info.PID)
 
 	// 计算服务所在文件夹的磁盘分区占用
-	workdir := ""
-	if info.Config != nil && info.Config.Workdir != "" {
-		workdir = info.Config.Workdir
+	// 通过 ResolveWorkdir 统一解析 workdir（支持相对路径，基于服务根目录解析）
+	// 与启动路径（bootstrap/supervisor/service_operator）保持一致，避免相对 workdir 在此降级路径下未解析导致 Statfs 失败
+	var workdir string
+	if info.Config != nil && info.ConfigPath != "" {
+		workdir = core.ResolveWorkdir(info.Config, &watch.ServiceEntry{ConfigPath: info.ConfigPath})
 	} else if info.ConfigPath != "" {
+		// info.Config 为 nil 的兜底（理论上不应出现，但保持防御）
 		workdir = filepath.Dir(info.ConfigPath)
 	}
 	if workdir != "" {

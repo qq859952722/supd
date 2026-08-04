@@ -561,6 +561,8 @@ readiness:
 // --- Workdir 校验 ---
 
 func TestValidateWorkdirRelative(t *testing.T) {
+	// 相对路径 workdir 现已允许（由 core.ResolveWorkdir 基于服务根目录解析为绝对路径）
+	// 便于服务配置迁移：service.yaml 整目录复制后无需改 workdir。
 	yaml := `
 name: app
 version: "1.0.0"
@@ -569,8 +571,8 @@ command:
 workdir: relative/path
 `
 	_, err := loadServiceFromYAML(t, yaml)
-	if err == nil {
-		t.Error("expected error for relative workdir")
+	if err != nil {
+		t.Errorf("relative workdir should be valid now, got error: %v", err)
 	}
 }
 
