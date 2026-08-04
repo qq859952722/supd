@@ -11,7 +11,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：⭐ 优秀（满分 100），1000+ 单元测试通过（Go + 前端），零竞态；staticcheck/go vet 零警告
-- **当前版本**：v0.0.44（全配置路径绝对/相对路径统一支持；版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.0.45（runtime CLI 相对路径与 settings API 契约修复；版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -122,31 +122,29 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run
 | 2026-08-03 | 修复多服务同名扩展查找竞态 + v0.0.42 发版 | `GetExtension(name)` 在多服务同名扩展时随机匹配（Go map 随机序）→ 偶发 404 + Update/Delete/SaveEnv 静默数据损坏/丢失；新增 `GetExtensionForService(service, name)` 精确查找；5 个 provider 方法 + 2 个 handler 改用；7 新测试（含 80 请求 handler 压测 + 数据不串扰回归）；go test/race/pnpm build 全通过；推 v0.0.42 | [notes/2026-08-03.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-03.md) |
 | 2026-08-04 | 远程服务目录结构优化 + SSH 空密码连接固化 | smartdns rules 迁入 config/rules/ + 8 服务绝对路径相对化（含 transmission/env.yaml）；新建 `remote_ssh.sh` 封装脚本（SSH_ASKPASS 注入空密码，不改 ssh 配置）；skill 文档补 §3.1 SSH 连接 + §3.2 smartdns 路径基准差异；清理 s-ui 残留备份扩展目录；12 服务 ready，update-gfw-china 扩展验证通过 | [notes/2026-08-04.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-04.md) |
 | 2026-08-04 | workdir 相对路径支持 + v0.0.43 发版 + 远程验证 | 新增 `core.ResolveWorkdir` 统一解析函数；移除 workdir 绝对路径校验；统一 6 处 workdir 构建逻辑（含审计新发现 resource_handler 隐蔽缺陷）；新增 7 个测试用例；本地端到端测试通过；构建 v0.0.43 部署远程容器重启；adguardhome `workdir: .` 热重载+重启验证 CWD 正确解析 | [notes/2026-08-04.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-04.md) |
+| 2026-08-04 | runtime CLI 路径补漏 + API 契约修复 + v0.0.45 | `runtimes install` 接受相对 `<baseDir>` 路径；install/remove 直接发送 runtime map；全量 build/vet/test/race/前端验证通过 | [notes/2026-08-04.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-04.md) |
 
 ---
 
-## 八、最近会话重点（2026-08-04 全配置路径统一 + v0.0.44）
+## 八、最近会话重点（2026-08-04 runtime CLI 路径补漏 + v0.0.45）
 
 ### 本次完成
 
-1. 统一全局配置路径：`env_files`、`extension_dirs`、`runtimes` 支持绝对路径及相对 `<baseDir>` 路径。
-2. 统一服务路径：`command[0]`、`workdir`、script readiness `check[0]` 支持绝对/服务根相对路径；裸命令保留 PATH 查找。
-3. 统一扩展路径：全局扩展 entry/CWD 基于 `<baseDir>`，服务扩展 entry/CWD 基于服务根；覆盖 lifecycle/on-demand/cron/retry/env/import/export。
-4. discovery、watcher、CLI validate、热重载及 API provider 全链路使用配置的扩展目录；`extension_dirs` 变更标记需重启 supd 以重建 watcher 根。
-5. 手工代码审计修复 API 手动启动 readiness 服务根传播、服务按需扩展 CWD、扩展 env 上下文等遗漏。
-6. 本地二进制严格运行测试覆盖相对/绝对服务、runtime、extension_dirs、entry、readiness、生命周期、热重载和启停重启。
-7. Skill、示例、校验脚本、需求规格和核心机制文档同步；版本升级为 v0.0.44。
+1. 修复 `supd runtimes install <name> <path>` 遗留的绝对路径限制，相对路径原样写入配置并由 `BuildRegistryAt(baseDir, ...)` 统一解析。
+2. 修复 runtime install/remove 请求体与 `/api/settings/runtimes` 契约不一致：移除错误的 `{"runtimes": ...}` 包装层，直接发送 runtime map。
+3. 回归测试按服务端真实类型解码请求体，覆盖相对路径写入、既有 runtime 保留及 remove 行为。
+4. 审计 CLI、settings API、配置持久化、runtime registry、服务/API 启动、扩展执行及热重载链路，未发现其他路径遗漏。
 
 ### 验证结果
 
 - `go build ./...`、`go vet ./...`、`go test ./... -count=1` 全通过。
-- `go test -race ./... -count=1` 全通过，零竞态。
+- `go test -race ./... -count=1` 全量复跑通过；首轮既有 `TestConcurrencyCancelRunning` 时序抖动，定向连续 10 次通过。
 - `web/pnpm build` 通过（仅既有大 chunk 警告）。
-- Skill Python 校验器编译通过，服务级根相对 entry 校验通过。
+- `git diff --check` 通过。
 
 ### 遗留事项
 
-- API 创建/导入全局扩展仍落入默认 `<baseDir>/extensions/<name>`；自定义 `extension_dirs` 不改变管理 API 默认落盘目录。
+- 无。
 
 ---
 

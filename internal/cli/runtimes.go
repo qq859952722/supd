@@ -22,7 +22,7 @@ var runtimesListCmd = &cobra.Command{
 var runtimesInstallCmd = &cobra.Command{
 	Use:   "install <name> <path>",
 	Short: "安装运行时",
-	Long:  "将可执行文件注册为运行时别名。path 必须是绝对路径。",
+	Long:  "将可执行文件注册为运行时别名。path 支持绝对路径或相对默认工作目录的路径。",
 	Args:  exactArgs(2),
 	RunE:  runRuntimesInstall,
 }
@@ -85,10 +85,8 @@ func runRuntimesList(cmd *cobra.Command, args []string) error {
 func runRuntimesInstall(cmd *cobra.Command, args []string) error {
 	name := args[0]
 	execPath := args[1]
-
-	// 验证路径是绝对路径
-	if len(execPath) == 0 || execPath[0] != '/' {
-		return fmt.Errorf("运行时路径必须是绝对路径，得到: %s", execPath)
+	if execPath == "" {
+		return fmt.Errorf("运行时路径不能为空")
 	}
 
 	client := getAPIClient()
@@ -112,9 +110,8 @@ func runRuntimesInstall(cmd *cobra.Command, args []string) error {
 	}
 	runtimesMap[name] = execPath
 
-	updateBody := map[string]any{"runtimes": runtimesMap}
 	var result map[string]any
-	if err := client.PutJSON("/api/settings/runtimes", updateBody, &result); err != nil {
+	if err := client.PutJSON("/api/settings/runtimes", runtimesMap, &result); err != nil {
 		return fmt.Errorf("安装运行时 %s 失败: %w", name, err)
 	}
 
@@ -146,9 +143,8 @@ func runRuntimesRemove(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	updateBody := map[string]any{"runtimes": runtimesMap}
 	var result map[string]any
-	if err := client.PutJSON("/api/settings/runtimes", updateBody, &result); err != nil {
+	if err := client.PutJSON("/api/settings/runtimes", runtimesMap, &result); err != nil {
 		return fmt.Errorf("移除运行时 %s 失败: %w", name, err)
 	}
 

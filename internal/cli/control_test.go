@@ -1031,22 +1031,13 @@ func TestRunRuntimesList_WithoutSupd(t *testing.T) {
 	}
 }
 
-// TestRunRuntimesInstall_WithoutSupd 测试 runRuntimesInstall 在 supd 未运行时返回错误
-// 注：cobra 在 CLI 层通过 exactArgs(2) 校验参数，函数内部直接访问 args[0]/args[1]；
-// 因此测试需传入合法的 2 个参数（绝对路径），让其进入 CheckSupdRunning 错误路径。
+// TestRunRuntimesInstall_WithoutSupd 测试 runRuntimesInstall 在 supd 未运行时返回错误。
+// 相对路径属于合法输入，应进入 CheckSupdRunning 错误路径。
 func TestRunRuntimesInstall_WithoutSupd(t *testing.T) {
 	withUnconnectableClient(t)
-	err := runRuntimesInstall(nil, []string{"bun", "/usr/local/bin/bun"})
+	err := runRuntimesInstall(nil, []string{"bun", "runtimes/bun"})
 	if err == nil {
 		t.Errorf("应返回错误")
-	}
-}
-
-// TestRunRuntimesInstall_InvalidPath 测试 runRuntimesInstall 非绝对路径返回错误
-func TestRunRuntimesInstall_InvalidPath(t *testing.T) {
-	err := runRuntimesInstall(nil, []string{"bun", "relative/path"})
-	if err == nil {
-		t.Errorf("非绝对路径应返回错误")
 	}
 }
 
@@ -1142,9 +1133,9 @@ func TestRunImport_WithoutSupd(t *testing.T) {
 // TestParseDuration_AdditionalCases 测试 parseDuration 更多场景
 func TestParseDuration_AdditionalCases(t *testing.T) {
 	tests := []struct {
-		input    string
-		wantErr  bool
-		wantStr  string
+		input   string
+		wantErr bool
+		wantStr string
 	}{
 		{"1h", false, "1h0m0s"},
 		{"30m", false, "30m0s"},

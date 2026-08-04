@@ -246,8 +246,8 @@ docker pull ghcr.io/qq859952722/supd:latest
 docker pull ghcr.io/qq859952722/supd:debian
 
 # 或指定具体版本
-docker pull ghcr.io/qq859952722/supd:v0.0.44
-docker pull ghcr.io/qq859952722/supd:v0.0.44-debian
+docker pull ghcr.io/qq859952722/supd:v0.0.45
+docker pull ghcr.io/qq859952722/supd:v0.0.45-debian
 ```
 
 **镜像标签对照表**：
@@ -315,7 +315,7 @@ docker run -d --stop-grace-period 30s ...
 
 | 项目 | 说明 |
 |------|------|
-| 当前版本 | `v0.0.44` |
+| 当前版本 | `v0.0.45` |
 | 平台支持 | Linux amd64 / Linux arm64 |
 | 后端语言 | Go 1.25+ |
 | 前端技术栈 | React 19 + TypeScript + Vite + Tailwind CSS 4 |

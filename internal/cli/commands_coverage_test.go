@@ -475,19 +475,20 @@ func TestRunRuntimesInstall_Success(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"runtimes":{"node":"/usr/bin/node"}}`))
 	})
-	var gotBody string
+	var gotRuntimes map[string]string
 	mux.HandleFunc("/api/settings/runtimes", func(w http.ResponseWriter, r *http.Request) {
-		b, _ := readAll(r)
-		gotBody = string(b)
+		if err := json.NewDecoder(r.Body).Decode(&gotRuntimes); err != nil {
+			t.Errorf("解析 runtimes 请求失败: %v", err)
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
 
-	if err := runRuntimesInstall(nil, []string{"bun", "/usr/local/bin/bun"}); err != nil {
-		t.Errorf("runRuntimesInstall 成功路径失败: %v", err)
+	if err := runRuntimesInstall(nil, []string{"bun", "runtimes/bun"}); err != nil {
+		t.Errorf("runRuntimesInstall 相对路径失败: %v", err)
 	}
-	if !contains(gotBody, `"bun":"/usr/local/bin/bun"`) || !contains(gotBody, `"node":"/usr/bin/node"`) {
-		t.Errorf("runtimes 安装 body 未合并既有运行时: %s", gotBody)
+	if gotRuntimes["bun"] != "runtimes/bun" || gotRuntimes["node"] != "/usr/bin/node" {
+		t.Errorf("runtimes 安装请求不符合 API 契约: %#v", gotRuntimes)
 	}
 }
 
@@ -498,10 +499,11 @@ func TestRunRuntimesRemove_Success(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"runtimes":{"node":"/usr/bin/node","bun":"/usr/local/bin/bun"}}`))
 	})
-	var gotBody string
+	var gotRuntimes map[string]string
 	mux.HandleFunc("/api/settings/runtimes", func(w http.ResponseWriter, r *http.Request) {
-		b, _ := readAll(r)
-		gotBody = string(b)
+		if err := json.NewDecoder(r.Body).Decode(&gotRuntimes); err != nil {
+			t.Errorf("解析 runtimes 请求失败: %v", err)
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
@@ -509,11 +511,11 @@ func TestRunRuntimesRemove_Success(t *testing.T) {
 	if err := runRuntimesRemove(nil, []string{"bun"}); err != nil {
 		t.Errorf("runRuntimesRemove 成功路径失败: %v", err)
 	}
-	if contains(gotBody, `"bun"`) {
-		t.Errorf("移除后 body 不应含 bun: %s", gotBody)
+	if _, ok := gotRuntimes["bun"]; ok {
+		t.Errorf("移除后请求不应含 bun: %#v", gotRuntimes)
 	}
-	if !contains(gotBody, `"node":"/usr/bin/node"`) {
-		t.Errorf("移除后 body 应保留 node: %s", gotBody)
+	if gotRuntimes["node"] != "/usr/bin/node" {
+		t.Errorf("移除后请求应保留 node: %#v", gotRuntimes)
 	}
 }
 
