@@ -30,13 +30,13 @@ supd 执行器通过 `BuildCommand` 构造命令：`[/usr/local/bin/tjs, run.js]
 
 ---
 
-## 2. 工作流集成与 musl 兼容性（关键约束）
+## 2. 工作流集成与 libc 兼容性（关键约束）
 
 > **⚠️ 这是 tjs 集成最容易出错的环节，修改 CI/Dockerfile 时务必遵守。**
 
 ### 问题背景
 
-supd 运行时镜像是 `alpine:3.20`（musl libc），而 GitHub Actions 默认 `ubuntu-latest` 是 glibc。若在 ubuntu 上编译 tjs，产出的二进制依赖 `/lib64/ld-linux-x86-64.so.2`，在 Alpine 中报错：
+supd 同时提供两种独立运行时镜像：默认 `alpine:3.20` 使用 musl libc，`debian`/`vX.Y.Z-debian` 使用 Debian Bookworm Slim + glibc。两种镜像分别使用对应 libc 环境编译的 tjs，二进制不能混用。若在 Ubuntu/glibc 上编译 tjs 后放入 Alpine，产物依赖 `/lib64/ld-linux-x86-64.so.2`，会报错：
 
 ```
 /usr/local/bin/tjs-bin: cannot execute: required file not found
@@ -65,12 +65,16 @@ exit code 127
    RUN apk add --no-cache ... libffi libstdc++ libgcc ...
    ```
 
-3. **验证二进制是 musl 链接**：
+3. **Alpine 镜像验证二进制是 musl 链接**：
    ```
    file /usr/local/bin/tjs-bin
    # 正确: interpreter /lib/ld-musl-x86_64.so.1
    # 错误: interpreter /lib64/ld-linux-x86-64.so.2
    ```
+
+4. **Debian 镜像使用独立 glibc 构建**：`Dockerfile.debian` 基于 `debian:bookworm-slim`；CI 的 `build-tjs-debian`/`build-debian` 在 Debian 中编译并验证 tjs，通过 `debian` 或 `vX.Y.Z-debian` 标签发布。不要把 Alpine/musl 的 tjs 复制到 Debian，也不要把 Debian/glibc 的 tjs 复制到 Alpine。
+
+5. **普通服务二进制同样遵循 libc 分流**：在 Alpine 中发现待安装二进制依赖 glibc 时立即停止，不尝试 `glibc`/`gcompat`/`libc6-compat` 等兼容层，改为提示用户切换 Debian 镜像。完整门禁见 `01_service_spec.md` §1.7。
 
 ### 排查清单（tjs 扩展报 exit code 127 时）
 
@@ -496,7 +500,7 @@ ldd /usr/local/bin/tjs-bin 2>&1 | head -5
 /usr/local/bin/tjs-bin --version 2>&1
 ```
 
-**解决**：见第 2 节「工作流集成与 musl 兼容性」。
+**解决**：见第 2 节「工作流集成与 libc 兼容性」。
 
 ### 7.2 模块导入失败
 

@@ -38,15 +38,29 @@ VALID_SUPD_LIFECYCLE_EVENTS = {"pre_start", "post_ready", "pre_shutdown"}
 MAX_TIMEOUT_SECONDS = 1800
 # debounce:Ns 的 N 上限（extension_validate.go:184）
 DEBOUNCE_MAX_SECONDS = 3600
-README_REQUIRED_SECTIONS = (
-    "服务名称与版本",
+SERVICE_README_REQUIRED_SECTIONS = (
+    "服务概述",
+    "运行逻辑",
     "目录结构与权限边界",
     "启动方式与就绪检测",
     "配置与环境变量",
+    "开发与上游资源",
     "服务级扩展与 Actions",
     "数据持久化与升级更新",
+    "部署与特别注意事项",
     "常用运维操作",
     "安全与备份注意事项",
+    "变更记录",
+)
+EXTENSION_README_REQUIRED_SECTIONS = (
+    "扩展概述",
+    "触发方式与 Actions",
+    "运行逻辑",
+    "配置与环境变量",
+    "开发与外部资源",
+    "部署与特别注意事项",
+    "验证与故障排查",
+    "变更记录",
 )
 
 
@@ -210,6 +224,24 @@ def validate_env_yaml(target_dir):
             log_fail(f"{target_dir.name}/env.yaml 变量 '{key}' 使用内联值格式（非结构体），Value 字段为空，变量不会注入子进程！正确格式：'{key}:' 后换行缩进写 'value: ...'")
 
 
+def validate_readme(target_dir, required_sections, kind):
+    """校验 README.md 存在，且包含规范要求的精确一级标题。"""
+    readme = target_dir / "README.md"
+    if not readme.exists():
+        log_fail(f"{kind}根目录缺少必需的 README.md")
+        return False
+
+    valid = True
+    readme_content = readme.read_text(encoding="utf-8")
+    for section in required_sections:
+        if not re.search(rf"^#\s+{re.escape(section)}\s*$", readme_content, re.MULTILINE):
+            log_fail(f"README.md 缺少必需一级标题: {section}")
+            valid = False
+    if valid:
+        log_pass(f"README.md 包含{kind}规范要求的一级标题")
+    return valid
+
+
 def validate_service(service_dir):
     log_info(f"开始深入校验服务目录: {service_dir.resolve()}")
     service_yaml = service_dir / "service.yaml"
@@ -217,19 +249,7 @@ def validate_service(service_dir):
         log_fail("未找到 service.yaml 文件")
         return False
 
-    valid = True
-    readme = service_dir / "README.md"
-    if not readme.exists():
-        log_fail("服务根目录缺少必需的 README.md")
-        valid = False
-    else:
-        readme_content = readme.read_text(encoding="utf-8")
-        for section in README_REQUIRED_SECTIONS:
-            if not re.search(rf"^#\s+{re.escape(section)}\s*$", readme_content, re.MULTILINE):
-                log_fail(f"README.md 缺少必需一级标题: {section}")
-                valid = False
-        if valid:
-            log_pass("README.md 包含服务规范要求的一级标题")
+    valid = validate_readme(service_dir, SERVICE_README_REQUIRED_SECTIONS, "服务")
 
     content = service_yaml.read_text(encoding="utf-8")
 
@@ -239,6 +259,8 @@ def validate_service(service_dir):
         name = m_name.group(1)
         if name == service_dir.name:
             log_pass(f"服务名称 name: '{name}' 与目录名完全一致")
+        elif service_dir.parent.name == "examples" and re.match(r"^\d{2}-", service_dir.name):
+            log_pass(f"服务示例索引目录 '{service_dir.name}'，部署时需重命名为 '{name}'")
         else:
             log_fail(f"服务名称不匹配! YAML 中 name='{name}', 但目录名='{service_dir.name}'")
 
@@ -368,6 +390,7 @@ def validate_extension(ext_dir):
         log_fail("未找到 meta.yaml 文件")
         return False
 
+    valid = validate_readme(ext_dir, EXTENSION_README_REQUIRED_SECTIONS, "扩展")
     content = meta_yaml.read_text(encoding="utf-8")
 
     # 1. 名字对齐
@@ -376,6 +399,8 @@ def validate_extension(ext_dir):
         name = m_name.group(1)
         if name == ext_dir.name:
             log_pass(f"扩展名称 name: '{name}' 与目录名完全一致")
+        elif ext_dir.parent.name == "examples" and re.match(r"^\d{2}-", ext_dir.name):
+            log_pass(f"扩展示例索引目录 '{ext_dir.name}'，部署时需重命名为 '{name}'")
         else:
             log_fail(f"扩展名称不匹配! YAML 中 name='{name}', 但目录名='{ext_dir.name}'")
 
@@ -469,7 +494,7 @@ def validate_extension(ext_dir):
 
     # 6. env.yaml 格式校验
     validate_env_yaml(ext_dir)
-    return True
+    return valid
 
 
 def run_supd_validate(target_dir):

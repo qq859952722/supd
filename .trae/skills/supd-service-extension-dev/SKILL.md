@@ -53,7 +53,7 @@ description: "supd服务与扩展开发指南。当用户要求开发、修改�
 ├── services/                           # 可选容器：每个直接子目录是一个服务
 │   └── <service-name>/                 # 名称须匹配 ^[a-z][a-z0-9-]*$
 │       ├── service.yaml                # 必需：被发现和加载的服务配置
-│       ├── README.md                   # Skill 生成服务时必需：中文运维说明
+│       ├── README.md                   # 必需：中文维护手册（概述、逻辑、开发信息、部署注意、变更记录）
 │       ├── env.yaml                    # 可选：服务环境
 │       ├── bin/                        # Skill 生成服务时必需：版本化程序载荷
 │       ├── data/                       # 可选：服务唯一可写的持久化数据区
@@ -62,6 +62,7 @@ description: "supd服务与扩展开发指南。当用户要求开发、修改�
 ├── extensions/                         # 可选容器：全局扩展
 │   └── <extension-name>/
 │       ├── meta.yaml                   # 必需
+│       ├── README.md                   # 必需：中文维护手册（概述、逻辑、开发信息、部署注意、变更记录）
 │       ├── <entry>                     # 必需：meta.yaml 的 entry 指向此相对路径
 │       └── env.yaml                    # 可选
 └── runtimes/                           # 可选：直接子文件名即 runtime 别名
@@ -95,6 +96,8 @@ description: "supd服务与扩展开发指南。当用户要求开发、修改�
 | **数值限制** | fsnotify防抖 `500ms` / stop grace `10s` / 扩展硬上限默认 `1800s`（可由全局设置调整）/ 上传限制 `100MB` / serialize队列上限 `16` |
 | **禁止引入** | 数据库 (SQLite/Bolt 等)、SSE (Server-Sent Events)、WebSocket |
 
+> **⚠️ glibc 二进制安装边界**：安装或更新服务二进制前必须检查其 libc/动态加载器要求。若 `file`、`readelf -l`、`ldd` 或实际启动结果表明二进制依赖 glibc，而当前容器是 Alpine/musl，必须立即停止安装及排障；禁止尝试安装 `glibc`、`gcompat`、`libc6-compat` 等兼容层，禁止下载非官方 glibc 安装脚本。应明确提醒用户改用官方 Debian 镜像 `ghcr.io/qq859952722/supd:debian`（指定版本使用 `vX.Y.Z-debian`），再继续安装。详见 `references/01_service_spec.md` §1.7。
+
 > **⚠️ 环境变量 (`env.yaml`) 致命陷阱**：
 > 1. 必须有 `env:` 作为顶层键。
 > 2. 每个变量必须是对象格式：`KEY: { value: "..." }`，**绝对禁止**写成 `KEY: "value"` (会导致静默失效)！
@@ -104,14 +107,15 @@ description: "supd服务与扩展开发指南。当用户要求开发、修改�
 ## 💡 开发工作流 (Development Workflow)
 
 1. **确认需求**: 明确开发对象是服务还是扩展。若是扩展，确定触发器类型与并发策略。
-2. **规划文件布局**: 按 `bin/` + `data/` 目录规范组织服务（详见 `references/01_service_spec.md` §1）。生成服务时**必须**同时在服务根目录创建中文 `README.md`，按规范说明服务、目录权限、启动就绪、环境变量、扩展 actions、持久化升级、运维和安全备份，且不得写入真实密码、token、私钥或运行期敏感数据。评估服务是否支持二进制更新，若支持则规划更新扩展。
-3. **查阅规格与示例**: 阅读 `references/` 中的规范，并在 `examples/` 中寻找可用模板。
-4. **生成代码**: 严格按照规范编写配置文件、README 和代码。
-5. **自动校验**: 运行 Python 脚本排查低级格式错误（需传入目标服务或扩展目录路径）：
+2. **确认二进制兼容性**: 安装或更新服务二进制前检查目标架构、动态加载器和 libc。发现 glibc 二进制运行于 Alpine/musl 时立即停止，不安装任何兼容层；提示用户切换官方 Debian 镜像后再继续。
+3. **规划文件布局与 README**: 按 `bin/` + `data/` 目录规范组织服务（详见 `references/01_service_spec.md` §1）。新建或实质修改服务/扩展时，必须创建或同步其中文 `README.md`：简要说明用途与运行逻辑，记录必要开发资源（如上游仓库、官方二进制下载链接、架构/libc、协议或数据转换），标注部署注意事项，并在变更记录中追加日期和修改内容。不得写入真实密码、token、私钥或运行期敏感数据。评估服务是否支持二进制更新，若支持则规划更新扩展。
+4. **查阅规格与示例**: 阅读 `references/` 中的规范，并在 `examples/` 中寻找可用模板。
+5. **生成代码**: 严格按照规范编写配置文件、README 和代码。
+6. **自动校验**: 运行 Python 脚本排查低级格式错误（需传入目标服务或扩展目录路径）：
    ```bash
    python3 .trae/skills/supd-service-extension-dev/scripts/validate_dev.py <target_dir>
    ```
-6. **打包导出** (如需): 按导出场景选择默认导出或按规则文件导出：
+7. **打包导出** (如需): 按导出场景选择默认导出或按规则文件导出：
    ```bash
    python3 .trae/skills/supd-service-extension-dev/scripts/pack_dev.py <target_dir> [output.tar.gz]
    ```
