@@ -173,7 +173,7 @@ smartdns 的 `smartdns.conf` 中不同指令的**相对路径基准不同**，�
 
 | 指令类型 | 基准目录 | 示例 | 解析结果 |
 |---|---|---|---|
-| `cache-file` | 进程 CWD（服务根目录） | `cache-file config/smartdns.cache` | `<svc>/config/smartdns.cache` |
+| `cache-file` | 配置文件所在目录（`config/`） | `cache-file smartdns.cache` | `<svc>/config/smartdns.cache` |
 | `domain-set -file` | 配置文件所在目录（`config/`） | `domain-set -file rules/cn_domain.txt` | `<svc>/config/rules/cn_domain.txt` |
 | `ip-set -file` | 配置文件所在目录（`config/`） | `ip-set -file rules/china_ip.txt` | `<svc>/config/rules/china_ip.txt` |
 | `plugin` | 配置文件所在目录（`config/`） | `plugin ../bin/smartdns_ui.so` | `<svc>/bin/smartdns_ui.so` |
@@ -181,18 +181,19 @@ smartdns 的 `smartdns.conf` 中不同指令的**相对路径基准不同**，�
 
 > service.yaml 未设 `workdir` 时，smartdns 进程 CWD = 服务根目录（`<svc>/`）。
 > 配置文件路径由 `command` 的 `-c config/smartdns.conf` 参数指定，故配置文件位于 `<svc>/config/smartdns.conf`。
+> **注意**：`cache-file` 的基准是配置文件所在目录（`config/`），不是进程 CWD。若写 `cache-file config/smartdns.cache` 会解析为 `<svc>/config/config/smartdns.cache`（双重 config），实测 smartdns 会实际写入该错误路径。
 
 #### 目录结构（推荐）
 
 ```
 services/smartdns/
-├── service.yaml          # command: [bin/smartdns-wrapper, -c, config/smartdns.conf, -f]
+├── service.yaml          # command: [bin/smartdns, -c, config/smartdns.conf, -f]
 ├── bin/
-│   ├── smartdns-wrapper
+│   ├── smartdns
 │   └── smartdns_ui.so    # plugin 引用：../bin/smartdns_ui.so（基准=config/）
 └── config/
     ├── smartdns.conf     # 主配置
-    ├── smartdns.cache    # cache-file 引用：config/smartdns.cache（基准=服务根）
+    ├── smartdns.cache    # cache-file 引用：smartdns.cache（基准=config/）
     └── rules/            # domain-set/ip-set 引用：rules/xxx.txt（基准=config/）
         ├── cn_domain.txt
         ├── gfw_domain.txt
@@ -203,7 +204,7 @@ services/smartdns/
 
 - ❌ `domain-set -file config/rules/cn_domain.txt` → 解析为 `config/config/rules/...`（双重 config）
 - ❌ `plugin bin/smartdns_ui.so` → 解析为 `config/bin/smartdns_ui.so`（不存在）
-- ❌ `cache-file smartdns.cache` → 解析为 `<svc>/smartdns.cache`（不在 config/ 下）
+- ❌ `cache-file config/smartdns.cache` → 解析为 `config/config/smartdns.cache`（双重 config，smartdns 会实际写入错误路径）
 
 #### update-gfw-china 扩展
 
