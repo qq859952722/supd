@@ -80,14 +80,15 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run  # 服务启动（
 | 2026-08-04 | workdir 相对路径支持 + v0.0.43 | `core.ResolveWorkdir` 统一解析；移除 workdir 绝对路径校验；6 处构建逻辑统一 | [notes/2026-08-04.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-04.md) |
 | 2026-08-04 | 全配置路径统一 + v0.0.44 | env_files/extension_dirs/runtimes/extension entry/CWD/command/readiness 全链路支持绝对+相对路径 | [notes/2026-08-04.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-04.md) |
 | 2026-08-04 | runtime CLI 路径补漏 + API 契约修复 + v0.0.45 | `runtimes install` 接受相对 `<baseDir>` 路径；install/remove 直接发送 runtime map | [notes/2026-08-04.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-04.md) |
+| 2026-08-04 | 远程扩展规范化：bash→tjs + 8 服务 updater | 全局扩展 alpine-init/auto-create-users 转 tjs；8 服务 updater 扩展（adguardhome/backrest/dnscrypt-proxy/filebrowser/lucky/openlist/s-ui/smartdns） | [notes/2026-08-04.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-04.md) |
+| 2026-08-05 | 服务日志前缀时间 bug 修复 | `LogViewer.tsx` 长轮询用 `Date.now()` 作 timestamp 导致同批次日志前缀时间全相同；新增 `parseLogContent` 从 content 解析 RFC3339 时间戳+级别 | [notes/2026-08-05.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-05.md) |
 
 ---
 
-## 七、最近会话重点（2026-08-04 v0.0.45）
+## 七、最近会话重点（2026-08-05 服务日志前缀时间 bug 修复）
 
-- 修复 `supd runtimes install` 遗留的绝对路径限制：相对路径原样写入配置，由 `BuildRegistryAt(baseDir, ...)` 统一解析。
-- 修复 runtime install/remove 与 `/api/settings/runtimes` 契约不一致：移除 `{"runtimes": ...}` 包装层，直接发送 runtime map。
-- 回归测试按 `map[string]string` 解码请求体，覆盖相对路径写入、既有 runtime 保留及 remove 行为。
-- 全量 build/vet/test/race/前端验证通过；`git diff --check` 通过；已推送 `v0.0.45` 标签。
-
-遗留：无。
+- **现象**：服务日志前缀时间全部相同（都是查看时刻），不反映日志实际产生时间。
+- **根因**：`web/src/components/service/LogViewer.tsx` 长轮询批量获取日志时 `timestamp: Date.now() / 1000`，用接收时刻而非日志实际时间。
+- **修复**：新增 `parseLogContent()` 从日志 content（格式 `[RFC3339] [level] message`）解析实际时间戳与级别，message 去掉 supd 前缀避免重复显示；解析失败兜底 `Date.now()` + `detectLevel`。
+- **验证**：pnpm build / go build / go vet 全通过。
+- **遗留**：待部署到远程验证效果；远程 dnscrypt-proxy.toml 路径修复 + README 重写为运维操作不记录于 docs。

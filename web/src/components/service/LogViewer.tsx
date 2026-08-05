@@ -43,6 +43,27 @@ function detectLevel(content: string): string {
   return 'info'
 }
 
+// 解析 supd 日志行格式: [RFC3339] [level] message
+// 从 content 中提取实际时间戳与级别，避免用 Date.now() 导致同批次日志时间戳全部相同
+function parseLogContent(content: string): { timestamp: number; level: string; message: string } {
+  const match = content.match(/^\[(\d{4}-\d{2}-\d{2}T[^\]]+)\]\s*\[(\w+)\]\s?(.*)$/)
+  if (match) {
+    const timeStr = match[1]!
+    const level = match[2]!
+    const message = match[3]!
+    let ts = Date.parse(timeStr)
+    if (isNaN(ts)) {
+      // JavaScript Date 仅支持毫秒精度，截断纳秒到毫秒后重试
+      ts = Date.parse(timeStr.replace(/\.(\d{3})\d+/, '.$1'))
+    }
+    if (!isNaN(ts)) {
+      return { timestamp: ts / 1000, level: level.toLowerCase(), message }
+    }
+  }
+  // 兜底：无法解析时用当前时间与启发式级别
+  return { timestamp: Date.now() / 1000, level: detectLevel(content), message: content }
+}
+
 const MAX_LOG_LINES = 5000 // 前端保留上限，避免内存爆炸
 
 export function LogViewer({ serviceName, logs: externalLogs }: LogViewerProps) {
@@ -99,11 +120,14 @@ export function LogViewer({ serviceName, logs: externalLogs }: LogViewerProps) {
           }
           const newLines: LogLine[] = (res.data ?? [])
             .filter((item) => item?.content)
-            .map((item) => ({
-              timestamp: Date.now() / 1000,
-              message: item.content!,
-              level: detectLevel(item.content!),
-            }))
+            .map((item) => {
+              const parsed = parseLogContent(item.content!)
+              return {
+                timestamp: parsed.timestamp,
+                message: parsed.message,
+                level: parsed.level,
+              }
+            })
           if (newLines.length > 0) {
             setLogs((prev) => {
               const combined = [...prev, ...newLines]
