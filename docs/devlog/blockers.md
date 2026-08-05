@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-08-05：v0.0.46 无法推送 GitHub
+
+- **状态**：✅ 已解决（2026-08-05 网络恢复后重试 push 成功）
+- **现象**：首次 `git push` 连接超时（Failed to connect to github.com:443 after 135946 ms）；重试时 SSL 中断（OpenSSL unexpected eof while reading）；`git ls-remote` 小数据量可成功，最终 push 成功。
+- **解决**：网络间歇可用，重试 `git push origin main && git push origin v0.0.46` 成功（2cd1a2c..e13a4e5，tag v0.0.46 已推送）。
+- **影响**：GitHub Actions 已触发，镜像构建中。
+
+---
+
 ## 2026-07-28：v0.0.38 无法推送 GitHub
 
 - **状态**：✅ 已解决（2026-07-29 确认网络恢复，v0.0.38 标签已在远程）
