@@ -193,6 +193,8 @@ git push origin vX.Y.Z
 | 2026-08-31 | v0.0.47 | 修复扩展工作目录与相对 entry 解析根被 v0.0.44 错误改为 baseDir/服务根的问题；同步运行时、导入导出校验、规格、Skill、示例与测试；完成全链路审计，Go build/vet/test、race、版本注入和示例校验全部通过 |
 | 2026-08-31 | v0.0.48 | 优化 Alpine/Debian 镜像层结构：使用 `COPY --link --chmod` 分离 supd/tjs 二进制层，更新 supd 时复用基础系统与运行时层；兼容现有 GitHub Actions Buildx workflow，未执行本地构建 |
 | 2026-08-31 | v0.0.49 | 增强正式发布和手动构建 workflow 的 tjs 编译缓存 key，绑定缓存 schema、基础镜像/libc、架构和 `TJS_VERSION`，避免构建环境变化时误复用旧产物；未执行本地构建 |
+| 2026-08-31 | v0.0.50 | 新增固定 `tjs-cache` prerelease 资产缓存：按 Alpine/Debian、amd64/arm64、`TJS_VERSION` 和 schema 复用 tjs，未命中时编译并上传；清理任务按 `TJS_VERSION` 保留最近 5 个版本；未执行本地构建 |
+| 2026-08-31 | v0.0.51 | 完善固定 `tjs-cache` Release 复用链路：Actions Cache 未命中时下载 Release asset，缓存命中但 Release 缺少资产时补上传；自动发布与手动构建共用并发保护和五版本清理；未执行本地构建 |
 
 
 

@@ -77,7 +77,9 @@ exit code 127
 
 5. **镜像层顺序与增量更新**：`Dockerfile` 与 `Dockerfile.debian` 使用 `COPY --link --chmod=755` 分离 `supd`、`tjs` 二进制层；CI 必须保持 `context: .` 并将对应架构的 tjs 放置为构建上下文根目录的 `./tjs`。更新 supd 时可复用基础系统和 tjs 层，但容器仍需按正常流程重建/重启。
 
-6. **普通服务二进制同样遵循 libc 分流**：在 Alpine 中发现待安装二进制依赖 glibc 时立即停止，不尝试 `glibc`/`gcompat`/`libc6-compat` 等兼容层，改为提示用户切换 Debian 镜像。完整门禁见 `01_service_spec.md` §1.7。
+6. **tjs 固定 Release 缓存**：正式发布和手动镜像 workflow 先查询固定的 `tjs-cache` prerelease，按 Alpine/Debian、架构、`TJS_VERSION` 和缓存 schema 下载对应资产；仅在 Actions Cache 与 Release asset 均未命中时编译。编译完成后上传同一 Release，清理任务按 `TJS_VERSION` 保留最近 5 个版本，每个版本保留 Alpine/Debian × amd64/arm64 全套资产。修改编译流程、补丁或基础镜像时递增 `TJS_CACHE_SCHEMA`。
+
+7. **普通服务二进制同样遵循 libc 分流**：在 Alpine 中发现待安装二进制依赖 glibc 时立即停止，不尝试 `glibc`/`gcompat`/`libc6-compat` 等兼容层，改为提示用户切换 Debian 镜像。完整门禁见 `01_service_spec.md` §1.7。
 
 ### 排查清单（tjs 扩展报 exit code 127 时）
 

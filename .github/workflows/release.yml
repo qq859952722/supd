@@ -3,6 +3,10 @@ name: 自动 Release（版本 tag 触发）
 # 推送 vX.Y.Z 格式的 git tag 时自动触发
 # 使用方式：
 #   git tag v0.0.1 && git push origin v0.0.1
+concurrency:
+  group: tjs-cache-maintenance
+  cancel-in-progress: false
+
 on:
   push:
     tags:
@@ -14,6 +18,9 @@ env:
   IMAGE_NAME: ${{ github.repository }}
   # txiki.js 版本，升级时同步修改此处
   TJS_VERSION: "v26.6.0"
+  # tjs 编译流程、补丁或基础镜像变化时递增
+  TJS_CACHE_SCHEMA: "v3"
+  TJS_CACHE_RELEASE: "tjs-cache"
 
 jobs:
   # ────────────────────────────────────────────────────────────
@@ -41,12 +48,102 @@ jobs:
           fi
 
   # ────────────────────────────────────────────────────────────
+  # 固定 Release：所有 tjs 版本资产集中存放于 tjs-cache，不创建独立 Release
+  # ────────────────────────────────────────────────────────────
+  ensure-tjs-cache-release:
+    name: "准备 tjs-cache Release"
+    runs-on: ubuntu-latest
+    needs: meta
+    permissions:
+      contents: write
+    steps:
+      - name: 确保固定 Release 存在
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "${TJS_CACHE_RELEASE}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create "${TJS_CACHE_RELEASE}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "tjs build cache" \
+              --notes "自动维护的 txiki.js 构建缓存，最多保留最近 5 个 TJS_VERSION。" \
+              --prerelease
+          fi
+
+  # ────────────────────────────────────────────────────────────
   # Job 1: 编译 tjs（矩阵构建 amd64 / arm64 并缓存）
   # 重要：必须在 Alpine 容器中编译，确保产出 musl 链接的二进制。
   # 运行时镜像为 alpine:3.20（musl libc），若在 ubuntu（glibc）上编译，
   # 产出的二进制因依赖 /lib64/ld-linux-x86-64.so.2 与 glibc 符号而无法运行
   # （症状：tjs-bin: cannot execute: required file not found）。
   # ────────────────────────────────────────────────────────────
+  cleanup-tjs-cache:
+    name: "清理 tjs-cache Release"
+    if: needs.build-tjs.result == 'success' && needs.build-tjs-debian.result == 'success'
+    runs-on: ubuntu-latest
+    needs: [build-tjs, build-tjs-debian]
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: 按 TJS_VERSION 保留最近 5 个版本
+        run: |
+          set -euo pipefail
+
+          mapfile -t assets < <(
+            gh release view "${TJS_CACHE_RELEASE}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --json assets \
+              --jq '.assets[].name'
+          )
+
+          versions_file="$(mktemp)"
+          trap 'rm -f "${versions_file}"' EXIT
+
+          for asset in "${assets[@]}"; do
+            case "${asset}" in
+              tjs-alpine-amd64-*) rest="${asset#tjs-alpine-amd64-}" ;;
+              tjs-alpine-arm64-*) rest="${asset#tjs-alpine-arm64-}" ;;
+              tjs-debian-amd64-*) rest="${asset#tjs-debian-amd64-}" ;;
+              tjs-debian-arm64-*) rest="${asset#tjs-debian-arm64-}" ;;
+              *) continue ;;
+            esac
+            version="${rest%-v[0-9]*}"
+            if [[ "${version}" == v* ]]; then
+              echo "${version}" >> "${versions_file}"
+            fi
+          done
+
+          mapfile -t versions < <(sort -Vu "${versions_file}")
+          if [ "${#versions[@]}" -le 5 ]; then
+            echo "tjs-cache 版本数不超过 5，无需清理"
+            exit 0
+          fi
+
+          mapfile -t keep_versions < <(printf '%s\n' "${versions[@]}" | sort -V | tail -n 5)
+          declare -A keep=()
+          for version in "${keep_versions[@]}"; do
+            keep["${version}"]=1
+          done
+
+          echo "保留版本：${keep_versions[*]}"
+          for asset in "${assets[@]}"; do
+            case "${asset}" in
+              tjs-alpine-amd64-*) rest="${asset#tjs-alpine-amd64-}" ;;
+              tjs-alpine-arm64-*) rest="${asset#tjs-alpine-arm64-}" ;;
+              tjs-debian-amd64-*) rest="${asset#tjs-debian-amd64-}" ;;
+              tjs-debian-arm64-*) rest="${asset#tjs-debian-arm64-}" ;;
+              *) continue ;;
+            esac
+            version="${rest%-v[0-9]*}"
+            if [[ "${version}" == v* ]] && [[ -z "${keep[${version}]+x}" ]]; then
+              echo "删除旧版本资产：${asset}（TJS_VERSION=${version}）"
+              gh release delete-asset "${TJS_CACHE_RELEASE}" "${asset}" \
+                --repo "${GITHUB_REPOSITORY}" \
+                --yes
+            fi
+          done
+
   build-tjs:
     name: "编译 tjs (${{ matrix.arch }})"
     strategy:
@@ -58,19 +155,39 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm  # 原生 ARM64 编译，避免 QEMU 模拟导致速度极慢
     runs-on: ${{ matrix.runner }}
-    needs: meta
+    needs: [meta, ensure-tjs-cache-release]
+    permissions:
+      contents: write
 
     steps:
-      - name: 查找 tjs 缓存
+      - name: 查找 tjs Actions 缓存
         id: cache
         uses: actions/cache@v5
         with:
           path: /tmp/tjs-binary
-          # 缓存 key 包含 alpine 标识，避免命中旧的 glibc 编译缓存
-          key: tjs-alpine-${{ matrix.arch }}-${{ env.TJS_VERSION }}
+          key: tjs-alpine-${{ env.TJS_CACHE_SCHEMA }}-alpine320-${{ matrix.arch }}-${{ env.TJS_VERSION }}
+
+      - name: 从固定 Release 获取 tjs
+        id: release-cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET: tjs-alpine-${{ matrix.arch }}-${{ env.TJS_VERSION }}-${{ env.TJS_CACHE_SCHEMA }}
+        run: |
+          mkdir -p /tmp/tjs-binary
+          if gh release download "${TJS_CACHE_RELEASE}" --repo "${GITHUB_REPOSITORY}" --pattern "${ASSET}" --dir /tmp/tjs-binary --clobber; then
+            mv "/tmp/tjs-binary/${ASSET}" /tmp/tjs-binary/tjs
+            echo "hit=true" >> "$GITHUB_OUTPUT"
+            chmod +x /tmp/tjs-binary/tjs
+            echo "复用固定 Release 中的 ${ASSET}"
+          else
+            echo "hit=false" >> "$GITHUB_OUTPUT"
+            rm -f /tmp/tjs-binary/tjs
+            echo "固定 Release 未找到 ${ASSET}，准备编译"
+          fi
 
       - name: 在 Alpine 容器中编译 txiki.js（确保 musl 兼容）
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.cache.outputs.cache-hit != 'true' && steps.release-cache.outputs.hit != 'true'
         run: |
           # 使用与运行时镜像一致的 alpine:3.20 编译 tjs
           # 编译产物为 musl 动态链接，可在 alpine 运行时镜像中正常执行
@@ -122,6 +239,13 @@ jobs:
             exit 1
           fi
 
+      - name: 上传 tjs 到固定 Release
+        if: steps.cache.outputs.cache-hit != 'true' && steps.release-cache.outputs.hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET: tjs-alpine-${{ matrix.arch }}-${{ env.TJS_VERSION }}-${{ env.TJS_CACHE_SCHEMA }}
+        run: gh release upload "${TJS_CACHE_RELEASE}" /tmp/tjs-binary/tjs#"${ASSET}" --repo "${GITHUB_REPOSITORY}" --clobber
+
       - name: 上传 tjs artifact
         uses: actions/upload-artifact@v6
         with:
@@ -144,18 +268,39 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    needs: meta
+    needs: [meta, ensure-tjs-cache-release]
+    permissions:
+      contents: write
 
     steps:
-      - name: 查找 tjs 缓存
+      - name: 查找 tjs Actions 缓存
         id: cache
         uses: actions/cache@v5
         with:
           path: /tmp/tjs-binary
           key: tjs-debian-${{ env.TJS_CACHE_SCHEMA }}-bookworm-${{ matrix.arch }}-${{ env.TJS_VERSION }}
 
-      - name: 在 Debian 容器中编译 txiki.js（确保 glibc 兼容）
+      - name: 从固定 Release 获取 tjs
+        id: release-cache
         if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET: tjs-debian-${{ matrix.arch }}-${{ env.TJS_VERSION }}-${{ env.TJS_CACHE_SCHEMA }}
+        run: |
+          mkdir -p /tmp/tjs-binary
+          if gh release download "${TJS_CACHE_RELEASE}" --repo "${GITHUB_REPOSITORY}" --pattern "${ASSET}" --dir /tmp/tjs-binary --clobber; then
+            mv "/tmp/tjs-binary/${ASSET}" /tmp/tjs-binary/tjs
+            echo "hit=true" >> "$GITHUB_OUTPUT"
+            chmod +x /tmp/tjs-binary/tjs
+            echo "复用固定 Release 中的 ${ASSET}"
+          else
+            echo "hit=false" >> "$GITHUB_OUTPUT"
+            rm -f /tmp/tjs-binary/tjs
+            echo "固定 Release 未找到 ${ASSET}，准备编译"
+          fi
+
+      - name: 在 Debian 容器中编译 txiki.js（确保 glibc 兼容）
+        if: steps.cache.outputs.cache-hit != 'true' && steps.release-cache.outputs.hit != 'true'
         run: |
           mkdir -p /tmp/tjs-binary
           docker run --rm \
@@ -204,6 +349,13 @@ jobs:
             file /tmp/tjs-binary/tjs
             exit 1
           fi
+
+      - name: 上传 tjs 到固定 Release
+        if: steps.release-cache.outputs.hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET: tjs-debian-${{ matrix.arch }}-${{ env.TJS_VERSION }}-${{ env.TJS_CACHE_SCHEMA }}
+        run: gh release upload "${TJS_CACHE_RELEASE}" /tmp/tjs-binary/tjs#"${ASSET}" --repo "${GITHUB_REPOSITORY}" --clobber
 
       - name: 上传 tjs artifact
         uses: actions/upload-artifact@v6

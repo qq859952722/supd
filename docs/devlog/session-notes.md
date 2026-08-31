@@ -11,7 +11,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：⭐ 优秀，1000+ 单元测试通过（Go + 前端），零竞态；go vet 零警告
-- **当前版本**：v0.0.48（镜像层增量更新优化；版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.0.50（tjs 固定 Release 构建缓存；版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -86,10 +86,17 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run  # 服务启动（
 | 2026-08-31 | v0.0.47 发版审计 | 完成工作路径与文档修复的全链路审计；Go build/vet/test、race、版本注入和示例校验全部通过，已推送 GitHub | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
 | 2026-08-31 | v0.0.48 镜像层增量更新优化 | Alpine/Debian Dockerfile 使用独立二进制层与 `COPY --link --chmod`，兼容现有 GitHub Actions workflow；未执行本地构建，已完成 CI 配置审查 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
 | 2026-08-31 | v0.0.49 tjs 编译缓存增强 | 正式发布和手动构建 workflow 的 tjs 缓存 key 增加 schema、基础镜像/libc、架构和源版本约束；未执行本地构建 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
+| 2026-08-31 | v0.0.51 tjs 固定 Release 构建缓存完善 | 自动发布和手动构建共用固定 `tjs-cache` Release；命中时下载复用、未命中时编译上传；workflow 级并发避免资产竞争；按 TJS_VERSION 清理旧资产，仅保留最近 5 个版本及每版四个平台/变体组合 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
 
 ---
 
-## 七、最近会话重点（2026-08-31 扩展工作目录解析回归修复）
+## 七、最近会话重点（2026-08-31 tjs 固定 Release 构建缓存）
+
+- **现状**：自动发布和手动镜像 workflow 共用固定 `tjs-cache` prerelease；Actions Cache 未命中时下载对应 Release asset，仍未命中才编译。
+- **资产策略**：按 Alpine/Debian、amd64/arm64、`TJS_VERSION` 和 `TJS_CACHE_SCHEMA` 区分资产；编译结果上传到固定 Release，清理任务按版本保留最近 5 个版本。
+- **安全与兼容**：两个 workflow 使用同一并发组避免 Release 资产竞争；缓存命中后仍生成 `/tmp/tjs-binary/tjs`，原有 artifact 和 Docker 构建流程不变；`push: false` 不写 Release。
+
+### 上次会话重点：扩展工作目录解析回归修复
 
 - **现象**：192.168.31.190:7979 上所有扩展启动失败，报 `could not load '<服务根>/run.js' - ENOENT`（如 filebrowser-updater）。
 - **根因**：v0.0.44「统一配置路径解析规则」将扩展进程 CWD 与相对 entry 的解析根从**扩展自身目录**（`meta.yaml` 所在目录）改为**服务根/baseDir**，导致 `entry: run.js` 解析到错误路径。
