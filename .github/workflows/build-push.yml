@@ -40,6 +40,7 @@ jobs:
   # ────────────────────────────────────────────────────────────
   ensure-tjs-cache-release:
     name: "准备 tjs-cache Release"
+    if: inputs.push
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -57,11 +58,11 @@ jobs:
           fi
 
   # ────────────────────────────────────────────────────────────
-  # Alpine 变体：在对应平台原生编译 tjs + 构建镜像构建 Docker 镜像
+  # Alpine 变体：在对应平台原生编译 tjs + 构建 Docker 镜像
   # ────────────────────────────────────────────────────────────
   build-alpine:
     name: "[Alpine ${{ matrix.arch }}] 编译 tjs + 构建镜像"
-    if: inputs.variant == 'alpine' || inputs.variant == 'both'
+    if: always() && (inputs.variant == 'alpine' || inputs.variant == 'both') && (needs.ensure-tjs-cache-release.result == 'success' || needs.ensure-tjs-cache-release.result == 'skipped')
     strategy:
       fail-fast: false
       matrix:
@@ -75,7 +76,6 @@ jobs:
 
     runs-on: ${{ matrix.runner }}
     needs: ensure-tjs-cache-release
-    if: always() && (needs.ensure-tjs-cache-release.result == 'success' || needs.ensure-tjs-cache-release.result == 'skipped')
     permissions:
       contents: write
       packages: write
@@ -247,7 +247,7 @@ jobs:
 
   build-debian:
     name: "[Debian ${{ matrix.arch }}] 编译 tjs + 构建镜像"
-    if: inputs.variant == 'debian' || inputs.variant == 'both'
+    if: always() && (inputs.variant == 'debian' || inputs.variant == 'both') && (needs.ensure-tjs-cache-release.result == 'success' || needs.ensure-tjs-cache-release.result == 'skipped')
     strategy:
       fail-fast: false
       matrix:
@@ -261,7 +261,6 @@ jobs:
 
     runs-on: ${{ matrix.runner }}
     needs: ensure-tjs-cache-release
-    if: always() && (needs.ensure-tjs-cache-release.result == 'success' || needs.ensure-tjs-cache-release.result == 'skipped')
     permissions:
       contents: write
       packages: write

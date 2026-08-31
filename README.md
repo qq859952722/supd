@@ -246,8 +246,8 @@ docker pull ghcr.io/qq859952722/supd:latest
 docker pull ghcr.io/qq859952722/supd:debian
 
 # 或指定具体版本
-docker pull ghcr.io/qq859952722/supd:v0.0.51
-docker pull ghcr.io/qq859952722/supd:v0.0.51-debian
+docker pull ghcr.io/qq859952722/supd:v0.0.52
+docker pull ghcr.io/qq859952722/supd:v0.0.52-debian
 ```
 
 **镜像标签对照表**：

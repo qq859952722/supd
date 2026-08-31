@@ -87,6 +87,7 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run  # 服务启动（
 | 2026-08-31 | v0.0.48 镜像层增量更新优化 | Alpine/Debian Dockerfile 使用独立二进制层与 `COPY --link --chmod`，兼容现有 GitHub Actions workflow；未执行本地构建，已完成 CI 配置审查 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
 | 2026-08-31 | v0.0.49 tjs 编译缓存增强 | 正式发布和手动构建 workflow 的 tjs 缓存 key 增加 schema、基础镜像/libc、架构和源版本约束；未执行本地构建 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
 | 2026-08-31 | v0.0.51 tjs 固定 Release 构建缓存完善 | 自动发布和手动构建共用固定 `tjs-cache` Release；命中时下载复用、未命中时编译上传；workflow 级并发避免资产竞争；按 TJS_VERSION 清理旧资产，仅保留最近 5 个版本及每版四个平台/变体组合 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
+| 2026-08-31 | v0.0.52 build-push workflow 调度修复 | 删除 build-alpine/build-debian 重复的 job-level `if`，修复 GitHub Actions 调度前解析失败和列表显示异常；未执行本地构建 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
 
 ---
 
