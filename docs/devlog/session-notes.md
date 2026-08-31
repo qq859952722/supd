@@ -34,7 +34,7 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run  # 服务启动（
 - **前端嵌入**：`//go:embed dist` 在 `web/embed.go`，改前端后必须 `pnpm build` + `go build` 才能生效
 - **watcher**：白名单只监控配置目录；黑名单 data/bin/logs/history/cache/tmp/temp/run；fsnotify 防抖 500ms
 - **端口探测**：受管 PID 进程树 fd socket inode 精确匹配；Docker 部署需 `cap_add: SYS_PTRACE`
-- **路径解析**：全局 env_files/extension_dirs/runtimes 及全局扩展相对 entry 基于 `<baseDir>`；服务 command[0]/workdir/script readiness check[0] 及服务扩展相对 entry 基于服务根；裸命令保留 PATH 查找；`BuildRegistryAt(baseDir, ...)` 统一解析 runtime 路径
+- **路径解析**：全局 env_files/extension_dirs/runtimes 基于 `<baseDir>`；服务 command[0]/workdir/script readiness check[0] 基于服务根；**扩展相对 entry 与进程 CWD 基于扩展自身目录（meta.yaml 所在目录）**；裸命令保留 PATH 查找；`BuildRegistryAt(baseDir, ...)` 统一解析 runtime 路径
 
 ---
 
@@ -82,13 +82,19 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run  # 服务启动（
 | 2026-08-04 | runtime CLI 路径补漏 + API 契约修复 + v0.0.45 | `runtimes install` 接受相对 `<baseDir>` 路径；install/remove 直接发送 runtime map | [notes/2026-08-04.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-04.md) |
 | 2026-08-04 | 远程扩展规范化：bash→tjs + 8 服务 updater | 全局扩展 alpine-init/auto-create-users 转 tjs；8 服务 updater 扩展（adguardhome/backrest/dnscrypt-proxy/filebrowser/lucky/openlist/s-ui/smartdns） | [notes/2026-08-04.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-04.md) |
 | 2026-08-05 | 服务日志前缀时间 bug 修复 | `LogViewer.tsx` 长轮询用 `Date.now()` 作 timestamp 导致同批次日志前缀时间全相同；新增 `parseLogContent` 从 content 解析 RFC3339 时间戳+级别 | [notes/2026-08-05.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-05.md) |
+| 2026-08-31 | 扩展 CWD/entry 解析根回归修复（v0.0.44 引入） | 190 全部扩展启动失败；`buildWorkDir`/`RunExtension`/导出导入校验的 entry 解析根从 baseDir/服务根改回扩展自身目录；同步规格/Skill/示例/测试 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
+| 2026-08-31 | v0.0.47 发版审计 | 完成工作路径与文档修复的全链路审计；Go build/vet/test、race、版本注入和示例校验全部通过，准备推送 GitHub | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
 
 ---
 
-## 七、最近会话重点（2026-08-05 服务日志前缀时间 bug 修复）
+## 七、最近会话重点（2026-08-31 扩展工作目录解析回归修复）
 
-- **现象**：服务日志前缀时间全部相同（都是查看时刻），不反映日志实际产生时间。
-- **根因**：`web/src/components/service/LogViewer.tsx` 长轮询批量获取日志时 `timestamp: Date.now() / 1000`，用接收时刻而非日志实际时间。
-- **修复**：新增 `parseLogContent()` 从日志 content（格式 `[RFC3339] [level] message`）解析实际时间戳与级别，message 去掉 supd 前缀避免重复显示；解析失败兜底 `Date.now()` + `detectLevel`。
-- **验证**：pnpm build / go build / go vet 全通过。
-- **遗留**：待部署到远程验证效果；远程 dnscrypt-proxy.toml 路径修复 + README 重写为运维操作不记录于 docs。
+- **现象**：192.168.31.190:7979 上所有扩展启动失败，报 `could not load '<服务根>/run.js' - ENOENT`（如 filebrowser-updater）。
+- **根因**：v0.0.44「统一配置路径解析规则」将扩展进程 CWD 与相对 entry 的解析根从**扩展自身目录**（`meta.yaml` 所在目录）改为**服务根/baseDir**，导致 `entry: run.js` 解析到错误路径。
+- **修复**：
+  - `internal/extension/dispatcher.go` `buildWorkDir` 恢复返回 `filepath.Dir(extEntry.ConfigPath)`（扩展自身目录）
+  - `internal/api/extension_provider.go` `RunExtension` 的 workDir 改为扩展目录（serviceDir 单独用于 SUPD_SERVICE_DIR）
+  - 导出/导入 entry 校验 `validateExtensionForExport` 的 entryRoot 改为扩展自身目录；`validateExtensionImport` 去掉 entryRoot 参数
+  - 同步规格文档 §2.2.3/§2.5.6/§2.12.3/词汇表、Skill 文档、6+ 个示例 meta.yaml 与 README、`validate_dev.py`
+- **验证**：go build / vet / test 全通过；所有示例扩展通过 `validate_dev.py` 校验。
+- **遗留**：待构建并部署到 190 验证；code-server 因 argon2 glibc 模块 + musl Node 不兼容宕机（用户要求后续单独处理）。

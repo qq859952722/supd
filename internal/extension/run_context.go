@@ -39,7 +39,7 @@ type TriggerContext struct {
 	// TempEnv 运行时临时环境变量（仅本次执行，不持久化）
 	// 由前端"运行时参数编辑抽屉"传入，覆盖 env.yaml 同名变量
 	TempEnv map[string]string
-	// WorkDir 扩展进程工作目录，也是相对 entry 的解析根：全局扩展为默认工作目录，服务级扩展为服务根目录。
+	// WorkDir 扩展进程工作目录，也是相对 entry 的解析根：扩展自身目录（meta.yaml 所在目录）。
 	WorkDir string
 	// ExtensionEnvPath 当前扩展的 env.yaml 绝对路径；为空表示没有私有环境文件。
 	ExtensionEnvPath string

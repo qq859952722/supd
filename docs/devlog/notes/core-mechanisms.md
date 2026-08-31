@@ -19,7 +19,7 @@
 
 - `dispatcher` 管理并发，`RecordRun` 记历史
 - 扩展脚本必须读 `$SUPD_ACTION` 环境变量获取当前 action
-- 扩展路径/CWD：全局扩展相对 `entry` 基于 `<baseDir>` 解析且进程 CWD=`<baseDir>`；服务扩展相对 `entry` 基于服务根解析且进程 CWD=服务根；绝对 entry 直接使用。`script_tmp` 仍创建供临时文件
+- 扩展路径/CWD：扩展相对 `entry` 与进程 CWD 均基于**扩展自身目录**（`meta.yaml` 所在目录）解析；绝对 entry 直接使用。`script_tmp` 仍创建供临时文件（不自动清理）
 - 并发策略：`replace/serialize/parallel/debounce:Ns`（4 种）
   - serialize 语义："last pending wins"——pendingRun 单指针，新触发覆盖旧 pending（A-04-001）
 - 任务历史保留 7 天（内存），环形缓冲 200 条

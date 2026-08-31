@@ -636,12 +636,13 @@ func TestValidateExtensionForExportPathRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 	metaPath := filepath.Join(extDir, "meta.yaml")
-	for _, configuredEntry := range []string{"custom-exts/demo/run.sh", entry} {
+	for _, configuredEntry := range []string{"run.sh", entry} {
 		meta := fmt.Sprintf("name: demo\nversion: \"1.0.0\"\nentry: %s\n", configuredEntry)
 		if err := os.WriteFile(metaPath, []byte(meta), 0644); err != nil {
 			t.Fatal(err)
 		}
-		if err := validateExtensionForExport(extDir, metaPath, baseDir, extDir); err != nil {
+		// entry 以扩展自身目录为解析根（与运行期工作目录一致）
+		if err := validateExtensionForExport(extDir, metaPath, extDir, extDir); err != nil {
 			t.Fatalf("entry %q: %v", configuredEntry, err)
 		}
 	}
@@ -736,7 +737,7 @@ func TestImportExtensionConfirm(t *testing.T) {
 
 	// 成功 → 201（watchProvider 未配置，triggerReload 返回 nil，走跳过分支）
 	archiveData = buildTarGz(t, map[string]string{
-		"meta.yaml": "name: myext\nversion: \"1.0.0\"\nentry: extensions/myext/run.sh\n",
+		"meta.yaml": "name: myext\nversion: \"1.0.0\"\nentry: run.sh\n",
 		"run.sh":    "#!/bin/sh\n",
 	})
 	req = newUploadRequest(t, "/api/extensions/import/confirm", "file", "myext.tar.gz", archiveData, map[string]string{"name": "myext"})

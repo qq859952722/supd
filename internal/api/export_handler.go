@@ -266,7 +266,7 @@ func validateServiceImport(stagingDir, expectedName string) error {
 			return fmt.Errorf("extension directory/name mismatch: %s/%s", entry.Name(), meta.Name)
 		}
 		extDir := filepath.Join(stagingDir, "extensions", entry.Name())
-		if err := validateExtensionForExport(extDir, filepath.Join(extDir, "meta.yaml"), stagingDir, ""); err != nil {
+		if err := validateExtensionForExport(extDir, filepath.Join(extDir, "meta.yaml"), extDir, ""); err != nil {
 			return err
 		}
 	}
@@ -284,7 +284,7 @@ func importErrorCode(err error) errors.ErrorCode {
 	return errors.ErrInternal
 }
 
-func validateExtensionImport(stagingDir, expectedName, entryRoot, finalExtDir string) error {
+func validateExtensionImport(stagingDir, expectedName, finalExtDir string) error {
 	metaPath := filepath.Join(stagingDir, "meta.yaml")
 	meta, err := config.LoadExtension(metaPath)
 	if err != nil {
@@ -293,7 +293,8 @@ func validateExtensionImport(stagingDir, expectedName, entryRoot, finalExtDir st
 	if meta.Name != expectedName {
 		return fmt.Errorf("extension name mismatch: archive=%s request=%s", meta.Name, expectedName)
 	}
-	return validateExtensionForExport(stagingDir, metaPath, entryRoot, finalExtDir)
+	// entry 以扩展自身目录（stagingDir）为解析根
+	return validateExtensionForExport(stagingDir, metaPath, stagingDir, finalExtDir)
 }
 
 // ImportPreviewResponse 导入预览响应

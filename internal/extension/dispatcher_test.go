@@ -111,7 +111,7 @@ func testExtWithSchedule(name, entry, cron, action string) *watch.ExtensionEntry
 }
 
 // TestBuildWorkDirGlobal 测试全局扩展工作目录构造
-// 工作目录为默认工作目录
+// 工作目录为扩展自身目录（meta.yaml 所在目录）
 func TestBuildWorkDirGlobal(t *testing.T) {
 	tmpDir := t.TempDir()
 	extDir := filepath.Join(tmpDir, "extensions", "my-ext")
@@ -130,9 +130,9 @@ func TestBuildWorkDirGlobal(t *testing.T) {
 	}
 	workDir := buildWorkDir(tmpDir, extEntry)
 
-	// 全局扩展工作目录应为默认工作目录
-	if workDir != tmpDir {
-		t.Errorf("expected workDir %s, got %s", tmpDir, workDir)
+	// 全局扩展工作目录应为扩展自身目录
+	if workDir != extDir {
+		t.Errorf("expected workDir %s, got %s", extDir, workDir)
 	}
 
 	// 验证 script_tmp 临时目录已创建
@@ -143,7 +143,7 @@ func TestBuildWorkDirGlobal(t *testing.T) {
 }
 
 // TestBuildWorkDirService 测试服务级扩展工作目录构造
-// 工作目录为服务根目录
+// 工作目录为扩展自身目录（meta.yaml 所在目录）
 func TestBuildWorkDirService(t *testing.T) {
 	tmpDir := t.TempDir()
 	extDir := filepath.Join(tmpDir, "services", "my-service", "extensions", "my-ext")
@@ -162,10 +162,9 @@ func TestBuildWorkDirService(t *testing.T) {
 	}
 	workDir := buildWorkDir(tmpDir, extEntry)
 
-	// 服务级扩展工作目录应为服务根目录
-	expectedWorkDir := filepath.Join(tmpDir, "services", "my-service")
-	if workDir != expectedWorkDir {
-		t.Errorf("expected workDir %s, got %s", expectedWorkDir, workDir)
+	// 服务级扩展工作目录应为扩展自身目录
+	if workDir != extDir {
+		t.Errorf("expected workDir %s, got %s", extDir, workDir)
 	}
 
 	// 验证 script_tmp 临时目录已创建

@@ -418,13 +418,10 @@ def validate_extension(ext_dir):
     if m_entry:
         entry = m_entry.group(1)
         validate_entry_path(entry, "extension")
+        # entry 相对扩展自身目录（meta.yaml 所在目录）解析；绝对路径直接使用
         configured = Path(entry)
         if configured.is_absolute():
             entry_path = configured
-        elif ext_dir.parent.name == "extensions":
-            entry_path = ext_dir.parent.parent / configured
-        elif len(configured.parts) >= 3 and configured.parts[0] == "extensions":
-            entry_path = ext_dir.joinpath(*configured.parts[2:])
         else:
             entry_path = ext_dir / configured
         if not entry_path.exists():

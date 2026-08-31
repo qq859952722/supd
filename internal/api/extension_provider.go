@@ -349,14 +349,14 @@ func (p *CoreExtensionProvider) RunExtension(ctx context.Context, name string, a
 	// 3. 立即返回预记录结果，前端可通过 runs API 轮询进度和日志
 	runID := uuid.New().String()
 
-	// 全局扩展以默认工作目录为 CWD；服务级扩展以服务根目录为 CWD。
-	workDir := p.BaseDir
+	// 工作目录为扩展自身目录（meta.yaml 所在目录），相对 entry 基于此解析
+	// 服务级扩展单独注入 serviceDir 供 SUPD_SERVICE_DIR 环境变量使用
 	serviceDir := ""
 	var serviceSpec identity.CredentialSpec
 	if svcName != "" && p.BaseDir != "" {
 		serviceDir = filepath.Join(p.BaseDir, "services", svcName)
-		workDir = serviceDir
 	}
+	workDir := filepath.Dir(info.ConfigPath)
 	// REQ-F-023, §2.2.13: 服务级扩展 on_demand 触发时携带服务的身份配置，供 ResolveRunAs 继承
 	if svcName != "" && p.Discovery != nil {
 		if svcEntry, exists := p.Discovery.Services[svcName]; exists && svcEntry.Config != nil {

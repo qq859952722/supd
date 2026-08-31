@@ -97,7 +97,7 @@ func (m *mockExtensionProvider) GetExtensionStatus(name, service string) (map[st
 // validMetaYAML 合法的 meta.yaml 内容（通过 SetExtensionDefaults + ValidateExtension）
 const validMetaYAML = `name: test-ext
 version: "1.0.0"
-entry: extensions/test-ext/run.sh
+entry: run.sh
 runtime: shell
 timeout_seconds: 60
 concurrency: replace

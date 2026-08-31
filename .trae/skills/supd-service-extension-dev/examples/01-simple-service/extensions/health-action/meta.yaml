@@ -3,7 +3,7 @@ version: "1.0.0"
 description: "查询所属服务的健康状态"
 enabled: true
 runtime: bash
-entry: extensions/health-action/run.sh
+entry: run.sh
 timeout_seconds: 30
 concurrency: replace
 actions:

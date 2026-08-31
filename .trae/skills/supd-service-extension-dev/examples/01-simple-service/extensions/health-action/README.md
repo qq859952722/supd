@@ -20,7 +20,7 @@ Bash 脚本使用 `curl` 请求 `http://${APP_HOST}:${APP_PORT}/health`，成功
 
 # 部署与特别注意事项
 
-这是服务级扩展，应置于所属服务的 `extensions/health-action/`，入口相对服务根为 `extensions/health-action/run.sh`。
+这是服务级扩展，应置于所属服务的 `extensions/health-action/`，入口为扩展目录下的 `run.sh`。
 
 # 验证与故障排查
 

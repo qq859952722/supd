@@ -416,12 +416,8 @@ func (s *Server) handleExportExtension(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	baseDir := s.pathValidator.baseDir
-	entryRoot := baseDir
-	if info.Service != "" {
-		entryRoot = filepath.Join(baseDir, "services", info.Service)
-	}
-	if err := validateExtensionForExport(extDir, info.ConfigPath, entryRoot, extDir); err != nil {
+	// entry 以扩展自身目录为解析根（与运行期工作目录一致）
+	if err := validateExtensionForExport(extDir, info.ConfigPath, extDir, extDir); err != nil {
 		respondError(w, errors.ErrServiceConfigInvalid, fmt.Sprintf("extension export validation failed: %v", err))
 		return
 	}
@@ -441,9 +437,10 @@ func validateExtensionForExport(extDir, metaPath, entryRoot, finalExtDir string)
 	if err != nil {
 		return fmt.Errorf("load meta.yaml: %w", err)
 	}
+	// entry 以扩展自身目录为解析根（entryRoot == 当前 staging 或真实扩展目录）
 	entryPath := config.ResolvePath(entryRoot, meta.Entry)
-	// 扩展单独导入时 staging 目录并不位于最终层级。若 entry 最终落在扩展目录内，
-	// 将最终路径映射回 staging；绝对路径或扩展目录外的相对路径按运行时真实路径校验。
+	// 扩展单独导入时 staging 目录并不位于最终层级。若 entry 为指向最终目录内的绝对路径，
+	// 将最终路径映射回 staging；相对路径（已基于当前扩展目录解析）无需映射。
 	if finalExtDir != "" {
 		if rel, relErr := filepath.Rel(finalExtDir, entryPath); relErr == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			entryPath = filepath.Join(extDir, rel)
@@ -586,15 +583,13 @@ func (s *Server) handleImportExtensionConfirm(w http.ResponseWriter, r *http.Req
 		baseDir = "/etc/supd/"
 	}
 
-	entryRoot := baseDir
 	var targetDir string
 	if service != "" {
 		if !isValidServiceName(service) {
 			respondError(w, errors.ErrInvalidRequest, "invalid service name")
 			return
 		}
-		entryRoot = filepath.Join(baseDir, "services", service)
-		targetDir = filepath.Join(entryRoot, "extensions", name)
+		targetDir = filepath.Join(baseDir, "services", service, "extensions", name)
 	} else {
 		targetDir = filepath.Join(baseDir, "extensions", name)
 	}
@@ -616,7 +611,7 @@ func (s *Server) handleImportExtensionConfirm(w http.ResponseWriter, r *http.Req
 		Name:      name,
 		KeepData:  false,
 		Validator: func(stagingDir string) error {
-			return validateExtensionImport(stagingDir, name, entryRoot, targetDir)
+			return validateExtensionImport(stagingDir, name, targetDir)
 		},
 	})
 	if err != nil {

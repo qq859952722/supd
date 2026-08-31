@@ -20,7 +20,7 @@ supd `post_ready` 触发 `notify`，`pre_shutdown` 触发 `cleanup`；并发策�
 
 # 部署与特别注意事项
 
-作为全局扩展部署，入口为 `extensions/supd-lifecycle-ext/run.sh`。`cleanup` 会删除匹配 `/tmp/supd-*` 的普通文件，使用前应确认该范围符合部署环境要求；脚本中的扩展数和定时任务数是演示输出，不是动态探测结果。
+作为全局扩展部署，入口为扩展目录下的 `run.sh`。`cleanup` 会删除匹配 `/tmp/supd-*` 的普通文件，使用前应确认该范围符合部署环境要求；脚本中的扩展数和定时任务数是演示输出，不是动态探测结果。
 
 # 验证与故障排查
 

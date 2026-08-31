@@ -453,7 +453,7 @@ func TestValidateServicesAndExtensions_CustomGlobalDirs(t *testing.T) {
 		if err := os.MkdirAll(extDir, 0755); err != nil {
 			t.Fatal(err)
 		}
-		meta := fmt.Sprintf("name: %s\nversion: \"1.0.0\"\nentry: extensions/%s/run.sh\n", name, name)
+		meta := fmt.Sprintf("name: %s\nversion: \"1.0.0\"\nentry: run.sh\n", name)
 		if err := os.WriteFile(filepath.Join(extDir, "meta.yaml"), []byte(meta), 0644); err != nil {
 			t.Fatal(err)
 		}

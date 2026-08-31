@@ -362,9 +362,9 @@ func groupByService(matched []matchedExtension) map[string][]matchedExtension {
 	return groups
 }
 
-// buildWorkDir 构建扩展工作目录和相对 entry 的解析根：全局扩展使用默认工作目录，服务级扩展使用服务根目录。
+// buildWorkDir 构建扩展工作目录和相对 entry 的解析根：扩展自身目录（meta.yaml 所在目录）。
+// 这样 entry 中的相对路径（如 run.js）基于扩展自身目录解析，与扩展目录结构保持一致。
 func buildWorkDir(baseDir string, extEntry *watch.ExtensionEntry) string {
-
 	// 创建 script_tmp 临时目录，供扩展脚本写入临时文件
 	var dirName string
 	if extEntry.ServiceName == "" {
@@ -377,10 +377,8 @@ func buildWorkDir(baseDir string, extEntry *watch.ExtensionEntry) string {
 		slog.Warn("create extension script_tmp dir failed", "dir", scriptTmp, "extension", extEntry.Name, "service", extEntry.ServiceName, "error", err)
 	}
 
-	if extEntry.ServiceName != "" {
-		return filepath.Join(baseDir, "services", extEntry.ServiceName)
-	}
-	return baseDir
+	// 工作目录为扩展自身目录（meta.yaml 所在目录），相对 entry 基于此解析
+	return filepath.Dir(extEntry.ConfigPath)
 }
 
 // executeForService 以服务为粒度执行扩展

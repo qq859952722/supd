@@ -69,10 +69,10 @@ description: "supd服务与扩展开发指南。当用户要求开发、修改�
 ```
 
 - **运行时发现规则**：源码扫描 `services/*/service.yaml`、`services/*/extensions/*/meta.yaml`、`runtimes/*`，全局扩展按 `config.yaml.extension_dirs` 扫描（默认 `extensions/`，支持相对 `<baseDir>` 或绝对目录）；服务级扩展由目录位置关联服务。
-- **路径基准**：全局 `env_files`、`extension_dirs`、`runtimes` 及全局扩展相对 `entry` 均以 `<baseDir>` 为根；服务 `command[0]`、`workdir`、script readiness 的 `check[0]` 及服务扩展相对 `entry` 均以服务根目录为根。全局扩展进程 CWD 为 `<baseDir>`，服务扩展进程 CWD 为服务根目录。
+- **路径基准**：全局 `env_files`、`extension_dirs`、`runtimes` 均以 `<baseDir>` 为根；服务 `command[0]`、`workdir`、script readiness 的 `check[0]` 以服务根目录为根；**扩展相对 `entry` 与进程 CWD 均以扩展自身目录（`meta.yaml` 所在目录）为根**（全局扩展为 `<baseDir>/extensions/<name>/`，服务扩展为 `<baseDir>/services/<svc>/extensions/<name>/`）。
 - **热重载边界**：watcher 只监控根目录、`env/`、服务配置目录和扩展配置目录；`bin/`、`data/`、日志、缓存和临时目录不进入配置 watcher。
 - **规则等级**：本 Skill 中“必须/禁止”由 `validate_dev.py` 作为错误处理并返回非零；“建议/应”只产生警告或说明。业务约束以需求规格为准，字段加载与默认值以 `config.LoadService`、`config.LoadExtension` 为准；当前 Go 服务校验只检查 `version` 非空，因此开发校验器额外落实规格要求的三段数字格式。
-- **运行期文件**：服务只写自身 `data/`；日志写入 supd 的独立日志目录；扩展临时文件优先写 `SUPD_SCRIPT_TMP`。不要把运行期文件写回 `bin/`、扩展代码目录或配置根目录。
+- **运行期文件**：服务只写自身 `data/`；日志写入 supd 的独立日志目录；扩展临时文件优先写 `<baseDir>/script_tmp/<dir>`（如 `global+<ext>` / `<svc>+<ext>`，不自动清理，按绝对路径直接写入）。不要把运行期文件写回 `bin/`、扩展代码目录或配置根目录。
 
 ---
 

@@ -53,7 +53,7 @@ README 应维护当前有效结论，不堆积已完成待办或冗长尝试过�
 | `description` | string | `""` | 扩展功能描述 |
 | `enabled` | bool | `true` | 是否启用该扩展 |
 | `runtime` | string | `""` | 可选运行时别名（如 `bash`, `sh`, `python3`, `node`, `tjs`）；非空时由解释器执行 entry |
-| `entry` | string | 必填 | 入口文件绝对路径或相对所属配置根的路径；全局扩展根为 `<baseDir>`，服务扩展根为服务根；`runtime` 为空时须具备执行权限，非空时只要求文件可读 |
+| `entry` | string | 必填 | 入口文件相对扩展自身目录（`meta.yaml` 所在目录）的路径（如 `run.sh` / `run.js`）；也支持绝对路径；`runtime` 为空时须具备执行权限，非空时只要求文件可读 |
 | `timeout_seconds` | int | `600` | 单次运行超时时限；省略/`0` 时加载器填充 600，生效值须 > 0 且不超过 `settings.extension_hard_limit_seconds`（默认 1800） |
 | `run_as` | string | `""` | 运行身份（User 模式）：`root` / `<用户名>` / 空（服务级扩展继承服务身份，全局扩展继承 supd 用户）。与 `run_as_uid` 互斥 |
 | `run_as_uid` | int | `0` | 直接指定 uid（UID 模式，与 `run_as` 互斥，不查 /etc/passwd，适用于 NAS 固定 uid 服务）；`0`=未设置 |
@@ -173,7 +173,7 @@ triggers:
 | `SUPD_SERVICE_SIGNAL` | int | 仅 on_failure | 关联服务退出信号（数字，0 表示正常退出而非信号致死） |
 | `SUPD_SERVICE_RESTART_COUNT` | int | 仅 on_failure | 关联服务的当前已重启次数（数字） |
 
-> **额外变量 `SUPD_SCRIPT_TMP`**：supd 扩展执行器管理的 `script_tmp/<service>+<ext>` 或 `script_tmp/global+<ext>` 子目录绝对路径，供扩展脚本写入临时文件；扩展应优先使用此目录而非 `/tmp`，不得把运行期临时文件写回扩展代码目录。
+> **script_tmp 临时目录**：supd 为每个扩展创建 `<baseDir>/script_tmp/<service>+<ext>`（服务级）或 `<baseDir>/script_tmp/global+<ext>`（全局）子目录供扩展写入临时文件（不自动清理）。该目录**不通过环境变量暴露**，扩展按绝对路径 `<baseDir>/script_tmp/<dir>` 直接写入；应优先使用此目录而非 `/tmp`，不得把运行期临时文件写回扩展代码目录。
 >
 > **注入顺序**：`os.Environ()` → 4 层 env.yaml 合并 → `SUPD_*` 上下文变量（后者可覆盖同名系统变量）。
 
@@ -218,7 +218,7 @@ echo '正常打印执行日志'
 - [ ] 扩展目录包含中文 `README.md`，覆盖 §1.1 的 8 个一级标题；action/触发器/协议/外部资源/部署变更已同步并追加变更记录，且不含敏感数据
 - [ ] `name` 匹配 `^[a-z][a-z0-9-]*$` 且与所在目录名完全一致
 - [ ] `version` 匹配 `^[0-9]+\.[0-9]+\.[0-9]+$`（三段数字，如 `1.0.0`）
-- [ ] `entry` 为绝对路径或所属配置根相对路径且文件存在（无独立 `..` 路径段、无 shell 元字符、无冗余分隔符）；`runtime` 为空时已具备执行权限
+- [ ] `entry` 为相对扩展自身目录的路径或绝对路径且文件存在（无独立 `..` 路径段、无 shell 元字符、无冗余分隔符）；`runtime` 为空时已具备执行权限
 - [ ] `timeout_seconds` > 0 且不超过 config.yaml 生效的硬上限（默认 1800）
 - [ ] 需要解释器时配置合适的 `runtime` 别名（`bash`/`sh`/`python3`/`node`/`tjs` 或自定义）；直接执行入口时可省略
 - [ ] 触发器 `service_lifecycle.event` 仅使用 `pre_start`/`post_ready`/`on_failure`/`pre_stop`
