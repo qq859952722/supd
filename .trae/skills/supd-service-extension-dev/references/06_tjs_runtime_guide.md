@@ -46,6 +46,7 @@ exit code 127
 ### 正确做法
 
 1. **CI 必须在 Alpine 容器中编译 tjs**（见 `.github/workflows/release.yml` 的 `build-tjs` job）
+   - 编译产物缓存 key 必须包含缓存 schema、基础镜像/ libc、目标架构和 `TJS_VERSION`；仅在这些条件一致时复用上次编译结果。
    ```yaml
    - name: 在 Alpine 容器中编译 txiki.js
      run: |

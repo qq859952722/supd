@@ -85,6 +85,7 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run  # 服务启动（
 | 2026-08-31 | 扩展 CWD/entry 解析根回归修复（v0.0.44 引入） | 190 全部扩展启动失败；`buildWorkDir`/`RunExtension`/导出导入校验的 entry 解析根从 baseDir/服务根改回扩展自身目录；同步规格/Skill/示例/测试 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
 | 2026-08-31 | v0.0.47 发版审计 | 完成工作路径与文档修复的全链路审计；Go build/vet/test、race、版本注入和示例校验全部通过，已推送 GitHub | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
 | 2026-08-31 | v0.0.48 镜像层增量更新优化 | Alpine/Debian Dockerfile 使用独立二进制层与 `COPY --link --chmod`，兼容现有 GitHub Actions workflow；未执行本地构建，已完成 CI 配置审查 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
+| 2026-08-31 | v0.0.49 tjs 编译缓存增强 | 正式发布和手动构建 workflow 的 tjs 缓存 key 增加 schema、基础镜像/libc、架构和源版本约束；未执行本地构建 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
 
 ---
 

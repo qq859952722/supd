@@ -192,6 +192,7 @@ git push origin vX.Y.Z
 | 2026-08-03 | v0.0.42 | 修复多服务同名扩展查找竞态：`GetExtension(name)` 遍历 `Discovery.Services`（Go map 随机序）多服务同名扩展时返回项不确定，导致 `handleRunServiceExtension`/`handleGetServiceExtension` 偶发 404，且 `UpdateExtension`/`DeleteExtension`/`SaveExtensionEnv`/`RunExtension`/`GetExtensionStatus` 可能静默误操作到错误服务的扩展（写错 meta.yaml / 删错目录 / 写错 env）。接口新增 `GetExtensionForService(service, name)` 按服务作用域精确查找；5 个 provider 方法 + 2 个 handler 改用；service="" 退化为 GetExtension 语义（导入预览兼容）；7 个新测试含 80 请求 handler 压测 + 数据不串扰回归；go test/race/pnpm build 全通过 |
 | 2026-08-31 | v0.0.47 | 修复扩展工作目录与相对 entry 解析根被 v0.0.44 错误改为 baseDir/服务根的问题；同步运行时、导入导出校验、规格、Skill、示例与测试；完成全链路审计，Go build/vet/test、race、版本注入和示例校验全部通过 |
 | 2026-08-31 | v0.0.48 | 优化 Alpine/Debian 镜像层结构：使用 `COPY --link --chmod` 分离 supd/tjs 二进制层，更新 supd 时复用基础系统与运行时层；兼容现有 GitHub Actions Buildx workflow，未执行本地构建 |
+| 2026-08-31 | v0.0.49 | 增强正式发布和手动构建 workflow 的 tjs 编译缓存 key，绑定缓存 schema、基础镜像/libc、架构和 `TJS_VERSION`，避免构建环境变化时误复用旧产物；未执行本地构建 |
 
 
 

@@ -30,6 +30,8 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # tjs 编译流程/基础镜像/补丁变化时递增，避免复用不兼容的旧产物
+  TJS_CACHE_SCHEMA: "v2"
 
 jobs:
   # ────────────────────────────────────────────────────────────
