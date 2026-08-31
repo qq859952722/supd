@@ -74,7 +74,9 @@ exit code 127
 
 4. **Debian 镜像使用独立 glibc 构建**：`Dockerfile.debian` 基于 `debian:bookworm-slim`；CI 的 `build-tjs-debian`/`build-debian` 在 Debian 中编译并验证 tjs，通过 `debian` 或 `vX.Y.Z-debian` 标签发布。不要把 Alpine/musl 的 tjs 复制到 Debian，也不要把 Debian/glibc 的 tjs 复制到 Alpine。
 
-5. **普通服务二进制同样遵循 libc 分流**：在 Alpine 中发现待安装二进制依赖 glibc 时立即停止，不尝试 `glibc`/`gcompat`/`libc6-compat` 等兼容层，改为提示用户切换 Debian 镜像。完整门禁见 `01_service_spec.md` §1.7。
+5. **镜像层顺序与增量更新**：`Dockerfile` 与 `Dockerfile.debian` 使用 `COPY --link --chmod=755` 分离 `supd`、`tjs` 二进制层；CI 必须保持 `context: .` 并将对应架构的 tjs 放置为构建上下文根目录的 `./tjs`。更新 supd 时可复用基础系统和 tjs 层，但容器仍需按正常流程重建/重启。
+
+6. **普通服务二进制同样遵循 libc 分流**：在 Alpine 中发现待安装二进制依赖 glibc 时立即停止，不尝试 `glibc`/`gcompat`/`libc6-compat` 等兼容层，改为提示用户切换 Debian 镜像。完整门禁见 `01_service_spec.md` §1.7。
 
 ### 排查清单（tjs 扩展报 exit code 127 时）
 

@@ -72,18 +72,20 @@ RUN apk add --no-cache \
     && addgroup -S supd && adduser -S -G supd -h /etc/supd supd \
     && mkdir -p /etc/dropbear
 
-COPY --from=go-builder /supd /usr/local/bin/supd
+# 稳定层：包装脚本内容不随 supd/tjs 二进制版本变化
+RUN printf '#!/bin/sh\ncase "$1" in\n  run|eval|test|serve|bundle|compile|app|-v|--version|-h|--help)\n    exec /usr/local/bin/tjs-bin "$@" ;;\n  *)\n    exec /usr/local/bin/tjs-bin run "$@" ;;\nesac\n' \
+      > /usr/local/bin/tjs \
+    && chmod +x /usr/local/bin/tjs
+
+# 独立二进制层：更新 supd 时复用基础系统、tjs 和包装脚本层
+COPY --link --chmod=755 --from=go-builder /supd /usr/local/bin/supd
 
 # tjs 二进制：由 CI 在 Alpine 容器中编译（musl 链接），复制到 build context 根目录（./tjs）
 # 重要：必须在 Alpine 中编译，glibc 链接的二进制无法在 Alpine(musl) 运行
 # 运行时依赖 libffi/libstdc++/libgcc（已在上方 apk add 中安装）
-COPY tjs /usr/local/bin/tjs-bin
+COPY --link --chmod=755 tjs /usr/local/bin/tjs-bin
 
-# tjs 包装脚本：兼容 `tjs script.js` 和 `tjs run script.js` 两种调用方式
-RUN printf '#!/bin/sh\ncase "$1" in\n  run|eval|test|serve|bundle|compile|app|-v|--version|-h|--help)\n    exec /usr/local/bin/tjs-bin "$@" ;;\n  *)\n    exec /usr/local/bin/tjs-bin run "$@" ;;\nesac\n' \
-      > /usr/local/bin/tjs \
-    && chmod +x /usr/local/bin/tjs /usr/local/bin/tjs-bin /usr/local/bin/supd \
-    && mkdir -p /etc/supd/runtimes /var/log/supd \
+RUN mkdir -p /etc/supd/runtimes /var/log/supd \
     && ln -s /usr/local/bin/tjs /etc/supd/runtimes/tjs \
     && chown -R supd:supd /etc/supd /var/log/supd
 

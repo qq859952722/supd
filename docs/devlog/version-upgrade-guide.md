@@ -191,6 +191,7 @@ git push origin vX.Y.Z
 | 2026-07-30 | v0.0.41 | `clear-failed` 状态重置由 `pending` 改为 `down`（规格 §2.8.1 允许 down/pending，选择 down 避免无上游依赖服务永久卡在 pending"等待中"假象）；`handleClearFailedService` 用 `errors.As` 识别 `*ServiceError`，非 failed 状态返回 `400 INVALID_REQUEST`（原误返 500）；skill 同步更新（01_service_spec §4.1 状态机 clear-failed 说明、04_online_dev_guide §3.2 补全 clear-failed/force-stop/signal API） |
 | 2026-08-03 | v0.0.42 | 修复多服务同名扩展查找竞态：`GetExtension(name)` 遍历 `Discovery.Services`（Go map 随机序）多服务同名扩展时返回项不确定，导致 `handleRunServiceExtension`/`handleGetServiceExtension` 偶发 404，且 `UpdateExtension`/`DeleteExtension`/`SaveExtensionEnv`/`RunExtension`/`GetExtensionStatus` 可能静默误操作到错误服务的扩展（写错 meta.yaml / 删错目录 / 写错 env）。接口新增 `GetExtensionForService(service, name)` 按服务作用域精确查找；5 个 provider 方法 + 2 个 handler 改用；service="" 退化为 GetExtension 语义（导入预览兼容）；7 个新测试含 80 请求 handler 压测 + 数据不串扰回归；go test/race/pnpm build 全通过 |
 | 2026-08-31 | v0.0.47 | 修复扩展工作目录与相对 entry 解析根被 v0.0.44 错误改为 baseDir/服务根的问题；同步运行时、导入导出校验、规格、Skill、示例与测试；完成全链路审计，Go build/vet/test、race、版本注入和示例校验全部通过 |
+| 2026-08-31 | v0.0.48 | 优化 Alpine/Debian 镜像层结构：使用 `COPY --link --chmod` 分离 supd/tjs 二进制层，更新 supd 时复用基础系统与运行时层；兼容现有 GitHub Actions Buildx workflow，未执行本地构建 |
 
 
 
