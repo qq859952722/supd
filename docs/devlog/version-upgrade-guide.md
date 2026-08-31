@@ -196,6 +196,7 @@ git push origin vX.Y.Z
 | 2026-08-31 | v0.0.50 | 新增固定 `tjs-cache` prerelease 资产缓存：按 Alpine/Debian、amd64/arm64、`TJS_VERSION` 和 schema 复用 tjs，未命中时编译并上传；清理任务按 `TJS_VERSION` 保留最近 5 个版本；未执行本地构建 |
 | 2026-08-31 | v0.0.51 | 完善固定 `tjs-cache` Release 复用链路：Actions Cache 未命中时下载 Release asset，缓存命中但 Release 缺少资产时补上传；自动发布与手动构建共用并发保护和五版本清理；未执行本地构建 |
 | 2026-08-31 | v0.0.52 | 修复 `build-push.yml` 的 `build-alpine` 和 `build-debian` 重复声明 job-level `if` 导致 GitHub Actions 调度前解析失败、workflow 列表显示异常的问题；未执行本地构建 |
+| 2026-08-31 | v0.0.53 | 修复 tjs 固定 Release 资产未按目标名称上传，导致缓存始终无法命中的问题；改为上传实际命名资产并增加上传后校验，同时清理旧的无平台信息 `tjs` 资产；未执行本地构建 |
 
 
 

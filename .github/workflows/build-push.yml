@@ -56,6 +56,10 @@ jobs:
               --notes "自动维护的 txiki.js 构建缓存，最多保留最近 5 个 TJS_VERSION。" \
               --prerelease
           fi
+          # 清理旧流程错误上传的无平台信息资产
+          if gh release view "${TJS_CACHE_RELEASE}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name' | grep -Fxq tjs; then
+            gh release delete-asset "${TJS_CACHE_RELEASE}" tjs --repo "${GITHUB_REPOSITORY}" --yes
+          fi
 
   # ────────────────────────────────────────────────────────────
   # Alpine 变体：在对应平台原生编译 tjs + 构建 Docker 镜像
@@ -161,7 +165,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ASSET: tjs-alpine-${{ matrix.arch }}-${{ inputs.tjs_version }}-${{ env.TJS_CACHE_SCHEMA }}
-        run: gh release upload "${TJS_CACHE_RELEASE}" /tmp/tjs-binary/tjs#"${ASSET}" --repo "${GITHUB_REPOSITORY}" --clobber
+        run: |
+          install -m 755 /tmp/tjs-binary/tjs "/tmp/tjs-binary/${ASSET}"
+          gh release upload "${TJS_CACHE_RELEASE}" "/tmp/tjs-binary/${ASSET}" --repo "${GITHUB_REPOSITORY}" --clobber
+          gh release view "${TJS_CACHE_RELEASE}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name' | grep -Fxq "${ASSET}"
 
       # ── 把编译好的 tjs 复制到 build context ──
       - name: 准备 tjs 到 build context
@@ -343,7 +350,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ASSET: tjs-debian-${{ matrix.arch }}-${{ inputs.tjs_version }}-${{ env.TJS_CACHE_SCHEMA }}
-        run: gh release upload "${TJS_CACHE_RELEASE}" /tmp/tjs-binary/tjs#"${ASSET}" --repo "${GITHUB_REPOSITORY}" --clobber
+        run: |
+          install -m 755 /tmp/tjs-binary/tjs "/tmp/tjs-binary/${ASSET}"
+          gh release upload "${TJS_CACHE_RELEASE}" "/tmp/tjs-binary/${ASSET}" --repo "${GITHUB_REPOSITORY}" --clobber
+          gh release view "${TJS_CACHE_RELEASE}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name' | grep -Fxq "${ASSET}"
 
       - name: 准备 tjs 到 build context
         run: cp /tmp/tjs-binary/tjs ./tjs && chmod +x ./tjs

@@ -240,11 +240,14 @@ jobs:
           fi
 
       - name: 上传 tjs 到固定 Release
-        if: steps.cache.outputs.cache-hit != 'true' && steps.release-cache.outputs.hit != 'true'
+        if: steps.release-cache.outputs.hit != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ASSET: tjs-alpine-${{ matrix.arch }}-${{ env.TJS_VERSION }}-${{ env.TJS_CACHE_SCHEMA }}
-        run: gh release upload "${TJS_CACHE_RELEASE}" /tmp/tjs-binary/tjs#"${ASSET}" --repo "${GITHUB_REPOSITORY}" --clobber
+        run: |
+          install -m 755 /tmp/tjs-binary/tjs "/tmp/tjs-binary/${ASSET}"
+          gh release upload "${TJS_CACHE_RELEASE}" "/tmp/tjs-binary/${ASSET}" --repo "${GITHUB_REPOSITORY}" --clobber
+          gh release view "${TJS_CACHE_RELEASE}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name' | grep -Fxq "${ASSET}"
 
       - name: 上传 tjs artifact
         uses: actions/upload-artifact@v6
@@ -355,7 +358,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ASSET: tjs-debian-${{ matrix.arch }}-${{ env.TJS_VERSION }}-${{ env.TJS_CACHE_SCHEMA }}
-        run: gh release upload "${TJS_CACHE_RELEASE}" /tmp/tjs-binary/tjs#"${ASSET}" --repo "${GITHUB_REPOSITORY}" --clobber
+        run: |
+          install -m 755 /tmp/tjs-binary/tjs "/tmp/tjs-binary/${ASSET}"
+          gh release upload "${TJS_CACHE_RELEASE}" "/tmp/tjs-binary/${ASSET}" --repo "${GITHUB_REPOSITORY}" --clobber
+          gh release view "${TJS_CACHE_RELEASE}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name' | grep -Fxq "${ASSET}"
 
       - name: 上传 tjs artifact
         uses: actions/upload-artifact@v6
