@@ -11,7 +11,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：⭐ 优秀，1000+ 单元测试通过（Go + 前端），零竞态；go vet 零警告
-- **当前版本**：v0.0.53（修复 tjs Release 资产命名与复用；版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.0.54（验证 tjs Release 缓存复用；版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -89,6 +89,7 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run  # 服务启动（
 | 2026-08-31 | v0.0.51 tjs 固定 Release 构建缓存完善 | 自动发布和手动构建共用固定 `tjs-cache` Release；命中时下载复用、未命中时编译上传；workflow 级并发避免资产竞争；按 TJS_VERSION 清理旧资产，仅保留最近 5 个版本及每版四个平台/变体组合 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
 | 2026-08-31 | v0.0.52 build-push workflow 调度修复 | 删除 build-alpine/build-debian 重复的 job-level `if`，修复 GitHub Actions 调度前解析失败和列表显示异常；未执行本地构建 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
 | 2026-08-31 | v0.0.53 tjs Release 资产命名修复 | 修复 `gh release upload source#label` 未重命名资产导致四个任务均生成 `tjs`、Release 缓存无法命中的问题；改为上传真实命名文件并增加资产存在性校验 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
+| 2026-08-31 | v0.0.54 tjs Release 缓存复用验证 | 无代码变更的验证性发布；确认 v0.0.52 未命中缓存属修复前历史行为，四个正确命名资产已由 v0.0.53 写入 `tjs-cache`，本版应直接命中跳过编译 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
 
 ---
 
