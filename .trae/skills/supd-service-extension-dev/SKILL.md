@@ -96,7 +96,10 @@ description: "supd服务与扩展开发指南。当用户要求开发、修改�
 | **数值限制** | fsnotify防抖 `500ms` / stop grace `10s` / 扩展硬上限默认 `1800s`（可由全局设置调整）/ 上传限制 `100MB` / serialize队列上限 `16` |
 | **禁止引入** | 数据库 (SQLite/Bolt 等)、SSE (Server-Sent Events)、WebSocket |
 
-> **⚠️ glibc 二进制安装边界**：安装或更新服务二进制前必须检查其 libc/动态加载器要求。若 `file`、`readelf -l`、`ldd` 或实际启动结果表明二进制依赖 glibc，而当前容器是 Alpine/musl，必须立即停止安装及排障；禁止尝试安装 `glibc`、`gcompat`、`libc6-compat` 等兼容层，禁止下载非官方 glibc 安装脚本。应明确提醒用户改用官方 Debian 镜像 `ghcr.io/qq859952722/supd:debian`（指定版本使用 `vX.Y.Z-debian`），再继续安装。详见 `references/01_service_spec.md` §1.7。
+> **⚠️ 底包 libc 兼容性门禁（双向）**：安装、更新服务二进制或切换底包（Alpine↔Debian 容器重建）前后，必须检查二进制 libc/动态加载器要求与底包是否一致（`file`、`readelf -l`、`ldd` 或实际启动验证）：
+> - **glibc 二进制 + Alpine/musl 底包**：立即停止安装与排障；禁止安装 `glibc`、`gcompat`、`libc6-compat` 等兼容层，禁止第三方 glibc 安装脚本。提醒用户改用官方 Debian 镜像 `ghcr.io/qq859952722/supd:debian`（固定版本 `vX.Y.Z-debian`）。
+> - **musl 二进制 + Debian/glibc 底包**（切换底包后既有服务失效的常见场景）：症状一为 `fork/exec ... no such file or directory` 但文件实际存在（musl 解释器缺失）；症状二为 `Error relocating ... symbol not found`（误加载 glibc 版共享库）。处理规则与 smartdns 实战案例详见 `references/01_service_spec.md` §1.7/§1.8。
+> - 切换底包 = 容器重建：既有服务二进制的运行库环境会重置，autostart 服务可能在依赖初始化完成前启动而失败，需逐个复核并重跑初始化扩展。
 
 > **⚠️ 环境变量 (`env.yaml`) 致命陷阱**：
 > 1. 必须有 `env:` 作为顶层键。
@@ -107,7 +110,7 @@ description: "supd服务与扩展开发指南。当用户要求开发、修改�
 ## 💡 开发工作流 (Development Workflow)
 
 1. **确认需求**: 明确开发对象是服务还是扩展。若是扩展，确定触发器类型与并发策略。
-2. **确认二进制兼容性**: 安装或更新服务二进制前检查目标架构、动态加载器和 libc。发现 glibc 二进制运行于 Alpine/musl 时立即停止，不安装任何兼容层；提示用户切换官方 Debian 镜像后再继续。
+2. **确认二进制兼容性**: 安装或更新服务二进制前检查目标架构、动态加载器和 libc 与当前底包是否一致（双向门禁，含切换底包后的既有服务复核）。glibc 二进制运行于 Alpine/musl 时立即停止，不安装任何兼容层；musl 二进制运行于 Debian/glibc 时的处理规则见 `references/01_service_spec.md` §1.8。
 3. **规划文件布局与 README**: 按 `bin/` + `data/` 目录规范组织服务（详见 `references/01_service_spec.md` §1）。新建或实质修改服务/扩展时，必须创建或同步其中文 `README.md`：简要说明用途与运行逻辑，记录必要开发资源（如上游仓库、官方二进制下载链接、架构/libc、协议或数据转换），标注部署注意事项，并在变更记录中追加日期和修改内容。不得写入真实密码、token、私钥或运行期敏感数据。评估服务是否支持二进制更新，若支持则规划更新扩展。
 4. **查阅规格与示例**: 阅读 `references/` 中的规范，并在 `examples/` 中寻找可用模板。
 5. **生成代码**: 严格按照规范编写配置文件、README 和代码。

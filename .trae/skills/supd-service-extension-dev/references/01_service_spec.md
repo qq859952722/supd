@@ -145,6 +145,32 @@ ldd ./bin/<binary> 2>&1
 
 Debian 适配现状：项目已有 `Dockerfile.debian`（Debian Bookworm Slim）、amd64/arm64 构建与 multi-arch manifest、Debian/glibc 编译的 tjs，以及 `debian`/`vX.Y.Z-debian` GHCR 标签。Debian 镜像不是 Alpine 兼容层，而是独立的 glibc 运行环境。
 
+### 1.8 反向场景：musl 二进制运行于 Debian/glibc 底包
+
+底包从 Alpine 切换到 Debian 后，**musl 链接的既有服务二进制会失效**。两类典型症状（二进制文件本身存在且完整）：
+
+| 症状 | 根因 | 判定 |
+|---|---|---|
+| `fork/exec /etc/supd/services/.../bin/<bin>: no such file or directory` | ELF 解释器 `/lib/ld-musl-*.so.1` 缺失，`execve` 返回 ENOENT（经典假象：文件明明存在） | `file ./bin/<bin>` 显示 `interpreter /lib/ld-musl-...`，但底包内无该文件 |
+| `Error relocating .../bin/<bin>: SSL_CTX_ctrl: symbol not found`（大量 `*_not_found`） | 解释器已通，但 musl loader 误加载了 glibc 版同名共享库（如系统 `libssl.so.3`），符号布局不匹配 | 错误行前缀是 `Error relocating` 而非 `Error loading shared library` |
+
+处理规则（按优先级）：
+
+1. **首选：换用服务官方发布的 glibc 或静态链接构建**，使二进制与底包 libc 一致。官方同时提供多种 libc 构建时（如 smartdns 的 `linux-all` / `openwrt` / 静态 `x86_64` 资产），优先选择与底包匹配者。
+2. **静态链接二进制**可直接在任意底包运行（仍需核对架构）；但注意 musl 静态主程序**无法 `dlopen` musl 动态插件**（如 smartdns + smartdns_ui.so），需插件的服务不要单独换静态主程序。
+3. **兜底：保留 musl 二进制并自建 musl 运行时**（仅当官方无 glibc 构建时）：
+   - `apt-get update && apt-get install -y musl`；Debian 的 musl 包只提供 `/usr/lib/x86_64-linux-musl/libc.so`，**不会自动创建** `/lib/ld-musl-x86-64.so.1`，需手工 `ln -sf /usr/lib/x86_64-linux-musl/libc.so /lib/ld-musl-x86-64.so.1`。
+   - 共享库依赖（如 musl 版 `libssl.so.3`/`libcrypto.so.3`/`libgcc_s.so.1`）必须取自**与二进制同源构建的官方包**（如官方 tar.gz 自带的 `lib/` 目录），放入服务私有目录（如 `bin/lib/`）；若二进制带 `RPATH=$ORIGIN/lib` 可自动生效，否则通过服务 `env.yaml` 注入 `LD_LIBRARY_PATH=/etc/supd/services/<svc>/bin/lib`。
+   - 禁止把 glibc 版系统库（`/usr/lib/x86_64-linux-gnu/` 下）混入 musl loader 搜索路径。
+4. musl loader 默认只搜索 `/lib:/usr/lib`（或 `/etc/ld-musl-x86_64.path` 指定列表），**不会**自动搜索 `/usr/lib/x86_64-linux-gnu`；而 Debian 的 musl 包携带的 path 配置可能兜底命中系统 glibc 库，这正是 `relocating` 错误的来源，必须用 `LD_LIBRARY_PATH`/`RPATH` 显式锁定 musl 版库。
+
+实战案例（2026-09-01，smartdns Release48.2 @ Debian 底包）：
+
+- 症状一：`fork/exec /etc/supd/services/smartdns/bin/smartdns: no such file or directory`，但文件树确认二进制存在（678904 字节）→ 解释器缺失。
+- 通过一次性扩展安装 `musl` 包并补符号链接后，症状二出现：`Error relocating ... SSL_CTX_ctrl: symbol not found` → musl loader 命中 glibc 版 libssl。
+- 最终修复：从官方 `x86_64-linux-all.tar.gz` 提取同源 musl 版 `libssl.so.3`/`libcrypto.so.3`/`libgcc_s.so.1` 放入 `bin/lib/`，二进制 `RPATH($ORIGIN/lib)` 自动命中，服务恢复 `ready`（无需 env 注入，也无需换二进制/插件）。
+- 切底包（容器重建）后需重跑该修复：musl 解释器符号链接与 `bin/lib/` 是否留存取决于挂载策略；建议把此类初始化固化为 `supd_lifecycle` 扩展（参考 alpine-init 的底包感知模式：检测 `apk`/`apt-get` 分支处理）。
+
 ---
 
 ## 2. service.yaml 完整字段参考

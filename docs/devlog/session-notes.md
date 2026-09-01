@@ -90,23 +90,28 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run  # 服务启动（
 | 2026-08-31 | v0.0.52 build-push workflow 调度修复 | 删除 build-alpine/build-debian 重复的 job-level `if`，修复 GitHub Actions 调度前解析失败和列表显示异常；未执行本地构建 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
 | 2026-08-31 | v0.0.53 tjs Release 资产命名修复 | 修复 `gh release upload source#label` 未重命名资产导致四个任务均生成 `tjs`、Release 缓存无法命中的问题；改为上传真实命名文件并增加资产存在性校验 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
 | 2026-08-31 | v0.0.54 tjs Release 缓存复用验证 | 无代码变更的验证性发布；确认 v0.0.52 未命中缓存属修复前历史行为，四个正确命名资产已由 v0.0.53 写入 `tjs-cache`，本版应直接命中跳过编译 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
+| 2026-09-01 | 190 smartdns 底包兼容性修复 + Skill 双向门禁 | 切 Debian 底包后 musl smartdns ENOENT/relocating 两层修复（musl 解释器链接 + 官方同源 musl 运行库经 base64 离线通道入 `bin/lib/`，RPATH 命中恢复 ready）；Skill 新增 §1.8 与双向 libc 门禁 | [notes/2026-09-01.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-09-01.md) |
 
 ---
 
-## 七、最近会话重点（2026-08-31 tjs 固定 Release 构建缓存）
+## 七、最近会话重点（2026-09-01 smartdns 底包兼容性修复）
 
-- **现状**：自动发布和手动镜像 workflow 共用固定 `tjs-cache` prerelease；Actions Cache 未命中时下载对应 Release asset，仍未命中才编译。
-- **资产策略**：按 Alpine/Debian、amd64/arm64、`TJS_VERSION` 和 `TJS_CACHE_SCHEMA` 区分资产；编译结果上传到固定 Release，清理任务按版本保留最近 5 个版本。
-- **安全与兼容**：两个 workflow 使用同一并发组避免 Release 资产竞争；缓存命中后仍生成 `/tmp/tjs-binary/tjs`，原有 artifact 和 Docker 构建流程不变；`push: false` 不写 Release。
+- **现象**：190 切换 Debian 底包后 smartdns 突然 failed：`fork/exec /etc/supd/services/smartdns/bin/smartdns: no such file or directory`，但文件树确认二进制存在（678904 字节，与官方 Release48.2 插件同源）。
+- **根因**：musl 链接二进制在 glibc 底包下 execve 因 ELF 解释器 `/lib/ld-musl-x86-64.so.1` 缺失报 ENOENT（文件存在的经典假象）；与 supd 代码无关。修复解释器后又现 `Error relocating ... symbol not found`（musl loader 误加载 glibc libssl）。
+- **修复**（全程经 supd HTTP API + 一次性 tjs 扩展，SSH 因容器重建后 root 密码未清空不可用）：
+  - `apt-get install musl` + 手工 `ln -sf /usr/lib/x86_64-linux-musl/libc.so /lib/ld-musl-x86-64.so.1`（Debian musl 包不自动创建链接）
+  - 官方 tar.gz 中同源 musl 版 `libssl.so.3`/`libcrypto.so.3`/`libgcc_s.so.1` 经 base64+文件 API 离线上传（190 无法直连 GitHub），扩展解码安装到 `bin/lib/`，二进制 `RPATH($ORIGIN/lib)` 自动命中，无需 env 注入
+  - 结果：smartdns 恢复 `ready`；一次性扩展已删除
+- **Skill 记录（用户要求）**：`SKILL.md` 底包 libc 门禁改为**双向**（Alpine↔Debian）；`01_service_spec.md` 新增 §1.8「musl 二进制运行于 Debian/glibc 底包」（症状判定表、处理规则优先级、smartdns 实战案例）。
+- **技术要点**：`execve` ENOENT 需区分文件不存在 vs 解释器缺失；musl loader 只搜 `/lib:/usr/lib`；musl 静态主程序无法 dlopen musl 动态插件；supd 文件 API 为文本语义（二进制走 base64）；任务日志 API 响应字段是 `lines`。
+- **遗留**：容器再重建需重跑修复（建议将 alpine-init 改造为 apk/apt-get 双分支的底包感知初始化扩展）；dropbear SSH 需宿主机重清 root 密码；code-server（argon2 glibc + musl Node）待单独处理。
 
-### 上次会话重点：扩展工作目录解析回归修复
+### 上次会话重点：tjs 固定 Release 构建缓存（v0.0.51–v0.0.54）
 
-- **现象**：192.168.31.190:7979 上所有扩展启动失败，报 `could not load '<服务根>/run.js' - ENOENT`（如 filebrowser-updater）。
-- **根因**：v0.0.44「统一配置路径解析规则」将扩展进程 CWD 与相对 entry 的解析根从**扩展自身目录**（`meta.yaml` 所在目录）改为**服务根/baseDir**，导致 `entry: run.js` 解析到错误路径。
-- **修复**：
-  - `internal/extension/dispatcher.go` `buildWorkDir` 恢复返回 `filepath.Dir(extEntry.ConfigPath)`（扩展自身目录）
-  - `internal/api/extension_provider.go` `RunExtension` 的 workDir 改为扩展目录（serviceDir 单独用于 SUPD_SERVICE_DIR）
-  - 导出/导入 entry 校验 `validateExtensionForExport` 的 entryRoot 改为扩展自身目录；`validateExtensionImport` 去掉 entryRoot 参数
-  - 同步规格文档 §2.2.3/§2.5.6/§2.12.3/词汇表、Skill 文档、6+ 个示例 meta.yaml 与 README、`validate_dev.py`
-- **验证**：go build / vet / test 全通过；所有示例扩展通过 `validate_dev.py` 校验。
-- **遗留**：待构建并部署到 190 验证；code-server 因 argon2 glibc 模块 + musl Node 不兼容宕机（用户要求后续单独处理）。
+- 自动发布和手动镜像 workflow 共用固定 `tjs-cache` prerelease；Actions Cache 未命中时下载对应 Release asset，仍未命中才编译。
+- 资产按 Alpine/Debian、amd64/arm64、`TJS_VERSION` 和 `TJS_CACHE_SCHEMA` 区分；按版本保留最近 5 个版本；同一并发组避免资产竞争；`push: false` 不写 Release。
+- v0.0.53 修复 `gh release upload source#label` 未重命名资产的问题（上传真实命名文件 + 存在性校验）；v0.0.54 实测命中复用成功，并用 `tjs_version=v26.5.0` + `push=false` 手动 run 验证了"版本变更→未命中→真实编译→不上传污染缓存"全链路。
+
+### 上上次会话重点：扩展工作目录解析回归修复
+
+- v0.0.44 将扩展 CWD/相对 entry 解析根从扩展自身目录误改为服务根/baseDir，导致 190 全部扩展启动失败；`buildWorkDir`/`RunExtension`/导出导入校验已恢复以扩展自身目录为根，规格/Skill/示例/测试同步。
