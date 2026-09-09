@@ -556,3 +556,30 @@ func TestDebounceResponderWaitsTerminal(t *testing.T) {
 		t.Errorf("service run did not reach a terminal state recorded: %+v", det.Runs)
 	}
 }
+
+// TestRunnerUUIDv7 验证 Runner 生成的 ExecutionID 与 Store 生成的操作 TopicID 均为 UUIDv7
+// （设计稿 §五 SUPD_OPERATION_EXECUTION_ID/SUPD_NOTIFICATION_TOPIC_ID=<UUIDv7>、§七.2）。
+func TestRunnerUUIDv7(t *testing.T) {
+	h := newOpHarness(t)
+	h.addGlobalRun(t, "g-ext", "op1", markerScript("g", t.TempDir()+"/m.log"))
+	h.rebuild()
+
+	outcome, err := h.runner.RunSynchronous(context.Background(), "op1", nil)
+	if err != nil {
+		t.Fatalf("RunSynchronous: %v", err)
+	}
+	if v := uuid.MustParse(outcome.ExecutionID).Version(); v != 7 {
+		t.Errorf("execution id version = %d, want 7 (%s)", v, outcome.ExecutionID)
+	}
+	if v := uuid.MustParse(outcome.TopicID).Version(); v != 7 {
+		t.Errorf("operation topic id version = %d, want 7 (%s)", v, outcome.TopicID)
+	}
+	// 落库的 topic 行 id 与 outcome 一致且为 v7。
+	det, err := h.store.GetExecution(context.Background(), outcome.ExecutionID)
+	if err != nil || det == nil {
+		t.Fatalf("GetExecution: %v", err)
+	}
+	if v := uuid.MustParse(det.TopicID).Version(); v != 7 {
+		t.Errorf("persisted topic id version = %d, want 7", v)
+	}
+}

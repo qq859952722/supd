@@ -564,3 +564,67 @@ func TestListTopicsOrdering(t *testing.T) {
 		t.Errorf("last topic = %s, want no-notify opEmpty", list[len(list)-1].ID)
 	}
 }
+
+// TestUUIDv7PrimaryKeys 验证持久化主键（operation topic/notification/默认 Topic）为 UUIDv7
+// （设计稿 §七.2：id TEXT PRIMARY KEY -- UUIDv7）。
+func TestUUIDv7PrimaryKeys(t *testing.T) {
+	s := mustOpen(t, t.TempDir())
+	defer s.Close(5 * time.Second)
+
+	execID := uuid.Must(uuid.NewV7()).String()
+	topicID, err := s.CreateExecution(testCtx(), CreateExecutionInput{
+		ExecutionID:    execID,
+		OperationID:    "op",
+		OperationLabel: "op",
+		CreatedAt:      nowMillis(),
+		Runs: []PlannedRun{
+			{RunID: uuid.New().String(), Phase: "global", ExtensionName: "g-ext", ActionID: "op"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := uuid.MustParse(topicID).Version(); v != 7 {
+		t.Errorf("operation topic id version = %d, want 7", v)
+	}
+	if v := uuid.MustParse(execID).Version(); v != 7 {
+		t.Errorf("execution id version = %d, want 7", v)
+	}
+
+	// 追加一条通知（同步，等待落库），断言 notification.id 为 v7。
+	if err := s.AppendNotification(testCtx(), NotificationInput{
+		TopicID: topicID, Level: "info", Content: "hello", SourceType: SrcTypeService,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var notifID string
+	if err := s.db.QueryRow(`SELECT id FROM notification LIMIT 1`).Scan(&notifID); err != nil {
+		t.Fatal(err)
+	}
+	if v := uuid.MustParse(notifID).Version(); v != 7 {
+		t.Errorf("notification id version = %d, want 7", v)
+	}
+
+	// 默认 Topic（服务）首次创建 id 为 v7（异步入队，轮询等待落库）。
+	svc := "svc-a"
+	if !s.TryAppendToDefaultTopic(TopicKindService, "svc-a", NotificationInput{
+		Level: "info", Content: "x", SourceType: SrcTypeService, ServiceName: &svc,
+	}) {
+		t.Fatal("TryAppendToDefaultTopic returned false")
+	}
+	var defTopicID string
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		err := s.db.QueryRow(`SELECT id FROM notification_topic WHERE kind='service' AND source_name='svc-a'`).Scan(&defTopicID)
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("default topic not persisted in time: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if v := uuid.MustParse(defTopicID).Version(); v != 7 {
+		t.Errorf("default topic id version = %d, want 7", v)
+	}
+}

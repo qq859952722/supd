@@ -50,7 +50,7 @@ type opExec struct {
 	topicID     string
 	params      string // 紧凑 JSON 对象（缺省 "{}"）
 
-	globalSubmits []opSubmit // 全局阶段稳定序
+	globalSubmits []opSubmit     // 全局阶段稳定序
 	serviceGroups []serviceGroup // 服务阶段按服务分组（组内稳定序）
 }
 
@@ -128,7 +128,7 @@ func (r *OperationRunner) beginExecution(opID string, params []byte) (*opExec, *
 		return nil, nil, fmt.Errorf("%w: %v", ErrOperationParamInvalid, err)
 	}
 
-	executionID := uuid.New().String()
+	executionID := uuid.Must(uuid.NewV7()).String() // execution UUIDv7（设计稿 §五/§七.2）
 	data := &opExec{
 		executionID: executionID,
 		operationID: opID,
@@ -333,16 +333,16 @@ func (r *OperationRunner) submitOne(ctx context.Context, data *opExec, s opSubmi
 		ExtensionName: s.extName,
 		ActionID:      s.actionID,
 		Context: TriggerContext{
-			EventType:             "on_demand",
-			TriggerSource:         "webui",
-			TriggerUser:           "webui", // v5 决策：操作路径统一注入 webui
-			ServiceName:           s.serviceName,
-			ActionID:              s.actionID,
-			OperationID:           data.operationID,
-			OperationParams:       data.params,
-			NotificationTopicID:   data.topicID,
-			OperationExecutionID:  data.executionID,
-			OperationPhase:        s.phase,
+			EventType:            "on_demand",
+			TriggerSource:        "webui",
+			TriggerUser:          "webui", // v5 决策：操作路径统一注入 webui
+			ServiceName:          s.serviceName,
+			ActionID:             s.actionID,
+			OperationID:          data.operationID,
+			OperationParams:      data.params,
+			NotificationTopicID:  data.topicID,
+			OperationExecutionID: data.executionID,
+			OperationPhase:       s.phase,
 		},
 	}
 	r.gateway.SubmitRun(spec, s.runID)

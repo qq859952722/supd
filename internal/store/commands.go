@@ -28,14 +28,18 @@ func newAuthoritativeCommand(run func(db *sql.DB) error) *command {
 // CreateExecution 在一个事务内创建 execution + topic(kind=operation) + planned operation_run 行。
 // 返回生成的 operation TopicID。
 func (s *Store) CreateExecution(ctx context.Context, in CreateExecutionInput) (string, error) {
-	topicID := uuid.New().String()
+	topicID := uuid.Must(uuid.NewV7()).String() // 操作 Topic UUIDv7（设计稿 §七.2）
 	cmd := newAuthoritativeCommand(func(db *sql.DB) error {
 		tx, err := db.Begin()
 		if err != nil {
 			return err
 		}
 		ok := false
-		defer func() { if !ok { _ = tx.Rollback() } }()
+		defer func() {
+			if !ok {
+				_ = tx.Rollback()
+			}
+		}()
 
 		if _, err := tx.Exec(
 			`INSERT INTO operation_execution (id, operation_id, operation_label, topic_id, created_at, finished_at, interrupted_at)
@@ -93,7 +97,11 @@ func (s *Store) AddPlannedRuns(ctx context.Context, executionID string, runs []P
 			return err
 		}
 		ok := false
-		defer func() { if !ok { _ = tx.Rollback() } }()
+		defer func() {
+			if !ok {
+				_ = tx.Rollback()
+			}
+		}()
 		for _, r := range runs {
 			if err := insertPlannedRun(tx, executionID, r); err != nil {
 				return err
@@ -136,7 +144,11 @@ func (s *Store) UpdateRunState(ctx context.Context, runID string, state string, 
 			return err
 		}
 		ok := false
-		defer func() { if !ok { _ = tx.Rollback() } }()
+		defer func() {
+			if !ok {
+				_ = tx.Rollback()
+			}
+		}()
 
 		var cur string
 		err = tx.QueryRow(`SELECT state FROM operation_run WHERE run_id = ?`, runID).Scan(&cur)
@@ -205,7 +217,11 @@ func appendNotificationCmd(in NotificationInput) *command {
 			return err
 		}
 		ok := false
-		defer func() { if !ok { _ = tx.Rollback() } }()
+		defer func() {
+			if !ok {
+				_ = tx.Rollback()
+			}
+		}()
 		if err := appendInTx(tx, in); err != nil {
 			return err
 		}
@@ -236,7 +252,7 @@ func ensureDefaultTopic(tx *sql.Tx, kind, sourceName string) (string, error) {
 	if !errors.Is(err, sql.ErrNoRows) {
 		return "", err
 	}
-	id = uuid.New().String() // 默认 Topic 首次创建时生成 UUIDv7
+	id = uuid.Must(uuid.NewV7()).String() // 默认 Topic 首次创建时生成 UUIDv7（设计稿 §七.2）
 	var svc any
 	if kind == TopicKindService {
 		svc = sourceName
@@ -271,7 +287,11 @@ func (s *Store) TryAppendToDefaultTopic(kind, sourceName string, in Notification
 			return err
 		}
 		ok := false
-		defer func() { if !ok { _ = tx.Rollback() } }()
+		defer func() {
+			if !ok {
+				_ = tx.Rollback()
+			}
+		}()
 		topicID, err := ensureDefaultTopic(tx, kind, sourceName)
 		if err != nil {
 			return err
@@ -301,7 +321,7 @@ func appendInTx(tx *sql.Tx, in NotificationInput) error {
 		return err
 	}
 	newSeq := lastSeq + 1
-	id := uuid.New().String()
+	id := uuid.Must(uuid.NewV7()).String() // notification 主键 UUIDv7（设计稿 §七.2）
 	if _, err := tx.Exec(
 		`INSERT INTO notification (id, topic_id, seq, level, content, created_at, source_type,
 		   service_name, extension_name, action_id, run_id, execution_id)
