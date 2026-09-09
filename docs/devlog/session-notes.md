@@ -10,7 +10,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：⭐ 优秀，1000+ 单元测试通过（Go + 前端），零竞态；go vet 零警告
-- **当前版本**：v0.0.54（验证 tjs Release 缓存复用；版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.1.0（操作中心 + 通知中心；版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -81,10 +81,22 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run  # 服务启动（
 | 09-09 | 最终方案定稿（v4） | SQLite 持久化定稿；代码核实确认 DB 路径/TriggerUser/服务阶段并发/runResults 治理等 8 项；用户确认 8 Tab+顶栏铃铛、仅红点；全部待决事项关闭 | [notes/2026-09-09.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-09-09.md) |
 | 09-09 | v5 三角色审计定稿 | v4 断言逐项代码复核全部为真；补执行历史保留（30 天/200 条）、Topic 有序关闭消竞态等 10 项细化；用户确认红点范围/混排列表/同页两区 | [notes/2026-09-09.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-09-09.md) |
 | 09-09 | 节点 10 联调验收与发布收尾 | 操作+通知中心全链路 E2E（O1~O10+N1~N10+异常路径）通过，SQLite 落库证据；示例 11/12 交付、validate_dev.py operations 解析修复；质量门禁 5 命令全绿；§十三 8 项闭合（API 实测 90 端点）；Skill/规格"规划中→已实现"回填；release note 草稿（WAL/体积）| [notes/2026-09-09.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-09-09.md) |
+| 09-10 | 实施收尾 + v0.1.0 发布 | 全部 10 节点实施完成；补充操作服务阶段 SUPD_SERVICE/SUPD_SERVICE_DIR 注入（RunGateway 按服务作用域解析）；清理 .workbuddy/skills 遗留副本；README/变更记录升 v0.1.0；本地提交 f234553 + tag v0.1.0（远程推送因网络不可达未完成，待网络恢复）| [notes/2026-09-09.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-09-09.md) |
 
 ---
 
-## 七、最近会话重点（2026-09-09：节点 10 联调验收与发布收尾）
+## 七、最近会话重点（2026-09-10：实施收尾 + v0.1.0 发布）
+
+- **背景**：承接 09-09 节点 10 完成态，用户批准"执行吧"后完成收尾与发布。
+- **操作中心+通知中心 10 节点全部实施完成**（节点 01~10）：规格 v1.6/约束同步 → Phase 0（tracker 服务维度、stdout 排水+notify 协议、统一 RunGateway、runResults 有界）→ SQLite 存储层 → 操作注册+两阶段 Runner → 通知路由+API → 前端 8 Tab+操作/通知中心+铃铛红点 → 联调发布。质量门禁全绿（build/vet/test/-race/pnpm build），E2E O1~O10+N1~N10 通过。
+- **本次收尾**：
+  1. 补充操作服务阶段 `SUPD_SERVICE` 注入（`run_context.go`：OperationID 非空且 ServiceName 非空时注入，无 PID）；`RunGateway.SubmitRun` 对服务阶段 Run 按 `spec.ServiceName` 精确解析扩展（避免多服务同名扩展解析串线，使 SUPD_SERVICE_DIR 正确注入）；新增 `TestBuildSupdEnvServiceLifecycleUnchanged` 回归。
+  2. 清理 `.workbuddy/skills/` 遗留副本（7 月过期、含旧"禁止引入数据库"表述、缺新示例 11/12，AGENTS 未引用）；保留 `expert-history.json` 与 `memory/`。
+  3. 版本升级至 **v0.1.0**（MINOR，操作中心+通知中心）：README 两处版本号、`version-upgrade-guide.md` 变更记录追加；`-ldflags` 注入验证 `supd 0.1.0` 通过。
+  4. 提交 `f234553` + 本地 tag `v0.1.0`；**远程推送因 github.com 不可达未完成**（`git ls-remote` 超时），待网络恢复后执行 `git push origin main && git push origin v0.1.0` 触发 CI 构建。
+- 详细证据见 `docs/devlog/notes/2026-09-09.md`「09-10 实施收尾与发布」章节。
+
+### 更早会话重点：节点 10 联调验收与发布收尾（2026-09-09）
 
 - 执行开发计划**节点 10**（操作中心+通知中心联调/端到端验收/发布收尾），前置节点 01~09 全部完成。
 - **10-1 示例**：新增 `examples/11-operation-global-ext/`（全局扩展，`actions[].operations` 注册多操作、演示 `SUPD_OPERATION_PARAMS` 与 `::notify::`）+ `examples/12-operation-responder-ext/`（服务扩展，operations 响应绑定）；`validate_dev.py` 修复 operations 内嵌列表被误判为 action 的切分 bug 并补充 operations ID/重复校验，旧示例回归通过。
