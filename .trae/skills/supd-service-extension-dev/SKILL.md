@@ -27,7 +27,7 @@ description: "supd服务与扩展开发指南。当用户要求开发、修改�
 | 编写/修改 `service.yaml` | `references/01_service_spec.md` | 4 种 Readiness 配置、状态机 11 条转移规则、restart 策略、signals、stop/logging、检查清单 |
 | 编写/修改 `meta.yaml` | `references/02_extension_spec.md` | 4 种触发器、stdout 通信协议（含 `::notify::`）、14 个 SUPD_* 环境变量（操作中心另追加 5 个 `SUPD_OPERATION_*`，见 `05_env_spec.md` §4）、retry_on_failure、entry 路径安全 |
 | 修改配置后问"何时生效" | `references/03_modification_matrix.md` | 热重载行为矩阵（哪些字段热生效、哪些需重启服务、哪些需重启 supd） |
-| 在线开发/SSH/HTTP API | `references/04_online_dev_guide.md` | Dropbear SSH 配置、CLI 命令、76 个 API 端点对照表、导入导出流程 |
+| 在线开发/SSH/HTTP API | `references/04_online_dev_guide.md` | Dropbear SSH 配置、CLI 命令、HTTP API 端点对照表（含操作/通知中心 12 个新增端点）、导入导出流程 |
 | 编写/修改 `env.yaml` | `references/05_env_spec.md` | 4 层环境变量合并规则、env.yaml 结构体格式、密码字段处理 (**必读**，极易出错) |
 | `runtime: tjs` 时 | `references/06_tjs_runtime_guide.md` | tjs API 速查、run.js 模板、fetch 流式下载、WASM 工具调用、常见坑点排查 |
 
@@ -93,7 +93,7 @@ description: "supd服务与扩展开发指南。当用户要求开发、修改�
 | **版本号格式** | 必须匹配 `^[0-9]+\.[0-9]+\.[0-9]+$`（三段数字，如 `1.0.0`） |
 | **entry 路径安全** | 禁止 `..`、shell 元字符（``; | & $ ` ( ) { }``）、冗余 `./` 前缀；开发校验还会确认入口文件存在 |
 | **profile 名称** | 必须匹配 `^[a-z][a-z0-9-]*$`，对应 `package.<profile>.yaml` |
-| **数值限制** | fsnotify防抖 `500ms` / stop grace `10s` / 扩展硬上限默认 `1800s`（可由全局设置调整）/ 上传限制 `100MB` / serialize队列上限 `16` |
+| **数值限制** | fsnotify防抖 `500ms` / stop grace `10s` / 扩展硬上限默认 `1800s`（可由全局设置调整）/ 上传限制 `100MB` / serialize队列上限 `16` / 服务阶段并发上限 `4` / runResults 容量 `500` / notify 协议行长 `8KB` / 单 Topic 保留 `500条`、Topic `30天`、操作执行历史 `30天/200条` |
 | **禁止引入 / 数据库边界** | 禁止 SSE (Server-Sent Events)、WebSocket、及 Bolt/Badger 等其他数据库；仅允许 SQLite（`modernc.org/sqlite` 纯 Go 驱动）用于通知中心/操作中心持久化（数据库位于 `<baseDir>/data/supd.db`，**不开放脚本访问**，与 AGENTS.md 措辞一致） |
 
 > **⚠️ 底包 libc 兼容性门禁（双向）**：安装、更新服务二进制或切换底包（Alpine↔Debian 容器重建）前后，必须检查二进制 libc/动态加载器要求与底包是否一致（`file`、`readelf -l`、`ldd` 或实际启动验证）：
@@ -133,3 +133,4 @@ description: "supd服务与扩展开发指南。当用户要求开发、修改�
 - **扩展类 (Shell)**: `03-on-demand-ext/`, `04-scheduled-ext/`, `05-service-lifecycle-ext/`, `06-supd-lifecycle-ext/`
 - **扩展进阶**: `07-health-check-ext/`, `08-stats-report-ext/`
 - **扩展 (TJS)**: `09-tjs-ext/`, `10-binary-updater-ext/`（二进制更新扩展：流式下载 + 原子替换 + 版本检测）
+- **操作中心扩展**: `11-operation-global-ext/`（全局扩展，`actions[].operations` 注册操作、演示 `SUPD_OPERATION_PARAMS` 与 `::notify::`）、`12-operation-responder-ext/`（服务扩展，operations 响应绑定操作）

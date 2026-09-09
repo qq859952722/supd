@@ -306,6 +306,7 @@ logging:
   max_files: 5             # 轮转文件保留个数 (默认 5 个，须 > 0)
 ```
 > 服务日志写入 `<logDir>/<service>/` 目录，由 supd 进程管理；服务进程的 stdout/stderr 被重定向到日志文件。
+> **stdout 通知协议**：服务进程的 **stdout** 同样支持 `::notify:: <info|success|warning|error> "<content>"`（与扩展一致，stderr 不解析），解析出的通知自动归入该服务默认通知 Topic；协议行上限 8KB，超长行按截断普通日志处理。详见 `references/02_extension_spec.md` §5 与 `05_env_spec.md` §4。
 
 ### 3.5 自定义信号 (`signals`)
 ```yaml

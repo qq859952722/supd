@@ -347,6 +347,30 @@ smartdns `domain-set -type list` 文件**每行一个裸域名即可，裸域名
 | GET | `/api/system/events/recent` | 最近 200 条事件 |
 | POST | `/api/reload` | 触发热重载 |
 
+### 4.8 操作中心 API（v0.1.0 新增，5 个）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/operations` | 列出操作卡片（含上次执行摘要） |
+| GET | `/api/operations/{id}` | 单操作详情（注册者/响应者/warning） |
+| POST | `/api/operations/{id}/run` | 触发操作（body `{"params": <object>}`，可选 `Idempotency-Key` 请求头，10 分钟内幂等） |
+| GET | `/api/operation-executions` | 操作执行历史（分页） |
+| GET | `/api/operation-executions/{id}` | 执行详情（runs 快照 + 关联 Topic） |
+
+### 4.9 通知中心 API（v0.1.0 新增，7 个）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/notifications/topics` | Topic 列表（筛选 kind/unread/level/source_type/service_name；响应含顶层 `store_error`） |
+| GET | `/api/notifications/topics/{id}` | Topic 详情（通知 seq 正序分页；`?seq=<since>` 游标） |
+| POST | `/api/notifications/topics/{id}/read` | 标记已读（`read_seq=last_seq`） |
+| POST | `/api/notifications/read-all` | 全部已读 |
+| DELETE | `/api/notifications/topics/{id}` | 删除 Topic（软删） |
+| DELETE | `/api/notifications/topics` | 清空全部 Topic（软删） |
+| GET | `/api/notifications/changes?epoch=<uuid>&since=<seq>&wait=30` | changes 长轮询（全局并发 50 / 单客户端 5，epoch 不符返回 reload） |
+
+> **注意**：不存在任何通知写入 API（`POST /api/notifications` 被明确否定）；通知唯一写入面是服务/扩展 stdout 的 `::notify::` 协议。
+
 ---
 
 ## 5. 8 步在线开发工作流示例

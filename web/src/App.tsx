@@ -275,7 +275,7 @@ function AppLayout() {
             <span className="text-sm font-semibold text-[var(--color-text-primary)]">{t.app.title}</span>
           </div>
 
-          {/* 7个Tab导航 */}
+          {/* 8个Tab导航（含操作中心；v0.1.0 起 7→8） */}
           <nav className="flex items-center gap-1 shrink-0">
             <NavItem to="/" icon={LayoutDashboard} label={t.nav.dashboard} />
             <NavItem to="/services" icon={Server} label={t.nav.services} />
