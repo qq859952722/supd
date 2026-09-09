@@ -72,7 +72,7 @@
 
 ### A-03：扩展执行流程完整性（14个环境变量、stdout协议、dry_run）
 
-**文件**：`internal/extension/executor.go`、`internal/extension/run_context.go`、`internal/extension/protocol.go`
+**文件**：`internal/extension/executor.go`、`internal/extension/run_context.go`、`internal/core/bootstrap.go`、`internal/api/service_operator.go`
 
 **审计方法**：
 1. 对照规格 §2.2 列出扩展执行的完整步骤，在 `executor.go` 中逐步追踪代码实现
@@ -835,10 +835,10 @@
 
 ### G-03：前端轮询策略效率
 
-**文件**：`web/src/hooks/useLongPolling.ts`、各页面的 `useQuery` 配置
+**文件**：`web/src/App.tsx`、`web/src/lib/api-client.ts`、`web/src/lib/query-client.ts` 及各页面的 `useQuery` 配置；如无通用长轮询 hook，则新建 `web/src/hooks/useNotificationChanges.ts`
 
 **审计方法**：
-1. 检查 `useLongPolling.ts` 实现：是真正的 HTTP 长轮询（服务器 hold 请求）还是短间隔重复请求
+1. 检查 `App.tsx`、`api-client.ts` 与现有 React Query 配置：确认是否已有通用长轮询机制；如没有，新建 `useNotificationChanges.ts`，实现真正的 HTTP 长轮询（服务器 hold 请求）
 2. 统计所有 `useQuery` 的 `refetchInterval` 配置，列出所有轮询间隔
 3. 检查页面不可见时（`document.visibilityState === 'hidden'`）轮询是否暂停
 4. 检查路由切换时旧页面的查询订阅是否取消
@@ -1123,7 +1123,7 @@
 
 ### J-03：前端状态管理复杂度评估
 
-**文件**：`web/src/stores/`（3个 store）、`web/src/hooks/useLongPolling.ts`
+**文件**：`web/src/stores/`（3个 store）、`web/src/hooks/useNotificationChanges.ts`（若 G-03 确认无通用 hook 后新建）
 
 **审计方法**：
 1. 分析 3 个 store 的职责（app.ts/auth.ts/editor.ts）：哪些状态真正需要全局共享

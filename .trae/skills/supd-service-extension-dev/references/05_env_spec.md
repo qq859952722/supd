@@ -115,3 +115,19 @@ KEY
 例如：`MYSQL_PASSWORD`, `AUTH_TOKEN`, `SECRET_KEY`, `DB_PWD`, `API_KEY` 均会被自动判别为敏感词进行掩码保护。
 
 > 注：因采用子串匹配，变量名包含 `KEYWORD`、`KEYS` 等也会触发掩码；这是启发式识别，无白名单豁免。
+
+---
+
+## 4. 操作中心注入的 5 个 SUPD_* 上下文环境变量（已实现，节点 07/08）
+
+> 操作 Run（`OperationID` 非空）时在原有 14 个 `SUPD_*` 基础上追加注入以下 5 个变量，与既有 `SUPD_*` 一致，均可覆盖同名既有变量；参数仅注入环境变量，**不进入命令行、不 shell 展开**。普通 Run（非操作触发）不注入这 5 个变量。
+
+| 环境变量名 | 说明 |
+|---|---|
+| `SUPD_OPERATION` | 当前操作 ID（操作中心触发操作时注入） |
+| `SUPD_OPERATION_PARAMS` | 操作参数 JSON 对象字符串（≤8KB，缺省 `{}`） |
+| `SUPD_NOTIFICATION_TOPIC_ID` | 关联的通知 Topic ID（UUIDv7） |
+| `SUPD_OPERATION_EXECUTION_ID` | 操作执行 Execution ID（该操作所有 Run 共享） |
+| `SUPD_OPERATION_PHASE` | 操作执行阶段：`global` 或 `service` |
+
+> **阶段语义**：`global` 阶段全局扩展的注册操作执行（每次操作只执行一次）；`service` 阶段各服务的响应扩展按所属服务各执行一次。操作通知经 stdout `::notify::` 协议自动进入该操作关联的 Topic（见 §2.2.6 与 `02_extension_spec.md` §5）。示例见 `examples/11-operation-global-ext/`、`examples/12-operation-responder-ext/`。

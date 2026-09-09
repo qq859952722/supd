@@ -1,9 +1,8 @@
 # supd 开发会话备忘（主索引）
 
 > 跨会话上下文传递。Agent 新会话启动时首先阅读本文件（主索引）+ `blockers.md`。
-> 详细信息按需读取 `notes/` 子目录，**不要默认全量读取**。读取协议见 `notes/README.md`。
-> 业务规则唯一权威来源：`docs/需求规格说明_v1.5.md`。偏差台账见 `deviations.md`，阻断见 `blockers.md`。
-> 历史归档：2026-07-21 ~ 2026-07-26 见 `archive/session-notes-20260727-precompress.md`；2026-07-27 ~ 2026-08-01 见 `notes/` 对应日期文件。
+> 历史日志已压缩归档至 `archive/notes-20260721-20260901-source.md`（**仅保留 supd 仓库源码/文档调整**；对 188/190 服务器的远程运维操作不记录于开发日志）。
+> 业务规则唯一权威来源：`docs/需求规格说明_v1.5.md`。偏差台账见 `deviations.md`，阻断见 `blockers.md`。核心机制备忘见 `notes/core-mechanisms.md`。
 
 ---
 
@@ -40,7 +39,7 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run  # 服务启动（
 
 ## 三、已知偏差与待办
 
-> **当前状态**：无活动偏差，无阻断。R-01～R-09 技术改进项已全部闭环（详见 `deviations.md` 与 `notes/` 历史归档）。
+> **当前状态**：无活动偏差，无阻断。R-01～R-09 技术改进项已全部闭环（详见 `deviations.md` 与压缩归档）。
 
 ---
 
@@ -50,8 +49,8 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run  # 服务启动（
 - 不引入 tini/dumb-init（supd 自带 PID 1 能力）
 - triggers 格式用 map（规格 v1.5 §2.2.3）
 - meta.yaml 中 `service:` 字段冗余（服务关联由目录结构决定）
+- 开发日志只记录 supd 仓库源码/文档调整，远程服务器运维操作不入日志（用户决定 2026-09-01）
 - dropbear-ssh 是 supd 管理的普通服务（非 entrypoint 脚本），autostart: false
-- 远程运维优先用 `scripts/remote_ssh.sh`（SSH_ASKPASS 注入空密码，不改 ssh 服务配置）
 
 ---
 
@@ -64,54 +63,55 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run  # 服务启动（
 - 服务与扩展的非 root 语义差异需保持（服务严格拒绝、扩展宽松警告）
 - Docker 镜像需重新构建才能包含 Dockerfile 变更
 - 监控 yaml v4 稳定版发布后升级 go.mod
+- tjs `proc.wait()` 返回 `{exit_status, term_signal}`（**不是** `exitCode`）；tjs 无 Buffer 全局；大文件下载必须流式读取（`arrayBuffer()` 会死锁）
 
 ---
 
-## 六、会话历史索引（近期）
+## 六、会话历史索引
 
-> 完整历史：2026-07-27 之前见 `archive/session-notes-20260727-precompress.md`；其余用 `rg` 在 `notes/` 中查找。
+> 全部历史会话的源码调整详情见压缩归档 [archive/notes-20260721-20260901-source.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/archive/notes-20260721-20260901-source.md)（按日期分段，含各版本变更与技术要点）。
 
-| 日期 | 主题 | 摘要 | 详情文件 |
-|------|------|------|----------|
-| 2026-08-02 | Skill 完善 + 远程服务优化 + code-server 修复 | Skill 目录契约/校验/打包修复；远程 code-server 启动修复；12 服务 README；11 ready / 1 down | [notes/2026-08-02.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-02.md) |
-| 2026-08-02 | tracker-updater v1.3.0 + 下载扩展 uid 1000 | BEP-15 UDP 测速；49 优质 tier+1 垫底=50 tier；tracker/transmission-updater run_as_uid 1000 | [notes/2026-08-02.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-02.md) |
-| 2026-08-03 | 多服务同名扩展查找竞态修复 + v0.0.42 | `GetExtensionForService(service, name)` 精确查找；7 新测试 | [notes/2026-08-03.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-03.md) |
-| 2026-08-04 | 远程目录结构优化 + SSH 空密码连接固化 | smartdns rules 迁入 config/；8 服务绝对路径相对化；`remote_ssh.sh` 封装脚本；skill 补 §3.1/§3.2 | [notes/2026-08-04.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-04.md) |
-| 2026-08-04 | workdir 相对路径支持 + v0.0.43 | `core.ResolveWorkdir` 统一解析；移除 workdir 绝对路径校验；6 处构建逻辑统一 | [notes/2026-08-04.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-04.md) |
-| 2026-08-04 | 全配置路径统一 + v0.0.44 | env_files/extension_dirs/runtimes/extension entry/CWD/command/readiness 全链路支持绝对+相对路径 | [notes/2026-08-04.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-04.md) |
-| 2026-08-04 | runtime CLI 路径补漏 + API 契约修复 + v0.0.45 | `runtimes install` 接受相对 `<baseDir>` 路径；install/remove 直接发送 runtime map | [notes/2026-08-04.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-04.md) |
-| 2026-08-04 | 远程扩展规范化：bash→tjs + 8 服务 updater | 全局扩展 alpine-init/auto-create-users 转 tjs；8 服务 updater 扩展（adguardhome/backrest/dnscrypt-proxy/filebrowser/lucky/openlist/s-ui/smartdns） | [notes/2026-08-04.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-04.md) |
-| 2026-08-05 | 服务日志前缀时间 bug 修复 | `LogViewer.tsx` 长轮询用 `Date.now()` 作 timestamp 导致同批次日志前缀时间全相同；新增 `parseLogContent` 从 content 解析 RFC3339 时间戳+级别 | [notes/2026-08-05.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-05.md) |
-| 2026-08-31 | 扩展 CWD/entry 解析根回归修复（v0.0.44 引入） | 190 全部扩展启动失败；`buildWorkDir`/`RunExtension`/导出导入校验的 entry 解析根从 baseDir/服务根改回扩展自身目录；同步规格/Skill/示例/测试 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
-| 2026-08-31 | v0.0.47 发版审计 | 完成工作路径与文档修复的全链路审计；Go build/vet/test、race、版本注入和示例校验全部通过，已推送 GitHub | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
-| 2026-08-31 | v0.0.48 镜像层增量更新优化 | Alpine/Debian Dockerfile 使用独立二进制层与 `COPY --link --chmod`，兼容现有 GitHub Actions workflow；未执行本地构建，已完成 CI 配置审查 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
-| 2026-08-31 | v0.0.49 tjs 编译缓存增强 | 正式发布和手动构建 workflow 的 tjs 缓存 key 增加 schema、基础镜像/libc、架构和源版本约束；未执行本地构建 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
-| 2026-08-31 | v0.0.51 tjs 固定 Release 构建缓存完善 | 自动发布和手动构建共用固定 `tjs-cache` Release；命中时下载复用、未命中时编译上传；workflow 级并发避免资产竞争；按 TJS_VERSION 清理旧资产，仅保留最近 5 个版本及每版四个平台/变体组合 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
-| 2026-08-31 | v0.0.52 build-push workflow 调度修复 | 删除 build-alpine/build-debian 重复的 job-level `if`，修复 GitHub Actions 调度前解析失败和列表显示异常；未执行本地构建 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
-| 2026-08-31 | v0.0.53 tjs Release 资产命名修复 | 修复 `gh release upload source#label` 未重命名资产导致四个任务均生成 `tjs`、Release 缓存无法命中的问题；改为上传真实命名文件并增加资产存在性校验 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
-| 2026-08-31 | v0.0.54 tjs Release 缓存复用验证 | 无代码变更的验证性发布；确认 v0.0.52 未命中缓存属修复前历史行为，四个正确命名资产已由 v0.0.53 写入 `tjs-cache`，本版应直接命中跳过编译 | [notes/2026-08-31.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-08-31.md) |
-| 2026-09-01 | 190 smartdns 底包兼容性修复 + Skill 双向门禁 | 切 Debian 底包后 musl smartdns ENOENT/relocating 两层修复（musl 解释器链接 + 官方同源 musl 运行库经 base64 离线通道入 `bin/lib/`，RPATH 命中恢复 ready）；Skill 新增 §1.8 与双向 libc 门禁 | [notes/2026-09-01.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-09-01.md) |
+| 阶段 | 主题 |
+|------|------|
+| 07-21 ~ 07-26（v0.0.1~v0.0.33） | Docker/tjs/CI 集成；script readiness/user 字段/服务 env.yaml/身份系统等重大修复；Skill 重构与 references 体系；supervisor 重构（M-04-001/TD-003）；测试覆盖率闭环；GHCR latest 回退修复 |
+| 07-27 ~ 07-31（v0.0.34~v0.0.40） | R-01~R-09 技术改进闭环；规格一致性审计 A~H 批次整改；F2-001 serialize 队列满；clear-failed 改 down；热重载矩阵修正 |
+| 08-02 ~ 08-05（v0.0.41~v0.0.46） | Skill 目录契约完善；v0.0.42 多服务同名扩展竞态；v0.0.43/44/45 路径统一三部曲；LogViewer 时间戳修复 |
+| 08-31 ~ 09-01（v0.0.47~v0.0.54） | 扩展 CWD/entry 解析根回归修复；Dockerfile 镜像层增量更新；tjs Release 构建缓存全链路（v0.0.50~54）；Skill 底包 libc 双向门禁 |
+| 09-08 | 操作中心与通知中心设计 | 完成 stdout-only、持久化通知、独立页面方案及三轮审计修订，注册方式改为全局扩展 action.operations，尚未实施 | [notes/2026-09-08.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-09-08.md) |
+| 09-09 | 最终方案定稿（v4） | SQLite 持久化定稿；代码核实确认 DB 路径/TriggerUser/服务阶段并发/runResults 治理等 8 项；用户确认 8 Tab+顶栏铃铛、仅红点；全部待决事项关闭 | [notes/2026-09-09.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-09-09.md) |
+| 09-09 | v5 三角色审计定稿 | v4 断言逐项代码复核全部为真；补执行历史保留（30 天/200 条）、Topic 有序关闭消竞态等 10 项细化；用户确认红点范围/混排列表/同页两区 | [notes/2026-09-09.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-09-09.md) |
+| 09-09 | 节点 10 联调验收与发布收尾 | 操作+通知中心全链路 E2E（O1~O10+N1~N10+异常路径）通过，SQLite 落库证据；示例 11/12 交付、validate_dev.py operations 解析修复；质量门禁 5 命令全绿；§十三 8 项闭合（API 实测 90 端点）；Skill/规格"规划中→已实现"回填；release note 草稿（WAL/体积）| [notes/2026-09-09.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-09-09.md) |
 
 ---
 
-## 七、最近会话重点（2026-09-01 smartdns 底包兼容性修复）
+## 七、最近会话重点（2026-09-09：节点 10 联调验收与发布收尾）
 
-- **现象**：190 切换 Debian 底包后 smartdns 突然 failed：`fork/exec /etc/supd/services/smartdns/bin/smartdns: no such file or directory`，但文件树确认二进制存在（678904 字节，与官方 Release48.2 插件同源）。
-- **根因**：musl 链接二进制在 glibc 底包下 execve 因 ELF 解释器 `/lib/ld-musl-x86-64.so.1` 缺失报 ENOENT（文件存在的经典假象）；与 supd 代码无关。修复解释器后又现 `Error relocating ... symbol not found`（musl loader 误加载 glibc libssl）。
-- **修复**（全程经 supd HTTP API + 一次性 tjs 扩展，SSH 因容器重建后 root 密码未清空不可用）：
-  - `apt-get install musl` + 手工 `ln -sf /usr/lib/x86_64-linux-musl/libc.so /lib/ld-musl-x86-64.so.1`（Debian musl 包不自动创建链接）
-  - 官方 tar.gz 中同源 musl 版 `libssl.so.3`/`libcrypto.so.3`/`libgcc_s.so.1` 经 base64+文件 API 离线上传（190 无法直连 GitHub），扩展解码安装到 `bin/lib/`，二进制 `RPATH($ORIGIN/lib)` 自动命中，无需 env 注入
-  - 结果：smartdns 恢复 `ready`；一次性扩展已删除
-- **Skill 记录（用户要求）**：`SKILL.md` 底包 libc 门禁改为**双向**（Alpine↔Debian）；`01_service_spec.md` 新增 §1.8「musl 二进制运行于 Debian/glibc 底包」（症状判定表、处理规则优先级、smartdns 实战案例）。
-- **技术要点**：`execve` ENOENT 需区分文件不存在 vs 解释器缺失；musl loader 只搜 `/lib:/usr/lib`；musl 静态主程序无法 dlopen musl 动态插件；supd 文件 API 为文本语义（二进制走 base64）；任务日志 API 响应字段是 `lines`。
-- **遗留**：容器再重建需重跑修复（建议将 alpine-init 改造为 apk/apt-get 双分支的底包感知初始化扩展）；dropbear SSH 需宿主机重清 root 密码；code-server（argon2 glibc + musl Node）待单独处理。
+- 执行开发计划**节点 10**（操作中心+通知中心联调/端到端验收/发布收尾），前置节点 01~09 全部完成。
+- **10-1 示例**：新增 `examples/11-operation-global-ext/`（全局扩展，`actions[].operations` 注册多操作、演示 `SUPD_OPERATION_PARAMS` 与 `::notify::`）+ `examples/12-operation-responder-ext/`（服务扩展，operations 响应绑定）；`validate_dev.py` 修复 operations 内嵌列表被误判为 action 的切分 bug 并补充 operations ID/重复校验，旧示例回归通过。
+- **10-2 E2E 矩阵**：真实启动 supd 于临时 workdir `/tmp/supd-e2e`，落库 SQLite（`<baseDir>/data/supd.db`，`sqlite3` 核实 notification_topic/notification/operation_execution/operation_run = 13/31/13/22）。O1~O10、N1~N10 全部实测通过（来源不可伪造、stderr 不生成通知、超长行不堵塞、changes epoch、并发不串、重启中断 `interrupted_at`、已读游标持久化、replace canceled）；N11/异常路径3(磁盘满)/Docker 双镜像/kill 强杀恢复等依赖环境项如实记录"由代码+单测确认/依赖发布环境"。
+- **10-3 质量门禁**：`go build/vet/test/-race/pnpm build` 5 命令全绿（go test 含 extension 134s/core 41s/store；-race 零竞态；pnpm build 生成 Operations/Notifications/octagon-alert chunk）。
+- **10-4 §十三 8 项闭合**：解除数据库禁令四处允许性表述就绪；operations/::notify::/5 个 SUPD_* 均有规格章节+测试在；App.tsx 实测 8 Tab、NotificationBell 仅红点；`server.go setupRoutes()` 实际注册 **90** 端点（新增 12 = 操作 5 + 通知 7，基线 78）；deviations DEV-009/010 在案。Skill（02_extension_spec/05_env_spec/SKILL.md）与规格 v1.6 "规划中→已实现" 回填完成。
+- **10-5 发布收尾（仅文档）**：Dockerfile 确认 `/etc/supd` VOLUME 覆盖 `<baseDir>/data`（supd.db+WAL 持久化）；release note 草稿要点（WAL 备份策略、二进制体积增至约33MB）写入 2026-09-09 归档；**未**执行 git tag/push/GHCR，版本号待用户确认（基线 v0.0.54）。
+- **发现项待决策**：操作服务阶段 `SUPD_SERVICE/SUPD_SERVICE_DIR` 不注入（示例已用默认值保护，是否补充注入属行为增强）；`.workbuddy/skills/` 历史技能副本（含旧数据库禁令）处置。
+- 详细证据与修改文件清单见 `docs/devlog/notes/2026-09-09.md`「节点 10」章节。
 
-### 上次会话重点：tjs 固定 Release 构建缓存（v0.0.51–v0.0.54）
+### 更早会话重点：操作中心与通知中心 v5 审计定稿（2026-09-09）
+- 操作注册方式已简化：不再使用独立全局配置；全局扩展 action 的 `operations` 字符串数组自动注册操作，服务扩展 action 使用同属性作为响应绑定。
+- 操作严格分两阶段执行：全局扩展 action 按稳定顺序先执行，全部终态后再执行服务扩展；服务与扩展通信由脚本通过缓存文件自行控制。
+- 通知内容仅接受受管服务/扩展 stdout 的 `::notify::`、`::notify-to::`，无 HTTP/UDS/共享内存/文件写入口；采用 UUIDv7 Topic、Topic seq、JSONL 持久化和已读游标。
+- 三轮审计后定为“有条件通过”：实施前须完成并发 service 作用域、stdout 持续排水、统一 Run 生命周期、持久化一致性、Topic 异步生命周期和 runResults 无界增长等 Phase 0 修复。
+- 当前仅完成设计和审计，尚未修改需求规格、Skill 或源码。
+
+### 更早会话重点：Skill 文档同步（2026-09-01）
+
+- `SKILL.md` 底包 libc 门禁改为双向（Alpine↔Debian）；`01_service_spec.md` 补充 musl 二进制运行于 Debian/glibc 底包的启用路径。
+
+### 更早会话重点：tjs 固定 Release 构建缓存（v0.0.51–v0.0.54）
 
 - 自动发布和手动镜像 workflow 共用固定 `tjs-cache` prerelease；Actions Cache 未命中时下载对应 Release asset，仍未命中才编译。
 - 资产按 Alpine/Debian、amd64/arm64、`TJS_VERSION` 和 `TJS_CACHE_SCHEMA` 区分；按版本保留最近 5 个版本；同一并发组避免资产竞争；`push: false` 不写 Release。
 - v0.0.53 修复 `gh release upload source#label` 未重命名资产的问题（上传真实命名文件 + 存在性校验）；v0.0.54 实测命中复用成功，并用 `tjs_version=v26.5.0` + `push=false` 手动 run 验证了"版本变更→未命中→真实编译→不上传污染缓存"全链路。
 
-### 上上次会话重点：扩展工作目录解析回归修复
+### 更早会话重点：扩展 CWD/entry 解析根回归修复
 
-- v0.0.44 将扩展 CWD/相对 entry 解析根从扩展自身目录误改为服务根/baseDir，导致 190 全部扩展启动失败；`buildWorkDir`/`RunExtension`/导出导入校验已恢复以扩展自身目录为根，规格/Skill/示例/测试同步。
+- v0.0.44 将扩展 CWD/相对 entry 解析根从扩展自身目录误改为服务根/baseDir，导致远程实例全部扩展启动失败；`buildWorkDir`/`RunExtension`/导出导入校验已恢复以扩展自身目录为根，规格/Skill/示例/测试同步。

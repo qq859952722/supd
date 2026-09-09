@@ -10,6 +10,7 @@ import { RouteAwareErrorBoundary } from '@/components/ErrorBoundary'
 import { t } from '@/lib/i18n'
 import { BottomDrawer } from '@/components/BottomDrawer'
 import { GlobalSearch } from '@/components/GlobalSearch'
+import { NotificationBell } from '@/components/NotificationBell'
 import { useAuthStore } from '@/stores/auth'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -24,6 +25,7 @@ import {
   Radio,
   FolderOpen,
   Settings,
+  PlaySquare,
   Search,
   User,
   Moon,
@@ -279,6 +281,7 @@ function AppLayout() {
             <NavItem to="/services" icon={Server} label={t.nav.services} />
             <NavItem to="/extensions" icon={Puzzle} label={t.nav.extensions} />
             <NavItem to="/cron" icon={Clock} label={t.nav.schedules} />
+            <NavItem to="/operations" icon={PlaySquare} label={t.nav.operations} />
             <NavItem to="/events" icon={Radio} label={t.nav.events} />
             <NavItem to="/files" icon={FolderOpen} label={t.nav.files} />
             <NavItem to="/settings" icon={Settings} label={t.nav.settings} />
@@ -295,6 +298,9 @@ function AppLayout() {
             <span>{t.search.placeholder}</span>
             <kbd className="ml-4 rounded border border-[var(--color-border-primary)] px-1.5 py-0.5 text-xs">⌘K</kbd>
           </button>
+
+          {/* 铃铛红点（节点 09-3）：位于全局搜索与用户菜单之间 */}
+          <NotificationBell />
 
           {/* 主题切换 */}
           <ThemeToggle />

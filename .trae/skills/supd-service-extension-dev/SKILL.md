@@ -25,7 +25,7 @@ description: "supd服务与扩展开发指南。当用户要求开发、修改�
 | 何时读取 | 参考文档 | 覆盖内容 |
 |:---|:---|:---|
 | 编写/修改 `service.yaml` | `references/01_service_spec.md` | 4 种 Readiness 配置、状态机 11 条转移规则、restart 策略、signals、stop/logging、检查清单 |
-| 编写/修改 `meta.yaml` | `references/02_extension_spec.md` | 4 种触发器、stdout 通信协议、14 个 SUPD_* 环境变量、retry_on_failure、entry 路径安全 |
+| 编写/修改 `meta.yaml` | `references/02_extension_spec.md` | 4 种触发器、stdout 通信协议（含 `::notify::`）、14 个 SUPD_* 环境变量（操作中心另追加 5 个 `SUPD_OPERATION_*`，见 `05_env_spec.md` §4）、retry_on_failure、entry 路径安全 |
 | 修改配置后问"何时生效" | `references/03_modification_matrix.md` | 热重载行为矩阵（哪些字段热生效、哪些需重启服务、哪些需重启 supd） |
 | 在线开发/SSH/HTTP API | `references/04_online_dev_guide.md` | Dropbear SSH 配置、CLI 命令、76 个 API 端点对照表、导入导出流程 |
 | 编写/修改 `env.yaml` | `references/05_env_spec.md` | 4 层环境变量合并规则、env.yaml 结构体格式、密码字段处理 (**必读**，极易出错) |
@@ -94,11 +94,11 @@ description: "supd服务与扩展开发指南。当用户要求开发、修改�
 | **entry 路径安全** | 禁止 `..`、shell 元字符（``; | & $ ` ( ) { }``）、冗余 `./` 前缀；开发校验还会确认入口文件存在 |
 | **profile 名称** | 必须匹配 `^[a-z][a-z0-9-]*$`，对应 `package.<profile>.yaml` |
 | **数值限制** | fsnotify防抖 `500ms` / stop grace `10s` / 扩展硬上限默认 `1800s`（可由全局设置调整）/ 上传限制 `100MB` / serialize队列上限 `16` |
-| **禁止引入** | 数据库 (SQLite/Bolt 等)、SSE (Server-Sent Events)、WebSocket |
+| **禁止引入 / 数据库边界** | 禁止 SSE (Server-Sent Events)、WebSocket、及 Bolt/Badger 等其他数据库；仅允许 SQLite（`modernc.org/sqlite` 纯 Go 驱动）用于通知中心/操作中心持久化（数据库位于 `<baseDir>/data/supd.db`，**不开放脚本访问**，与 AGENTS.md 措辞一致） |
 
 > **⚠️ 底包 libc 兼容性门禁（双向）**：安装、更新服务二进制或切换底包（Alpine↔Debian 容器重建）前后，必须检查二进制 libc/动态加载器要求与底包是否一致（`file`、`readelf -l`、`ldd` 或实际启动验证）：
 > - **glibc 二进制 + Alpine/musl 底包**：立即停止安装与排障；禁止安装 `glibc`、`gcompat`、`libc6-compat` 等兼容层，禁止第三方 glibc 安装脚本。提醒用户改用官方 Debian 镜像 `ghcr.io/qq859952722/supd:debian`（固定版本 `vX.Y.Z-debian`）。
-> - **musl 二进制 + Debian/glibc 底包**（切换底包后既有服务失效的常见场景）：症状一为 `fork/exec ... no such file or directory` 但文件实际存在（musl 解释器缺失）；症状二为 `Error relocating ... symbol not found`（误加载 glibc 版共享库）。处理规则与 smartdns 实战案例详见 `references/01_service_spec.md` §1.7/§1.8。
+> - **musl 二进制 + Debian/glibc 底包**（musl 服务**并非不能装**：Debian 默认缺 musl 解释器，补齐运行时即可用，smartdns 已实战验证）：症状一为 `fork/exec ... no such file or directory` 但文件实际存在（musl 解释器缺失）；症状二为 `Error relocating ... symbol not found`（误加载 glibc 版共享库）。启用步骤与 smartdns 实战案例详见 `references/01_service_spec.md` §1.7/§1.8。
 > - 切换底包 = 容器重建：既有服务二进制的运行库环境会重置，autostart 服务可能在依赖初始化完成前启动而失败，需逐个复核并重跑初始化扩展。
 
 > **⚠️ 环境变量 (`env.yaml`) 致命陷阱**：

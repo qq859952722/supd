@@ -206,6 +206,20 @@ services/smartdns/
 - ❌ `plugin bin/smartdns_ui.so` → 解析为 `config/bin/smartdns_ui.so`（不存在）
 - ❌ `cache-file config/smartdns.cache` → 解析为 `config/config/smartdns.cache`（双重 config，smartdns 会实际写入错误路径）
 
+#### 域名匹配语义（受控实验实证，2026-09-01）
+
+smartdns `domain-set -type list` 文件**每行一个裸域名即可，裸域名 = 后缀匹配（自身 + 任意深度子域）**，Loyalsoldier direct/proxy-list 的裸域名格式可直接使用，**不要做格式转换**：
+
+| 规则行写法 | 匹配根域 | 匹配子域 | 说明 |
+|---|---|---|---|
+| `example.com` | ✅ | ✅（任意深度） | **推荐**（源码 `_config_setup_domain_key` bare 分支 "suffix match"） |
+| `-.example.com` | ✅ | ❌ | 仅根域自身 |
+| `*.example.com` | ❌ | ✅ | 仅子域 |
+| `+.example.com` | ❌ | ❌ | **无效**：smartdns 不支持 `+.` 前缀（dnsmasq/mosdns 风格），整行被当字面域名永不命中 |
+
+> 官方文档仅说明"一个域名一行"，未写匹配语义；以上为 address 直返受控实验（四种格式对照）实测结论。
+> 排障提醒：单域名空响应优先排查 gfw 组上游健康度与 NODATA 负缓存（`config/smartdns.cache` 持久化了空结果，删除后重启），不要先怀疑域名格式。
+
 #### update-gfw-china 扩展
 
 规则文件由 `services/smartdns/extensions/update-gfw-china` 扩展生成，写入 `config/rules/` 目录：
@@ -214,7 +228,7 @@ services/smartdns/
 - `gfw_domain.txt` — GFW 域名列表（proxy-list，约 2.6 万条）
 - `china_ip.txt` — 中国 IP v4+v6 列表（约 4189+1605 条）
 
-扩展 `run.js` 通过 `SUPD_SERVICE_DIR` 环境变量定位服务根目录，输出到 `${SVCDIR}/config/rules/`，与 smartdns.conf 的 `rules/xxx.txt` 引用路径一致。
+扩展 `run.js` 通过 `SUPD_SERVICE_DIR` 环境变量定位服务根目录，输出到 `${SVCDIR}/config/rules/`，与 smartdns.conf 的 `rules/xxx.txt` 引用路径一致。`meta.yaml` 的 `timeout_seconds: 300`（全量下载 13 万+条规则，网络慢时 120s 会超时）。
 
 ---
 

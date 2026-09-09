@@ -39,9 +39,13 @@ type UIConfig struct {
 // REQ-2.2.3: actions 段
 // args 字段已删除：统一用 SUPD_ACTION 环境变量区分 action，避免死代码
 type Action struct {
-	ID          string `yaml:"id" json:"id"`
-	Label       string `yaml:"label" json:"label,omitempty"`
-	ButtonStyle string `yaml:"button_style" json:"button_style,omitempty"`
+	ID          string   `yaml:"id" json:"id"`
+	Label       string   `yaml:"label" json:"label,omitempty"`
+	ButtonStyle string   `yaml:"button_style" json:"button_style,omitempty"`
+	// Operations 操作中心声明的操作 ID 列表（§三：操作注册模型）。
+	// 全局扩展 action 据此自动注册操作；服务扩展 action 据此响应操作。
+	// 可选项：未声明（零值 nil）的旧 action 行为完全不变。
+	Operations []string `yaml:"operations,omitempty" json:"operations,omitempty"`
 }
 
 // Triggers 触发器定义

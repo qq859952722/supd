@@ -121,17 +121,17 @@ def validate_entry_path(entry, kind):
 
 
 def validate_actions_block(content, kind):
-    """校验 actions 列表：每个 action 必须有 id 和 label，id 唯一，button_style 枚举合法。
+    """校验 actions 列表：每个 action 必须有 id 和 label，id 唯一，button_style 枚举合法；
+    operations 为可选字符串数组，元素匹配 ^[a-z][a-z0-9-]*$，同一 action 内重复 ID 报错。
     与 internal/config/extension_validate.go:111-129 对齐。"""
     # 提取 actions 块（actions: 之后所有缩进行，直到遇到非缩进行如 triggers:）
     actions_match = re.search(r'^actions:\s*\n((?:[ \t]+.+\n?)+)', content, re.MULTILINE)
     if not actions_match:
         return  # actions 可选，不强制
     actions_block = actions_match.group(1)
-    # 按 "  - " 分割为各 action 条目（保留 - 后的内容）
-    # 每个条目以缩进 + "- " 开头，后续属性行紧跟
-    raw_entries = re.split(r'\n(?=[ \t]+-[ \t])', actions_block)
-    # 第一段是第一个 "- id: ..." 之前的内容（通常为空或首行）
+    # 按顶层 action 条目分割（"缩进 + - + 键 + 冒号"，如 "  - id: xxx"）。
+    # 不用纯 "  - " 作切分点，避免把 operations 内嵌列表项（"      - check-software"，无冒号）误判为新 action。
+    raw_entries = re.split(r'\n(?=[ \t]+-[ \t]+[^\s]+[ \t]*:)', actions_block)
     action_entries = []
     for raw in raw_entries:
         # 去掉每条开头的缩进和 "- "，保留属性行
@@ -160,6 +160,15 @@ def validate_actions_block(content, kind):
             log_fail(f"{kind} actions[{idx}].label: 必填（id='{aid}'）")
         if bs and bs not in VALID_BUTTON_STYLES:
             log_fail(f"{kind} actions[{idx}].button_style: '{bs}' 不在 {VALID_BUTTON_STYLES} 中")
+        # operations 可选字段校验（节点 07 实现；全局扩展注册操作、服务扩展响应绑定）
+        ops_ids = re.findall(r'^\s*operations:\s*\n((?:[ \t]+[-][ \t]*[^\s#]+\n?)+)', entry, re.MULTILINE)
+        if ops_ids and aid:
+            op_list = re.findall(r'[ \t]*[-][ \t]*["\']?([a-z0-9-]+)["\']?', ops_ids[0], re.MULTILINE)
+            for op in op_list:
+                if not NAME_REGEX.match(op):
+                    log_fail(f"{kind} actions[{idx}].operations 元素 '{op}' 不匹配 ^[a-z][a-z0-9-]*$（id='{aid}'）")
+            if len(set(op_list)) != len(op_list):
+                log_fail(f"{kind} actions[{idx}].operations: 重复操作 ID（id='{aid}'）")
     if seen_ids and not dup_found:
         log_pass(f"{kind} actions: {len(seen_ids)} 个，id 唯一性通过")
 

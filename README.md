@@ -4,6 +4,8 @@
 
 它借鉴了 [s6](https://skarnet.org/software/s6/) 的进程管理核心思想（如监督树、自动重启、Readiness 通知、单服务独立日志等），但不兼容其配置与二进制格式。`supd` 提供了现代化、傻瓜式的 Web UI 和高度灵活的扩展脚本系统，目标是为极客和家庭用户提供低资源占用、高可靠性的服务管理体验。
 
+supd 使用 SQLite（纯 Go 驱动）持久化**通知中心**与**操作中心**数据，数据库位于 `<baseDir>/data/supd.db`，不向脚本开放。
+
 ---
 
 ## ✨ 核心特性
@@ -246,8 +248,8 @@ docker pull ghcr.io/qq859952722/supd:latest
 docker pull ghcr.io/qq859952722/supd:debian
 
 # 或指定具体版本
-docker pull ghcr.io/qq859952722/supd:v0.0.54
-docker pull ghcr.io/qq859952722/supd:v0.0.54-debian
+docker pull ghcr.io/qq859952722/supd:v0.1.0
+docker pull ghcr.io/qq859952722/supd:v0.1.0-debian
 ```
 
 **镜像标签对照表**：
@@ -315,12 +317,12 @@ docker run -d --stop-grace-period 30s ...
 
 | 项目 | 说明 |
 |------|------|
-| 当前版本 | `v0.0.54` |
+| 当前版本 | `v0.1.0` |
 | 平台支持 | Linux amd64 / Linux arm64 |
 | 后端语言 | Go 1.25+ |
 | 前端技术栈 | React 19 + TypeScript + Vite + Tailwind CSS 4 |
 | 镜像运行时 | Alpine 3.20 + 内置 tjs (txiki.js) |
-| 架构约束 | 无数据库、无 WebSocket（长轮询）、单二进制 |
+| 架构约束 | SQLite（仅通知/操作持久化，`<baseDir>/data/supd.db`）、无 WebSocket（长轮询）、单二进制 |
 
 ---
 

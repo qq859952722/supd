@@ -2,6 +2,7 @@ package extension
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -23,11 +24,11 @@ func TestParseConcurrency(t *testing.T) {
 		{"debounce:5s", PolicyDebounce, 5000, false},
 		{"debounce:1s", PolicyDebounce, 1000, false},
 		{"debounce:3600s", PolicyDebounce, 3600000, false},
-		{"", PolicyReplace, 0, false},           // 空字符串默认 replace
-		{"unknown", PolicyReplace, 0, false},    // 未知格式默认 replace（向后兼容）
-		{"debounce:500ms", PolicyReplace, 0, true},  // A-04-001: Nms 格式已移除
-		{"debounce:", PolicyReplace, 0, true},   // 缺少 Ns 后缀
-		{"debounce:0s", PolicyReplace, 0, true}, // A-04-002: N<1 越界
+		{"", PolicyReplace, 0, false},              // 空字符串默认 replace
+		{"unknown", PolicyReplace, 0, false},       // 未知格式默认 replace（向后兼容）
+		{"debounce:500ms", PolicyReplace, 0, true}, // A-04-001: Nms 格式已移除
+		{"debounce:", PolicyReplace, 0, true},      // 缺少 Ns 后缀
+		{"debounce:0s", PolicyReplace, 0, true},    // A-04-002: N<1 越界
 		{"debounce:-1s", PolicyReplace, 0, true},
 		{"debounce:3601s", PolicyReplace, 0, true}, // A-04-002: N>3600 越界
 		{"debounce:abcs", PolicyReplace, 0, true},  // N 非整数
@@ -403,8 +404,8 @@ func TestConcurrencyDebounce_CancelsRunningTask(t *testing.T) {
 func TestConcurrencyManager_MultiActionNoBlock(t *testing.T) {
 	mgr := NewConcurrencyManager()
 
-	tracker1 := mgr.GetTracker("ext1", "action1", PolicySerialize, 0)
-	tracker2 := mgr.GetTracker("ext1", "action2", PolicySerialize, 0)
+	tracker1 := mgr.GetTracker("", "ext1", "action1", PolicySerialize, 0)
+	tracker2 := mgr.GetTracker("", "ext1", "action2", PolicySerialize, 0)
 
 	if tracker1 == tracker2 {
 		t.Error("different actions should have different trackers")
@@ -444,8 +445,8 @@ func TestConcurrencyManager_MultiActionNoBlock(t *testing.T) {
 func TestConcurrencyManager_GetTrackerReturnsSame(t *testing.T) {
 	mgr := NewConcurrencyManager()
 
-	t1 := mgr.GetTracker("ext1", "action1", PolicyReplace, 0)
-	t2 := mgr.GetTracker("ext1", "action1", PolicySerialize, 0) // 不同策略也应该返回同一个
+	t1 := mgr.GetTracker("", "ext1", "action1", PolicyReplace, 0)
+	t2 := mgr.GetTracker("", "ext1", "action1", PolicySerialize, 0) // 不同策略也应该返回同一个
 
 	if t1 != t2 {
 		t.Error("same extName:actionID should return same tracker")
@@ -775,7 +776,7 @@ func TestConcurrencyActionTracker_Stop_WithRunningTask_DoesNotCancel(t *testing.
 // TestConcurrencyManager_CancelRun_FindsRunAcrossTrackers 验证 CancelRun 能在多个 tracker 中找到并取消任务。
 func TestConcurrencyManager_CancelRun_FindsRunAcrossTrackers(t *testing.T) {
 	mgr := NewConcurrencyManager()
-	tracker := mgr.GetTracker("ext1", "action1", PolicyParallel, 0)
+	tracker := mgr.GetTracker("", "ext1", "action1", PolicyParallel, 0)
 
 	var started sync.WaitGroup
 	started.Add(1)
@@ -807,7 +808,7 @@ func TestConcurrencyManager_CancelRun_FindsRunAcrossTrackers(t *testing.T) {
 // TestConcurrencyManager_CancelRun_NonExistentReturnsFalse 边界：未知 runID 返回 false。
 func TestConcurrencyManager_CancelRun_NonExistentReturnsFalse(t *testing.T) {
 	mgr := NewConcurrencyManager()
-	mgr.GetTracker("ext1", "action1", PolicyParallel, 0)
+	mgr.GetTracker("", "ext1", "action1", PolicyParallel, 0)
 
 	// 无任何运行中任务时，CancelRun 应返回 false
 	if mgr.CancelRun("nonexistent") {
@@ -818,8 +819,8 @@ func TestConcurrencyManager_CancelRun_NonExistentReturnsFalse(t *testing.T) {
 // TestConcurrencyManager_CancelRun_MultipleTrackersFindsRightOne 验证 CancelRun 在多 tracker 中精确定位。
 func TestConcurrencyManager_CancelRun_MultipleTrackersFindsRightOne(t *testing.T) {
 	mgr := NewConcurrencyManager()
-	trackerA := mgr.GetTracker("ext1", "actionA", PolicyParallel, 0)
-	trackerB := mgr.GetTracker("ext1", "actionB", PolicyParallel, 0)
+	trackerA := mgr.GetTracker("", "ext1", "actionA", PolicyParallel, 0)
+	trackerB := mgr.GetTracker("", "ext1", "actionB", PolicyParallel, 0)
 
 	var startedA, startedB sync.WaitGroup
 	startedA.Add(1)
@@ -879,7 +880,7 @@ func TestConcurrencyManager_HasAnyRunning_EmptyReturnsFalse(t *testing.T) {
 // TestConcurrencyManager_HasAnyRunning_WithRunningReturnsTrue 验证有运行中任务时返回 true。
 func TestConcurrencyManager_HasAnyRunning_WithRunningReturnsTrue(t *testing.T) {
 	mgr := NewConcurrencyManager()
-	tracker := mgr.GetTracker("ext1", "action1", PolicyParallel, 0)
+	tracker := mgr.GetTracker("", "ext1", "action1", PolicyParallel, 0)
 
 	var started sync.WaitGroup
 	started.Add(1)
@@ -911,8 +912,8 @@ func TestConcurrencyManager_HasAnyRunning_WithRunningReturnsTrue(t *testing.T) {
 // TestConcurrencyManager_HasAnyRunning_TrackerExistsButNoRunningReturnsFalse 边界：有 tracker 但无运行中任务。
 func TestConcurrencyManager_HasAnyRunning_TrackerExistsButNoRunningReturnsFalse(t *testing.T) {
 	mgr := NewConcurrencyManager()
-	mgr.GetTracker("ext1", "action1", PolicyParallel, 0)
-	mgr.GetTracker("ext2", "action2", PolicySerialize, 0)
+	mgr.GetTracker("", "ext1", "action1", PolicyParallel, 0)
+	mgr.GetTracker("", "ext2", "action2", PolicySerialize, 0)
 
 	if mgr.HasAnyRunning() {
 		t.Error("manager with idle trackers should return false")
@@ -924,32 +925,32 @@ func TestConcurrencyManager_HasAnyRunning_TrackerExistsButNoRunningReturnsFalse(
 // TestConcurrencyManager_RemoveExtension_RemovesOnlyMatchingTrackers 验证只移除匹配扩展的 tracker。
 func TestConcurrencyManager_RemoveExtension_RemovesOnlyMatchingTrackers(t *testing.T) {
 	mgr := NewConcurrencyManager()
-	t1 := mgr.GetTracker("ext1", "action1", PolicyParallel, 0)
-	t2 := mgr.GetTracker("ext2", "action1", PolicyParallel, 0)
+	t1 := mgr.GetTracker("", "ext1", "action1", PolicyParallel, 0)
+	t2 := mgr.GetTracker("", "ext2", "action1", PolicyParallel, 0)
 
 	// 移除 ext2
-	mgr.RemoveExtension("ext2")
+	mgr.RemoveExtension("", "ext2")
 
 	// ext2 的 tracker 应已从 map 移除：再次 GetTracker 应返回新 tracker（不同指针）
-	t2Again := mgr.GetTracker("ext2", "action1", PolicyParallel, 0)
+	t2Again := mgr.GetTracker("", "ext2", "action1", PolicyParallel, 0)
 	if t2Again == t2 {
 		t.Error("ext2's tracker should have been removed (expected new tracker instance)")
 	}
 
 	// ext1 的 tracker 应保留（同一指针）
-	t1Again := mgr.GetTracker("ext1", "action1", PolicyParallel, 0)
+	t1Again := mgr.GetTracker("", "ext1", "action1", PolicyParallel, 0)
 	if t1Again != t1 {
 		t.Error("ext1's tracker should still be the same instance (not removed)")
 	}
 
 	// 幂等性边界：再次移除 ext2 不应 panic
-	mgr.RemoveExtension("ext2")
+	mgr.RemoveExtension("", "ext2")
 }
 
 // TestConcurrencyManager_RemoveExtension_StopsPendingDebounce 验证 RemoveExtension 调用 Stop 清理 pending。
 func TestConcurrencyManager_RemoveExtension_StopsPendingDebounce(t *testing.T) {
 	mgr := NewConcurrencyManager()
-	tracker := mgr.GetTracker("ext1", "action1", PolicyDebounce, 2000) // 2s debounce
+	tracker := mgr.GetTracker("", "ext1", "action1", PolicyDebounce, 2000) // 2s debounce
 
 	var result1 *RunResult
 	done1 := make(chan struct{})
@@ -963,7 +964,7 @@ func TestConcurrencyManager_RemoveExtension_StopsPendingDebounce(t *testing.T) {
 	time.Sleep(20 * time.Millisecond) // 确保 debouncePending 已设置
 
 	// RemoveExtension 应调用 Stop，取消 debouncePending
-	mgr.RemoveExtension("ext1")
+	mgr.RemoveExtension("", "ext1")
 
 	select {
 	case <-done1:
@@ -985,7 +986,7 @@ func TestConcurrencyManager_WaitForAllRunning_NoTasks_ReturnsZero(t *testing.T) 
 		t.Errorf("WaitForAllRunning on empty manager = %d, want 0", got)
 	}
 
-	mgr.GetTracker("ext1", "action1", PolicyParallel, 0)
+	mgr.GetTracker("", "ext1", "action1", PolicyParallel, 0)
 	// 边界：有 tracker 但无运行中任务
 	if got := mgr.WaitForAllRunning(100 * time.Millisecond); got != 0 {
 		t.Errorf("WaitForAllRunning with idle trackers = %d, want 0", got)
@@ -995,7 +996,7 @@ func TestConcurrencyManager_WaitForAllRunning_NoTasks_ReturnsZero(t *testing.T) 
 // TestConcurrencyManager_WaitForAllRunning_AllComplete_ReturnsZero 验证所有任务在超时内完成时返回 0。
 func TestConcurrencyManager_WaitForAllRunning_AllComplete_ReturnsZero(t *testing.T) {
 	mgr := NewConcurrencyManager()
-	tracker := mgr.GetTracker("ext1", "action1", PolicyParallel, 0)
+	tracker := mgr.GetTracker("", "ext1", "action1", PolicyParallel, 0)
 
 	var started sync.WaitGroup
 	started.Add(1)
@@ -1028,7 +1029,7 @@ func TestConcurrencyManager_WaitForAllRunning_AllComplete_ReturnsZero(t *testing
 // TestConcurrencyManager_WaitForAllRunning_TimeoutExceeded_ReturnsRemaining 验证超时后返回剩余任务数。
 func TestConcurrencyManager_WaitForAllRunning_TimeoutExceeded_ReturnsRemaining(t *testing.T) {
 	mgr := NewConcurrencyManager()
-	tracker := mgr.GetTracker("ext1", "action1", PolicyParallel, 0)
+	tracker := mgr.GetTracker("", "ext1", "action1", PolicyParallel, 0)
 
 	var started sync.WaitGroup
 	started.Add(1)
@@ -1230,5 +1231,161 @@ func TestConcurrencyActionTracker_collectDones_WithRunning_ReturnsChannels(t *te
 		// 期望：通道已关闭，接收成功
 	default:
 		t.Error("done channel should be closed after task completes")
+	}
+}
+
+// --- 服务维度隔离测试（设计稿 Phase 0.1） ---
+
+// TestTrackerKeyServiceIsolation_GetTracker 三元 key 区分不同服务的同名扩展同一 action。
+func TestTrackerKeyServiceIsolation_GetTracker(t *testing.T) {
+	mgr := NewConcurrencyManager()
+	ta := mgr.GetTracker("svcA", "ext", "run", PolicyReplace, 0)
+	tb := mgr.GetTracker("svcB", "ext", "run", PolicyReplace, 0)
+	tglob := mgr.GetTracker("", "ext", "run", PolicyReplace, 0)
+
+	if ta == tb || ta == tglob || tb == tglob {
+		t.Fatal("service dimension must isolate trackers: svcA, svcB, global should all differ")
+	}
+	if again := mgr.GetTracker("svcA", "ext", "run", PolicyReplace, 0); again != ta {
+		t.Fatal("same (service,ext,action) should return same tracker")
+	}
+}
+
+// TestTrackerKeyServiceIsolation_Replace 服务 A 的 replace 不得取消服务 B 的 running 任务
+// （不同服务拥有各自 tracker，互不 replace）。
+func TestTrackerKeyServiceIsolation_Replace(t *testing.T) {
+	mgr := NewConcurrencyManager()
+	ta := mgr.GetTracker("svcA", "ext", "run", PolicyReplace, 0)
+	tb := mgr.GetTracker("svcB", "ext", "run", PolicyReplace, 0)
+	if ta == tb {
+		t.Fatal("different services should have different trackers")
+	}
+
+	releaseB := make(chan struct{})
+	bStart := make(chan struct{})
+	bCancelled := false
+	bDone := make(chan struct{})
+	go func() {
+		tb.Apply(context.Background(), "B:1", func(ctx context.Context) (*RunResult, error) {
+			close(bStart)
+			select {
+			case <-ctx.Done():
+				bCancelled = true
+				return &RunResult{RunID: "B:1", State: TaskCanceled}, nil
+			case <-releaseB:
+				return &RunResult{RunID: "B:1", State: TaskSuccess}, nil
+			}
+		})
+		close(bDone)
+	}()
+	<-bStart
+
+	// 服务 A 连续多次 replace，只会取消 A tracker 内的任务，不影响 B。
+	// replace 的 Apply 会同步阻塞到任务结束，故放到 goroutine 中执行。
+	for i := 0; i < 3; i++ {
+		go ta.Apply(context.Background(), fmt.Sprintf("A:%d", i), func(ctx context.Context) (*RunResult, error) {
+			<-ctx.Done()
+			return &RunResult{RunID: "A:x", State: TaskCanceled}, nil
+		})
+	}
+	time.Sleep(30 * time.Millisecond)
+
+	if bCancelled {
+		t.Error("service B's running task must not be cancelled by service A's replace")
+	}
+
+	close(releaseB)
+	<-bDone
+	if bCancelled {
+		t.Error("B should have completed successfully after release")
+	}
+}
+
+// TestTrackerKeyServiceIsolation_Serialize 服务 A 的 serialize 队列不阻塞服务 B 立即执行。
+func TestTrackerKeyServiceIsolation_Serialize(t *testing.T) {
+	mgr := NewConcurrencyManager()
+	tA := mgr.GetTracker("svcA", "ext", "run", PolicySerialize, 0)
+	tB := mgr.GetTracker("svcB", "ext", "run", PolicySerialize, 0)
+	if tA == tB {
+		t.Fatal("different services should have different trackers")
+	}
+
+	// A 第一个任务占住 svcA 的 serialize 槽位。
+	startedA := make(chan struct{})
+	releaseA := make(chan struct{})
+	doneA := make(chan struct{})
+	go func() {
+		tA.Apply(context.Background(), "A:1", func(ctx context.Context) (*RunResult, error) {
+			close(startedA)
+			<-releaseA
+			return &RunResult{RunID: "A:1", State: TaskSuccess}, nil
+		})
+		close(doneA)
+	}()
+	<-startedA
+
+	// A 第二个任务应排队（不会执行）。
+	releaseA2, queued := make(chan struct{}), make(chan struct{})
+	doneA2 := make(chan struct{})
+	go func() {
+		tA.Apply(context.Background(), "A:2", func(ctx context.Context) (*RunResult, error) {
+			close(queued)
+			<-releaseA2
+			return &RunResult{RunID: "A:2", State: TaskSuccess}, nil
+		})
+		close(doneA2)
+	}()
+	time.Sleep(20 * time.Millisecond)
+	select {
+	case <-queued:
+		t.Fatal("A:2 should be queued, not running (svcA serialize held by A:1)")
+	default:
+	}
+
+	// 服务 B 应在独立 tracker 上立即执行。
+	bExecuted := make(chan struct{})
+	tB.Apply(context.Background(), "B:1", func(ctx context.Context) (*RunResult, error) {
+		close(bExecuted)
+		return &RunResult{RunID: "B:1", State: TaskSuccess}, nil
+	})
+	select {
+	case <-bExecuted:
+	default:
+		t.Fatal("service B must execute immediately; serialize queues are per-service")
+	}
+
+	close(releaseA)
+	close(releaseA2)
+	<-doneA
+	<-doneA2
+}
+
+// TestTrackerKeyServiceIsolation_Debounce 服务 A/B 的 debounce tracker 相互独立：
+// B 触发不重置 A 的计时器（通过独立实例即可证明不会被串线）。
+func TestTrackerKeyServiceIsolation_Debounce(t *testing.T) {
+	mgr := NewConcurrencyManager()
+	tA := mgr.GetTracker("svcA", "ext", "run", PolicyDebounce, 1000)
+	tB := mgr.GetTracker("svcB", "ext", "run", PolicyDebounce, 1000)
+	if tA == tB {
+		t.Fatal("different services should have different debounce trackers")
+	}
+	if tA.debouncer == tB.debouncer {
+		t.Fatal("debouncer must be per-(service,ext,action) instance")
+	}
+}
+
+// TestTrackerKeyServiceIsolation_RemoveOnlyTargetService 删除服务 A 扩展后，服务 B 同名扩展 tracker 保留。
+func TestTrackerKeyServiceIsolation_RemoveOnlyTargetService(t *testing.T) {
+	mgr := NewConcurrencyManager()
+	ta := mgr.GetTracker("svcA", "ext", "run", PolicyParallel, 0)
+	tb := mgr.GetTracker("svcB", "ext", "run", PolicyParallel, 0)
+
+	mgr.RemoveExtension("svcA", "ext")
+
+	if again := mgr.GetTracker("svcA", "ext", "run", PolicyParallel, 0); again == ta {
+		t.Fatal("svcA tracker should be removed and re-created as new instance")
+	}
+	if again := mgr.GetTracker("svcB", "ext", "run", PolicyParallel, 0); again != tb {
+		t.Fatal("svcB tracker must remain untouched")
 	}
 }

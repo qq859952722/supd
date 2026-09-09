@@ -39,6 +39,8 @@ type Server struct {
 	logProvider          LogProvider
 	watchProvider        WatchProvider
 	serviceHistoryGetter ServiceHistoryGetter
+	operationProvider    OperationProvider
+	notificationProvider NotificationProvider
 	eventRing            *EventRingBuffer
 	longPollLimiter      *LongPollLimiter
 	pathValidator        *PathValidator
@@ -100,6 +102,16 @@ func (s *Server) SetProviders(
 	s.serviceHistoryGetter = serviceHistoryGetter
 	s.eventRing = eventRing
 	s.pathValidator = pathValidator
+}
+
+// SetOperationProvider 注入操作中心 Provider（节点 07-5，5 个操作端点依赖）。
+func (s *Server) SetOperationProvider(op OperationProvider) {
+	s.operationProvider = op
+}
+
+// SetNotificationProvider 注入通知中心 Provider（节点 08-3，7 个通知端点依赖）。
+func (s *Server) SetNotificationProvider(np NotificationProvider) {
+	s.notificationProvider = np
 }
 
 // panicRecoverer 自定义 panic 恢复中间件
@@ -351,6 +363,39 @@ func (s *Server) setupRoutes() {
 		// 热重载
 		// N-04-002 修复：POST /api/reload 手动触发配置热重载
 		r.Post("/reload", s.handleReload)
+
+		// 操作中心（节点 07-5 新增 5 个端点）
+		r.Route("/operations", func(r chi.Router) {
+			r.Get("/", s.handleListOperations) // GET /api/operations
+			r.Route("/{id}", func(r chi.Router) {
+				r.Get("/", s.handleGetOperation)       // GET /api/operations/{id}
+				r.Post("/run", s.handleRunOperation)   // POST /api/operations/{id}/run
+			})
+		})
+		r.Route("/operation-executions", func(r chi.Router) {
+			r.Get("/", s.handleListOperationExecutions) // GET /api/operation-executions
+			r.Route("/{id}", func(r chi.Router) {
+				r.Get("/", s.handleGetOperationExecution) // GET /api/operation-executions/{id}
+			})
+		})
+
+		// 通知中心（节点 08-3 新增 7 个端点）
+		// 明确不存在通知写 API（设计稿 §八：POST /api/notifications 与
+		// POST /api/notifications/topics/{id}/notifications 均被否定）。
+		r.Route("/notifications", func(r chi.Router) {
+			r.Route("/topics", func(r chi.Router) {
+				r.Get("/", s.handleListTopics)         // GET    /api/notifications/topics
+				r.Delete("/", s.handleDeleteAllTopics) // DELETE /api/notifications/topics （清空软删）
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", s.handleGetTopic)          // GET    /api/notifications/topics/{id}
+					r.Delete("/", s.handleDeleteTopic)    // DELETE /api/notifications/topics/{id} （软删）
+					r.Post("/read", s.handleReadTopic)    // POST   /api/notifications/topics/{id}/read
+				})
+			})
+			r.Post("/read-all", s.handleReadAll) // POST /api/notifications/read-all
+			// changes 长轮询：复用 s.longPollLimiter（与 /api/events 共用全局50/单客户端5，超限429）。
+			r.Get("/changes", s.handleChanges) // GET /api/notifications/changes?epoch=&since=&wait=
+		})
 	})
 
 	// N-01-001 修复：未知路由返回结构化JSON而非裸文本

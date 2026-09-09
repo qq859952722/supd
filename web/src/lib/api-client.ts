@@ -208,3 +208,219 @@ export async function apiLongPoll<T>(path: string, params?: Record<string, strin
   })
   return handleResponse<T>(response)
 }
+
+// ---------------------------------------------------------------
+// 节点 09：操作中心 + 通知中心 API 类型与方法
+// 字段契约以后端真实 JSON 为准（snake_case，时间戳为 epoch 毫秒 number）。
+// ---------------------------------------------------------------
+
+/** store_error 可观测错误态（仅允许此对象或 null，不暴露底层细节）。 */
+export interface StoreError {
+  code: string
+}
+
+/** 操作卡片的上次执行摘要（§5 state 语义）。 */
+export interface LastExecution {
+  execution_id: string
+  created_at: number
+  state: 'running' | 'interrupted' | 'finished'
+  result?: 'success' | 'failed'
+}
+
+/** 操作卡片（GET /api/operations 数组元素）。 */
+export interface OperationCard {
+  id: string
+  label: string
+  button_style: 'primary' | 'default' | 'danger'
+  description: string
+  registrants: string[]
+  responder_count: number
+  warnings: string[]
+  last_execution?: LastExecution | null
+}
+
+/** operation 相应者引用（GET /api/operations/{id} 的 responders 元素）。 */
+export interface ResponderRef {
+  service_name: string
+  extension_name: string
+  action_id: string
+}
+
+/** 单操作详情。 */
+export interface OperationDetail extends OperationCard {
+  responders: ResponderRef[]
+}
+
+/** 操作执行中的 Run 快照（state 沿用七种任务状态）。 */
+export interface OperationRun {
+  run_id: string
+  execution_id: string
+  phase: 'global' | 'service'
+  service_name: string | null
+  extension_name: string
+  action_id: string
+  state: string
+  started_at: number | null
+  finished_at: number | null
+}
+
+/** 操作执行详情（GET /api/operation-executions 及 /{id}）。 */
+export interface ExecutionDetail {
+  id: string
+  operation_id: string
+  operation_label: string
+  topic_id: string
+  created_at: number
+  finished_at: number | null
+  interrupted_at: number | null
+  runs: OperationRun[]
+}
+
+/** POST /api/operations/{id}/run 返回。 */
+export interface RunOperationResult {
+  execution_id: string
+  topic_id: string
+}
+
+/** 操作中心（§十二.5.3）：卡片 / 详情 / 触发 / 执行历史。 */
+export async function getOperations(): Promise<OperationCard[]> {
+  return apiGet<OperationCard[]>('/api/operations')
+}
+
+export async function getOperation(id: string): Promise<OperationDetail> {
+  return apiGet<OperationDetail>(`/api/operations/${encodeURIComponent(id)}`)
+}
+
+export async function runOperation(
+  id: string,
+  params: Record<string, unknown>,
+  idempotencyKey: string,
+): Promise<RunOperationResult> {
+  const response = await safeFetch(`/api/operations/${encodeURIComponent(id)}/run`, {
+    method: 'POST',
+    headers: buildHeaders({ 'Idempotency-Key': idempotencyKey }),
+    body: JSON.stringify({ params }),
+  }, true)
+  return handleResponse<RunOperationResult>(response, true)
+}
+
+/**
+ * 执行历史（后端返回数组，非分页封装对象）。
+ * 参数为服务端 limit/offset（1 起始不等价——直接透传）。
+ */
+export async function getOperationExecutions(limit?: number, offset?: number): Promise<ExecutionDetail[]> {
+  return apiGet<ExecutionDetail[]>('/api/operation-executions', { limit, offset })
+}
+
+export async function getOperationExecution(id: string): Promise<ExecutionDetail> {
+  return apiGet<ExecutionDetail>(`/api/operation-executions/${encodeURIComponent(id)}`)
+}
+
+/** 通知主题行（GET /api/notifications/topics 数组元素）。 */
+export interface TopicItem {
+  id: string
+  kind: 'operation' | 'service' | 'extension' | 'system'
+  source_name: string
+  execution_id: string | null
+  service_name: string | null
+  created_at: number
+  closed_at: number | null
+  last_seq: number
+  read_seq: number
+  deleted_at: number | null
+  // 最新通知摘要（Topic 无通知时为 null）
+  last_level: string | null
+  last_content: string | null
+  last_source_type: string | null
+  last_activity_at: number | null
+}
+
+/** 通知主题详情（含计数）。 */
+export interface TopicDetail extends Omit<TopicItem, 'last_source_type'> {
+  notification_count: number
+  unread_count: number
+  last_created_at: number | null
+}
+
+/** 单条不可变通知。 */
+export interface Notification {
+  id: string
+  topic_id: string
+  seq: number
+  level: 'info' | 'success' | 'warning' | 'error'
+  content: string
+  created_at: number
+  source_type: 'service' | 'extension' | 'system'
+  service_name: string | null
+  extension_name: string | null
+  action_id: string | null
+  run_id: string | null
+  execution_id: string | null
+}
+
+export interface TopicListResponse {
+  topics: TopicItem[]
+  store_error: StoreError | null
+}
+
+export interface TopicDetailResponse {
+  topic: TopicDetail | null
+  notifications: Notification[]
+  store_error: StoreError | null
+  next_seq: number
+  has_more: boolean
+}
+
+export interface ChangesResult {
+  reload: boolean
+  epoch: string
+  seq: number
+}
+
+export interface NotificationTopicFilter {
+  kind?: string
+  unread?: boolean
+  level?: string
+  source_type?: string
+  service_name?: string
+}
+
+/** 通知中心（§八）：topics / topic / read / read-all / delete / clear / changes。 */
+export async function getNotificationTopics(filter: NotificationTopicFilter = {}): Promise<TopicListResponse> {
+  return apiGet<TopicListResponse>('/api/notifications/topics', {
+    kind: filter.kind,
+    unread: filter.unread,
+    level: filter.level,
+    source_type: filter.source_type,
+    service_name: filter.service_name,
+  })
+}
+
+/** sinceSeq 为已返回的最大 seq；服务端返回 seq > sinceSeq 的通知（seq 参数）。 */
+export async function getNotificationTopic(id: string, sinceSeq?: number, limit?: number): Promise<TopicDetailResponse> {
+  return apiGet<TopicDetailResponse>(`/api/notifications/topics/${encodeURIComponent(id)}`, { seq: sinceSeq, limit })
+}
+
+export async function markTopicRead(id: string): Promise<{ read_seq: number }> {
+  return apiPost<{ read_seq: number }>(`/api/notifications/topics/${encodeURIComponent(id)}/read`)
+}
+
+export async function markAllRead(): Promise<{ ok: boolean }> {
+  return apiPost<{ ok: boolean }>('/api/notifications/read-all')
+}
+
+export async function deleteTopic(id: string): Promise<{ ok: boolean }> {
+  return apiDelete<{ ok: boolean }>(`/api/notifications/topics/${encodeURIComponent(id)}`)
+}
+
+export async function clearAllTopics(): Promise<{ ok: boolean }> {
+  return apiDelete<{ ok: boolean }>('/api/notifications/topics')
+}
+
+export async function pollNotificationChanges(epoch: string, sinceSeq: number, wait: number, signal?: AbortSignal): Promise<ChangesResult> {
+  return apiLongPoll<ChangesResult>('/api/notifications/changes', {
+    epoch: epoch || undefined,
+    since: sinceSeq,
+    wait,
+  }, signal)
+}

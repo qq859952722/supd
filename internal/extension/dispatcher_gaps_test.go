@@ -11,8 +11,8 @@ import (
 func TestDispatcher_CleanupRemovedExtensions(t *testing.T) {
 	disp := NewDispatcher(nil, "", "", 0)
 
-	disp.GetConcurrencyManager().GetTracker("ext1", "run", PolicyReplace, 0)
-	disp.GetConcurrencyManager().GetTracker("ext2", "run", PolicyReplace, 0)
+	disp.GetConcurrencyManager().GetTracker("", "ext1", "run", PolicyReplace, 0)
+	disp.GetConcurrencyManager().GetTracker("", "ext2", "run", PolicyReplace, 0)
 
 	old := &watch.DiscoveryResult{
 		GlobalExts: map[string]*watch.ExtensionEntry{
@@ -29,11 +29,11 @@ func TestDispatcher_CleanupRemovedExtensions(t *testing.T) {
 	disp.CleanupRemovedExtensions(old, new)
 
 	// ext2 已删除：其 tracker 应被移除（再次 GetTracker 返回新实例即等价于清理成功）
-	if tr := disp.GetConcurrencyManager().GetTracker("ext2", "run", PolicyReplace, 0); tr == nil {
+	if tr := disp.GetConcurrencyManager().GetTracker("", "ext2", "run", PolicyReplace, 0); tr == nil {
 		t.Fatal("tracker should be re-creatable after cleanup (ext2 removed)")
 	}
 	// ext1 仍在：tracker 应保留
-	if tr := disp.GetConcurrencyManager().GetTracker("ext1", "run", PolicyReplace, 0); tr == nil {
+	if tr := disp.GetConcurrencyManager().GetTracker("", "ext1", "run", PolicyReplace, 0); tr == nil {
 		t.Fatal("ext1 tracker should still exist after cleanup")
 	}
 }

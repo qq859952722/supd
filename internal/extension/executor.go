@@ -1,12 +1,13 @@
 package extension
 
 import (
-	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -14,7 +15,12 @@ import (
 	"github.com/supdorg/supd/internal/config"
 	"github.com/supdorg/supd/internal/core"
 	"github.com/supdorg/supd/internal/logging"
+	"github.com/supdorg/supd/internal/notification"
+	"github.com/supdorg/supd/internal/stream"
 )
+
+// maxRunResults runResults 容量硬编码上限（设计稿 Phase 0.4；不新增配置字段）。
+const maxRunResults = 500
 
 // Executor 扩展执行器
 // REQ-F-016: 11步执行流程编排
@@ -22,11 +28,24 @@ type Executor struct {
 	logDir     string
 	baseDir    string
 	runResults map[string]*RunResult // key=runID
+	insertOrder []string             // runID 插入序（用于有界淘汰，最旧在前）
 	mu         sync.RWMutex          // REQ-C-003: runResults 读写互斥
 
 	// REQ-F-028, REQ-F-029: runtime 别名解析
 	runtimes           map[string]string // config.yaml 声明的运行时
 	discoveredRuntimes map[string]string // 扫描发现的运行时
+
+	// notifySink 通知接收点（预留接线点，由节点 08 替换为真实路由；本节点为测试 Sink）。
+	// notifyDropped 队列满时丢弃的 notify 计数。
+	notifySink    notification.NotifySink
+	notifyDropped atomic.Int64
+}
+
+// SetNotifySink 注入通知接收点。扩展 stdout 中合法的 ::notify:: 行写入日志外，
+// 还会非阻塞 TryEnqueue 提交通知；nil 或队列满时被忽略（丢弃并计数），
+// 不影响扩展执行与新任务状态。
+func (e *Executor) SetNotifySink(sink notification.NotifySink) {
+	e.notifySink = sink
 }
 
 // NewExecutor 创建扩展执行器
@@ -143,13 +162,12 @@ func (e *Executor) startOutputGoroutines(meta *config.ExtensionMeta, tc TriggerC
 	protocolCh = make(chan protocolUpdate, 64)
 
 	// stdout 读取 goroutine — REQ-F-017: 解析 ::progress:: 和 ::result:: 协议指令
+	// 设计稿 §六.4/§六.5：stdout 唯一 reader；排水安全读取；notify 非阻塞。
 	go func() {
 		defer func() { stdoutDone <- struct{}{} }()
 		parser := NewProtocolParser()
-		scanner := bufio.NewScanner(process.StdoutPipe())
-		for scanner.Scan() {
-			line := scanner.Text()
-			// REQ-F-017: 解析 stdout 协议指令
+		rerr := stream.ReadLines(process.StdoutPipe(), executorLineLimit, func(line string) {
+			// REQ-F-017: 解析 stdout 协议指令（progress/result 行为保持不变）
 			parsed := parser.Feed(line)
 			switch parsed.Type {
 			case LineTypeProgress:
@@ -174,6 +192,12 @@ func (e *Executor) startOutputGoroutines(meta *config.ExtensionMeta, tc TriggerC
 					onProgress(update.progress, update.resultMsg)
 				}
 			}
+
+			// 新增 ::notify:: 协议：非阻塞提交，不阻塞 reader
+			if pn, isProto := notification.ParseNotifyLine(line); isProto && pn != nil {
+				e.enqueueNotify(pn, meta, tc, runID)
+			}
+
 			// 所有行（含协议行）都写日志
 			if extLogger != nil {
 				// C-01-006: 记录写入错误，不阻塞主流程
@@ -181,30 +205,66 @@ func (e *Executor) startOutputGoroutines(meta *config.ExtensionMeta, tc TriggerC
 					slog.Warn("extension log write failed", "extension", meta.Name, "run_id", runID, "log_dir", e.logDir, "stream", "stdout", "error", werr)
 				}
 			}
+		})
+		if rerr != nil && !isBenignReadErr(rerr) {
+			slog.Warn("extension stdout read error", "extension", meta.Name, "run_id", runID, "error", rerr)
 		}
 		close(protocolCh)
 	}()
 
-	// stderr 读取 goroutine
+	// stderr 读取 goroutine（只写日志，不解析协议；排水安全读取）
 	go func() {
 		defer func() { stderrDone <- struct{}{} }()
-		scanner := bufio.NewScanner(process.StderrPipe())
-		for scanner.Scan() {
-			line := scanner.Bytes()
+		rerr := stream.ReadLines(process.StderrPipe(), executorLineLimit, func(line string) {
 			if extLogger != nil {
 				// C-01-006: 记录写入错误，不阻塞主流程
-				if _, werr := extLogger.Write(line); werr != nil {
+				if _, werr := extLogger.Write([]byte(line)); werr != nil {
 					slog.Warn("extension log write failed", "extension", meta.Name, "run_id", runID, "log_dir", e.logDir, "stream", "stderr", "error", werr)
 				}
 			} else {
 				// C-05-002 兜底：extLogger 创建失败时，stderr 透传到 slog 便于诊断
-				slog.Info("extension stderr (logger unavailable)", "extension", meta.Name, "run_id", runID, "line", string(line))
+				slog.Info("extension stderr (logger unavailable)", "extension", meta.Name, "run_id", runID, "line", line)
 			}
+		})
+		if rerr != nil && !isBenignReadErr(rerr) {
+			slog.Warn("extension stderr read error", "extension", meta.Name, "run_id", runID, "error", rerr)
 		}
 	}()
 
 	return stdoutDone, stderrDone, protocolCh
 }
+
+// isBenignReadErr 判断管道读取错误是否为进程正常退出时的良性终止
+// （exec.Cmd 在 Wait/进程退出时会关闭 StdoutPipe/StderrPipe 读端，此时正在
+// 排水的 Reader 可能读到 os.ErrClosed/io.ErrClosedPipe）。此类错误不代表
+// 真实读取故障，按正常 EOF 处理，不记录告警。
+func isBenignReadErr(err error) bool {
+	return errors.Is(err, os.ErrClosed) || errors.Is(err, os.ErrInvalid)
+}
+
+// enqueueNotify 非阻塞提交通知。来源上下文由 supd 侧填充（脚本不可覆盖）。
+// 操作 Run（tc.OperationExecutionID 非空）携带 execution 上下文，NotifyRouter 据此
+// 路由到对应操作 Topic；普通 Run 该字段为空 → 路由到扩展/服务默认 Topic。
+// Sink 为 nil 或队列满时忽略并计数，不影响扩展执行。
+func (e *Executor) enqueueNotify(pn *notification.ParsedNotify, meta *config.ExtensionMeta, tc TriggerContext, runID string) {
+	if e.notifySink == nil {
+		return
+	}
+	if !e.notifySink.TryEnqueue(notification.PendingNotification{
+		Level:         pn.Level,
+		Content:       pn.Content,
+		ServiceName:   tc.ServiceName,
+		ExtensionName: meta.Name,
+		ActionID:      tc.ActionID,
+		RunID:         runID,
+		ExecutionID:   tc.OperationExecutionID,
+	}) {
+		e.notifyDropped.Add(1)
+	}
+}
+
+// executorLineLimit 扩展 stdout/stderr 单行读取字节上限（协议窗口 8KB）。
+const executorLineLimit = 8192
 
 // determineFinalState 判定最终任务状态（Step 11）
 // A-03-001 修复：最终状态判定优先级 — timeout/killed/canceled > ::result:: 协议 > exit code
@@ -468,20 +528,34 @@ func (e *Executor) GetResult(runID string) *RunResult {
 
 // ListResults 列出所有运行结果
 // REQ-F-016: 列出所有任务状态
+// 退化为当前 maxRunResults 内的记录，按插入序从最旧到最新返回。
 func (e *Executor) ListResults() []*RunResult {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	results := make([]*RunResult, 0, len(e.runResults))
-	for _, r := range e.runResults {
-		results = append(results, r)
+	results := make([]*RunResult, 0, len(e.insertOrder))
+	for _, runID := range e.insertOrder {
+		if r, ok := e.runResults[runID]; ok {
+			results = append(results, r)
+		}
 	}
 	return results
 }
 
 // storeResult 存储运行结果（内部方法，加写锁）
+// 有界淘汰：容量达 maxRunResults 时按插入序淘汰最旧记录（设计稿 Phase 0.4）。
 func (e *Executor) storeResult(result *RunResult) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
+	if _, exists := e.runResults[result.RunID]; !exists {
+		// 新 runID：按插入序入队；容量已满时淘汰最旧记录。
+		if len(e.insertOrder) >= maxRunResults && len(e.runResults) >= maxRunResults {
+			oldest := e.insertOrder[0]
+			e.insertOrder = e.insertOrder[1:]
+			delete(e.runResults, oldest)
+		}
+		e.insertOrder = append(e.insertOrder, result.RunID)
+	}
 	e.runResults[result.RunID] = result
 }

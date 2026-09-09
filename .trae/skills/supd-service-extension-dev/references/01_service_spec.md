@@ -147,7 +147,9 @@ Debian 适配现状：项目已有 `Dockerfile.debian`（Debian Bookworm Slim）
 
 ### 1.8 反向场景：musl 二进制运行于 Debian/glibc 底包
 
-底包从 Alpine 切换到 Debian 后，**musl 链接的既有服务二进制会失效**。两类典型症状（二进制文件本身存在且完整）：
+musl 链接的二进制**并非不能用于 Debian 底包**：Debian 默认不带 musl 解释器，因此刚切换底包时无法直接启动，但补齐 musl 解释器与同源 musl 共享库后即可正常运行（smartdns 实战已验证）。不要因为底包是 Debian 而拒绝安装 musl 服务；以下内容是**启用路径**而非禁令。
+
+切换底包（容器重建）后，musl 链接的既有服务默认不可直接启动。两类典型症状（二进制文件本身存在且完整）：
 
 | 症状 | 根因 | 判定 |
 |---|---|---|
@@ -169,7 +171,7 @@ Debian 适配现状：项目已有 `Dockerfile.debian`（Debian Bookworm Slim）
 - 症状一：`fork/exec /etc/supd/services/smartdns/bin/smartdns: no such file or directory`，但文件树确认二进制存在（678904 字节）→ 解释器缺失。
 - 通过一次性扩展安装 `musl` 包并补符号链接后，症状二出现：`Error relocating ... SSL_CTX_ctrl: symbol not found` → musl loader 命中 glibc 版 libssl。
 - 最终修复：从官方 `x86_64-linux-all.tar.gz` 提取同源 musl 版 `libssl.so.3`/`libcrypto.so.3`/`libgcc_s.so.1` 放入 `bin/lib/`，二进制 `RPATH($ORIGIN/lib)` 自动命中，服务恢复 `ready`（无需 env 注入，也无需换二进制/插件）。
-- 切底包（容器重建）后需重跑该修复：musl 解释器符号链接与 `bin/lib/` 是否留存取决于挂载策略；建议把此类初始化固化为 `supd_lifecycle` 扩展（参考 alpine-init 的底包感知模式：检测 `apk`/`apt-get` 分支处理）。
+- 切底包（容器重建）后需按上述步骤重跑修复（musl 解释器符号链接与 `bin/lib/` 是否留存取决于挂载策略）；此类初始化不要求自动化（alpine-init 不做底包感知改造，用户确认），排障时按本节步骤手工执行即可。
 
 ---
 

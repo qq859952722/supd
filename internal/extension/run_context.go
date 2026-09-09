@@ -50,6 +50,17 @@ type TriggerContext struct {
 	RunID string
 	// TriggeredAt 原始触发时刻；零值时由执行器取当前时间兜底。
 	TriggeredAt time.Time
+
+	// OperationID 操作中心触发的操作 ID；非空表示操作 Run（§五：追加注入 5 个 SUPD_*）。
+	OperationID string
+	// OperationParams 操作触发参数（紧凑 JSON 对象，缺省 "{}"）；仅经环境变量注入，不出现在命令行。
+	OperationParams string
+	// NotificationTopicID 本操作 Execution 关联的通知 Topic UUIDv7（SUPD_NOTIFICATION_TOPIC_ID）。
+	NotificationTopicID string
+	// OperationExecutionID 本操作 Execution UUID（SUPD_OPERATION_EXECUTION_ID）。
+	OperationExecutionID string
+	// OperationPhase 操作阶段 global|service（SUPD_OPERATION_PHASE）。
+	OperationPhase string
 }
 
 // shanghaiLocation SUPD_TRIGGER_TIME 注入时使用的固定时区（CST +08:00）。
@@ -97,6 +108,13 @@ func BuildSupdEnv(runID, extName string, tc TriggerContext) []string {
 		}
 	}
 
+	// 操作服务阶段 Run（§四.3 服务响应者）绑定所属服务：注入 SUPD_SERVICE。
+	// 服务响应扩展按服务作用域执行，需要知道当前服务的名称；
+	// 不注入 SUPD_SERVICE_PID（操作 Run 不绑定服务进程）。
+	if tc.OperationID != "" && tc.ServiceName != "" {
+		env = append(env, fmt.Sprintf("SUPD_SERVICE=%s", tc.ServiceName))
+	}
+
 	// 服务级扩展按规格 §2.2.5 注入 SUPD_SERVICE_DIR，便于扩展定位服务目录。
 	if tc.ServiceName != "" && tc.ServiceDir != "" {
 		env = append(env, fmt.Sprintf("SUPD_SERVICE_DIR=%s", tc.ServiceDir))
@@ -107,6 +125,18 @@ func BuildSupdEnv(runID, extName string, tc TriggerContext) []string {
 		env = append(env, fmt.Sprintf("SUPD_SERVICE_EXIT_CODE=%d", tc.ServiceExitCode))
 		env = append(env, fmt.Sprintf("SUPD_SERVICE_SIGNAL=%d", tc.ServiceSignal))
 		env = append(env, fmt.Sprintf("SUPD_SERVICE_RESTART_COUNT=%d", tc.RestartCount))
+	}
+
+	// 操作 Run（§五）：追加注入 5 个 SUPD_OPERATION_* 变量。参数仅注入环境变量，
+	// 不进入命令行、不 shell 展开。普通 Run（OperationID 为空）不注入这 5 个变量。
+	if tc.OperationID != "" {
+		env = append(env,
+			fmt.Sprintf("SUPD_OPERATION=%s", tc.OperationID),
+			fmt.Sprintf("SUPD_OPERATION_PARAMS=%s", tc.OperationParams),
+			fmt.Sprintf("SUPD_NOTIFICATION_TOPIC_ID=%s", tc.NotificationTopicID),
+			fmt.Sprintf("SUPD_OPERATION_EXECUTION_ID=%s", tc.OperationExecutionID),
+			fmt.Sprintf("SUPD_OPERATION_PHASE=%s", tc.OperationPhase),
+		)
 	}
 
 	return env

@@ -104,10 +104,10 @@ func (d *Dispatcher) CleanupRemovedExtensions(old, new *watch.DiscoveryResult) {
 	if old == nil || new == nil {
 		return
 	}
-	// 全局扩展
+	// 全局扩展（serviceName 为空字符串哨兵值）
 	for extName := range old.GlobalExts {
 		if _, exists := new.GlobalExts[extName]; !exists {
-			d.concurrencyMgr.RemoveExtension(extName)
+			d.concurrencyMgr.RemoveExtension("", extName)
 		}
 	}
 	// 服务级扩展
@@ -116,13 +116,13 @@ func (d *Dispatcher) CleanupRemovedExtensions(old, new *watch.DiscoveryResult) {
 		if !exists {
 			// 整个服务被删除，清理其所有扩展
 			for extName := range oldSvc.Extensions {
-				d.concurrencyMgr.RemoveExtension(extName)
+				d.concurrencyMgr.RemoveExtension(svcName, extName)
 			}
 		} else {
 			// 服务存在，检查扩展是否被删除
 			for extName := range oldSvc.Extensions {
 				if _, exists := newSvc.Extensions[extName]; !exists {
-					d.concurrencyMgr.RemoveExtension(extName)
+					d.concurrencyMgr.RemoveExtension(svcName, extName)
 				}
 			}
 		}
@@ -471,7 +471,8 @@ func (d *Dispatcher) executeWithConcurrency(ctx context.Context, meta *config.Ex
 	}
 
 	// 获取该扩展+action 的追踪器
-	tracker := d.concurrencyMgr.GetTracker(meta.Name, actionID, cfg.Policy, cfg.DebounceMs)
+	// serviceName 来自 tc.ServiceName：服务级扩展为服务名，全局扩展为空字符串（哨兵值）
+	tracker := d.concurrencyMgr.GetTracker(tc.ServiceName, meta.Name, actionID, cfg.Policy, cfg.DebounceMs)
 
 	// 生成 runID（与 executor.Execute 内部逻辑一致）
 	runID := tc.RunID

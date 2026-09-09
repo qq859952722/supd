@@ -115,6 +115,8 @@ func ValidateExtension(meta *ExtensionMeta) error {
 
 	// actions 校验
 	actionIDs := make(map[string]bool)
+	// §三.3：同一扩展内（action 集合展平后）同一操作 ID 只能出现一次，重复是配置错误。
+	extOpIDs := make(map[string]bool)
 	for i, a := range meta.Actions {
 		if a.ID == "" {
 			return fmt.Errorf("actions[%d].id: required", i)
@@ -130,6 +132,17 @@ func ValidateExtension(meta *ExtensionMeta) error {
 		// action 级别 button_style 校验
 		if err := validateButtonStyle(fmt.Sprintf("actions[%d].button_style", i), a.ButtonStyle); err != nil {
 			return err
+		}
+
+		// operation id 校验（§三.3）：^[a-z][a-z0-9-]*$；同一扩展内不可重复。
+		for _, op := range a.Operations {
+			if !serviceNameRegex.MatchString(op) {
+				return fmt.Errorf("actions[%d].operations: invalid operation id %q, must match ^[a-z][a-z0-9-]*$", i, op)
+			}
+			if extOpIDs[op] {
+				return fmt.Errorf("actions[%d].operations: duplicate operation id %q in extension", i, op)
+			}
+			extOpIDs[op] = true
 		}
 	}
 

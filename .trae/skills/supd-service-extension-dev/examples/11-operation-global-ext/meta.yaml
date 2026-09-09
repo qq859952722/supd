@@ -1,0 +1,24 @@
+name: operation-global-ext
+version: "1.0.0"
+description: "操作中心全局扩展示例 — 注册多个操作、演示读取操作参数并在执行中输出通知"
+enabled: true
+runtime: bash
+entry: run.sh
+timeout_seconds: 30
+ui:
+  show_logs: true
+  button_style: default
+actions:
+  - id: check-update
+    label: "检查更新"
+    button_style: default
+    # 全局扩展 action 的 operations 数组注册操作按钮（自动进入操作中心的 "操作" 区）
+    operations:
+      - check-software
+  - id: update-software
+    label: "安装更新"
+    button_style: danger
+    operations:
+      - update-software
+triggers:
+  on_demand: true

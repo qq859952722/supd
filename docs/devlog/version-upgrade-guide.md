@@ -198,6 +198,7 @@ git push origin vX.Y.Z
 | 2026-08-31 | v0.0.52 | 修复 `build-push.yml` 的 `build-alpine` 和 `build-debian` 重复声明 job-level `if` 导致 GitHub Actions 调度前解析失败、workflow 列表显示异常的问题；未执行本地构建 |
 | 2026-08-31 | v0.0.53 | 修复 tjs 固定 Release 资产未按目标名称上传，导致缓存始终无法命中的问题；改为上传实际命名资产并增加上传后校验，同时清理旧的无平台信息 `tjs` 资产；未执行本地构建 |
 | 2026-08-31 | v0.0.54 | 无代码变更的验证性发布，用于确认 tjs Release 缓存复用链路生效（tag 触发后应命中 `tjs-cache` 资产并跳过编译）；未执行本地构建 |
+| 2026-09-10 | v0.1.0 | 操作中心 + 通知中心（MINOR）：SQLite 持久化（`modernc.org/sqlite` 纯 Go，`<baseDir>/data/supd.db`）、`::notify::` stdout 通知协议、两阶段 OperationRunner（全局顺序→服务有界并行 4）、操作注册/触发/执行历史 API、通知 Topic/已读/删除/changes 长轮询 API、并发 tracker 服务维度隔离、stdout 排水安全读取、8 Tab + 操作中心/通知中心页面 + 铃铛红点；DB 迁移 v2（默认 Topic 唯一索引）；示例扩展 11/12 |
 
 
 

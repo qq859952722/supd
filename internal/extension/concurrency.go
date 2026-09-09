@@ -510,10 +510,19 @@ func (t *ActionTracker) HasRunning() bool {
 	return len(t.runningRuns) > 0
 }
 
+// trackerKey 唯一标识一个并发控制单元。
+// 必须包含 service 维度：不同服务的同名扩展（同一 extension_name + action_id）
+// 不得互相 replace/serialize/debounce（设计稿 Phase 0.1）。
+type trackerKey struct {
+	ServiceName   string
+	ExtensionName string
+	ActionID      string
+}
+
 // ConcurrencyManager 管理所有扩展的 action 追踪器
 // REQ-F-018, 2.2.7: 多 action 之间互不阻塞，每个 action 独立跟踪并发状态
 type ConcurrencyManager struct {
-	trackers map[string]*ActionTracker // key = "extName:actionID"
+	trackers map[trackerKey]*ActionTracker // key = {serviceName, extName, actionID}
 	mu       sync.RWMutex
 	draining bool
 }
@@ -521,14 +530,15 @@ type ConcurrencyManager struct {
 // NewConcurrencyManager 创建 ConcurrencyManager
 func NewConcurrencyManager() *ConcurrencyManager {
 	return &ConcurrencyManager{
-		trackers: make(map[string]*ActionTracker),
+		trackers: make(map[trackerKey]*ActionTracker),
 	}
 }
 
 // GetTracker 获取或创建指定扩展 action 的追踪器
 // REQ-F-018, 2.2.7: 多 action 之间互不阻塞
-func (m *ConcurrencyManager) GetTracker(extName, actionID string, policy ConcurrencyPolicy, debounceMs int) *ActionTracker {
-	key := extName + ":" + actionID
+// serviceName 为服务级扩展的服务名；全局扩展传空字符串 ""（设计稿 Phase 0.1 哨兵值）
+func (m *ConcurrencyManager) GetTracker(serviceName, extName, actionID string, policy ConcurrencyPolicy, debounceMs int) *ActionTracker {
+	key := trackerKey{ServiceName: serviceName, ExtensionName: extName, ActionID: actionID}
 
 	m.mu.RLock()
 	tracker, ok := m.trackers[key]
@@ -599,14 +609,14 @@ func (m *ConcurrencyManager) HasAnyRunning() bool {
 	return false
 }
 
-// RemoveExtension 移除指定扩展的所有 tracker（热重载删除扩展时调用）
+// RemoveExtension 移除指定服务下指定扩展的所有 tracker（热重载删除扩展时调用）
 // B-05-002: 清理 trackers map 中指定扩展的条目，避免内存泄漏
+// serviceName 为服务级扩展的服务名；全局扩展传空字符串 ""
 // 注意：运行中任务不取消（让它们自然完成），仅停止 debounce timer 和清理 pending
-func (m *ConcurrencyManager) RemoveExtension(extName string) {
-	prefix := extName + ":"
+func (m *ConcurrencyManager) RemoveExtension(serviceName, extName string) {
 	m.mu.Lock()
 	for key, tracker := range m.trackers {
-		if strings.HasPrefix(key, prefix) {
+		if key.ServiceName == serviceName && key.ExtensionName == extName {
 			tracker.Stop()
 			delete(m.trackers, key)
 		}

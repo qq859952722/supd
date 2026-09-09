@@ -72,6 +72,8 @@ README 应维护当前有效结论，不堆积已完成待办或冗长尝试过�
 > - `actions[].button_style` 可选，默认继承 `ui.button_style` 的值；空字符串允许（默认值填充前）。
 > - `actions[].icon` 字段**在代码中不存在**（YAML 写入会被静默忽略）。如需为单个 action 配置不同图标，请在 `ui.icon` 中设置扩展级图标。
 
+> **`actions[].operations` 字段（已实现，节点 07/08）**：可选字符串数组，操作 ID 匹配 `^[a-z][a-z0-9-]*$`；同一扩展内（action 集合展平后）重复 ID 为配置错误（`extension_validate.go` 校验）；**全局扩展** action 的 operations 注册操作按钮（进入操作中心"操作"页）；**服务扩展** action 的 operations 绑定响应指定操作（不生成按钮，仅在操作的服务阶段按所属服务执行一次）。不同全局扩展注册同 ID 时合并取"稳定排序第一项"并 warning（`operation_registry.go`）。运行详情见 `references/05_env_spec.md` §5 与示例 `examples/11-operation-global-ext/`、`examples/12-operation-responder-ext/`。
+
 > **身份配置说明**（§2.2.13）：
 > - **User 模式**（`run_as`）：通过用户名查找，值为 `root` / `<用户名>` / 空。
 > - **UID 模式**（`run_as_uid`/`run_as_gid`/`run_as_groups`）：直接指定数字，不查 `/etc/passwd`。`run_as_gid=0` 表示等于 `run_as_uid`。
@@ -191,7 +193,12 @@ echo '::progress:: 50 "正在处理中..."'
 # 2. 结果上报 (success / warning / error)
 echo '::result:: success "数据同步完成"'
 
-# 3. 普通标准输出日志
+# 3. 通知上报（信息/success/warning/error，写入通知中心持久化 Topic）
+echo '::notify:: info "开始执行"'
+echo '::notify:: warning "发现 2 个可用更新"'
+echo '::notify:: success "完成"'
+
+# 4. 普通标准输出日志
 echo '正常打印执行日志'
 ```
 
@@ -199,11 +206,14 @@ echo '正常打印执行日志'
 
 - **`::progress:: <0-100> "<message>"`**：百分比必须为 0-100 整数，消息必须用双引号包裹。
 - **`::result:: <success|warning|error> "<message>"`**：状态严格三选一，消息必须用双引号包裹。
+- **`::notify:: <info|success|warning|error> "<content>"`**：通知中心唯一协议（设计稿 §六.1），仅从 stdout 解析；来源（服务/扩展/action/run_id）由 supd 侧填充，脚本不可伪造，写入操作关联 Topic 或默认服务 Topic。content 所见即所得（首尾双引号内原样保留，不做转义还原）；单行总长超过 **8KB**（8192 字节）不生成通知，整体按截断普通日志处理。
 - **`::result::` 多次输出**：以最后一次为准（一个 run 内允许多次输出 result，最终态用最后一条）。
 - **消息内双引号转义**：消息内容中的双引号需转义为 `\"`（如 `::result:: success "say \"hello\""`）。
 - **行长限制**：单行超过 **8KB**（8192 字节）会被截断并按普通日志处理，不再尝试解析协议。
 - **未识别的 `::xxx::` 前缀**：按普通日志处理。
-- **stderr**：全部按普通日志处理，不解析协议。
+- **stderr**：全部按普通日志处理，不解析协议（`::notify::` 写 stderr 也不会生成通知）。
+
+> 操作/通知中心相关：`::notify::` 与 5 个 `SUPD_OPERATION_*` 变量详见 `references/05_env_spec.md` §4；示例见 `examples/11-operation-global-ext/`、`examples/12-operation-responder-ext/`。
 
 ### 任务终态判定优先级
 

@@ -17,6 +17,8 @@ import (
 	"github.com/supdorg/supd/internal/core"
 	"github.com/supdorg/supd/internal/extension"
 	"github.com/supdorg/supd/internal/logging"
+	"github.com/supdorg/supd/internal/notification"
+	"github.com/supdorg/supd/internal/store"
 	"github.com/supdorg/supd/internal/system"
 	"github.com/supdorg/supd/internal/watch"
 )
@@ -219,6 +221,27 @@ func runRun(cmd *cobra.Command, args []string) error {
 	infof("%s", formatStartupSummary(summary))
 	logStartupSummary(summary)
 
+	// 节点 06：打开 SQLite 存储层（失败阻止启动，错误含路径与迁移版本）。
+	dbStore, err := store.Open(dir)
+	if err != nil {
+		return fmt.Errorf("打开存储失败 (%s): %w", filepath.Join(dir, "data", "supd.db"), err)
+	}
+	// 节点 08：创建通知路由器（NotificationSink），替换节点 03 测试 Sink。
+	notifyRouter := notification.NewRouter(dbStore)
+	executor.SetNotifySink(notifyRouter)
+	// 节点 07：操作注册表 + RunGateway + 两阶段 OperationRunner。
+	opRegistry := extension.NewOperationRegistry()
+	opRegistry.Rebuild(result.Discovery)
+	opGateway := extension.NewRunGateway(dispatcher, taskMgr, result.Discovery)
+	opRunner := extension.NewOperationRunner(opGateway, dbStore, opRegistry)
+	// 重启恢复（07-6）：将未完成 Execution 标记为中断（执行记录 interrupted_at；run 状态保留原值；
+	// 不恢复子进程——supd 重启不恢复子进程）。Runner 内存态由进程重建，无子进程恢复逻辑。
+	if rerr := opRunner.RecoverInterruptedExecutions(ctx); rerr != nil {
+		slog.Warn("加载未完成操作执行失败", "error", rerr)
+	}
+	// 保留清理：启动立即执行一次 + 每 10 分钟定时。
+	dbStore.StartRetentionLoop(ctx)
+
 	// REQ-D-004: Bootstrap 完成后，用最终 Discovery 更新触发器
 	serviceLifecycleTrigger.SetDiscovery(result.Discovery)
 	supdLifecycleTrigger.SetDiscovery(result.Discovery)
@@ -226,6 +249,10 @@ func runRun(cmd *cobra.Command, args []string) error {
 	// Step 5: 创建并启动 HTTP API 服务器
 	// REQ-F-033 Step 8: 启动 HTTP 服务器
 	apiServer := api.NewServer(cfg)
+	// 节点 07-5/07-7：注入操作中心 Provider（registry/runner/store 最小面）。
+	apiServer.SetOperationProvider(api.NewCoreOperationProvider(opRegistry, opRunner, dbStore))
+	// 节点 08-3：注入通知中心 Provider（store 最小面，含 changes epoch/seq）。
+	apiServer.SetNotificationProvider(api.NewCoreNotificationProvider(dbStore))
 
 	// REQ-F-028: 设置 runtime 别名解析所需的三层来源
 	executor.SetRuntimes(cfg.Runtimes, result.Discovery.Runtimes)
@@ -239,6 +266,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 	registerCronJobs(cronScheduler, result.Discovery)
 
 	svcOperator := injectProviders(apiServer, result, cfg, dir, logDir, eventRing, executor, cronScheduler, serviceLifecycleTrigger, supdLifecycleTrigger, dispatcher, taskMgr, ctx, lifecycleLocks)
+	// 节点 08-2：服务侧通知接入落库路由（API 启动/重启的服务 stdout ::notify:: 入 store）。
+	svcOperator.SetNotifySink(notifyRouter)
 	// REQ-F-002: 前端静态文件嵌入（非dev模式）
 	webFS := getWebFS()
 	if webFS != nil {
@@ -335,7 +364,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	// N-04-001: 传入 apiServer 以便热重载后更新 providers 的 Discovery 引用
 	reloadMgr := watch.NewReloadManager(watch.NewDiscovery(dir, logDir, cfg.ExtensionDirs...))
 	go handleWatcherEvents(result.Watcher, reloadMgr, result, dir, logDir,
-		serviceLifecycleTrigger, supdLifecycleTrigger, cronScheduler, eventRing, apiServer, dispatcher, svcOperator)
+		serviceLifecycleTrigger, supdLifecycleTrigger, cronScheduler, eventRing, apiServer, dispatcher, svcOperator, opRegistry, opGateway)
 
 	infof("supd 运行中 (按 Ctrl+C 停止)")
 
@@ -348,7 +377,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 			// N-04-001: 同时更新 API Server providers 的 Discovery 引用
 			applyReload(result, dir, logDir, reloadMgr,
 				serviceLifecycleTrigger, supdLifecycleTrigger,
-				cronScheduler, eventRing, "sighup", apiServer, dispatcher, svcOperator)
+				cronScheduler, eventRing, "sighup", apiServer, dispatcher, svcOperator, opRegistry, opGateway)
 		case <-ctx.Done():
 			infof("收到退出信号或服务器停止，开始退出...")
 			goto shutdown
@@ -373,6 +402,19 @@ shutdown:
 	// ShutdownCoordinator 统一执行：pre_shutdown → draining/cron → 服务 → 扩展 → HTTP → watcher。
 	if err := shutdownCoord.GracefulShutdown(graceCtx); err != nil {
 		slog.Error("优雅退出出错", "error", err)
+	}
+
+	// 节点 06：排空 writer 队列并关闭存储，纳入 shutdown_grace_seconds 剩余预算。
+	if dbStore != nil {
+		closeBudget := 10 * time.Second
+		if deadline, ok := graceCtx.Deadline(); ok {
+			if rem := time.Until(deadline); rem < closeBudget && rem > 0 {
+				closeBudget = rem
+			}
+		}
+		if cerr := dbStore.Close(closeBudget); cerr != nil {
+			slog.Warn("关闭存储出错", "error", cerr)
+		}
 	}
 
 	infof("supd 已退出")
@@ -554,6 +596,8 @@ func handleWatcherEvents(
 	apiServer *api.Server,
 	dispatcher *extension.Dispatcher,
 	svcOperator *api.CoreServiceOperator,
+	opRegistry *extension.OperationRegistry,
+	opGateway extension.RunGateway,
 ) {
 	if watcher == nil {
 		return
@@ -562,7 +606,7 @@ func handleWatcherEvents(
 	for range eventCh {
 		applyReload(result, baseDir, logDir, reloadMgr,
 			serviceLifecycleTrigger, supdLifecycleTrigger,
-			cronScheduler, eventRing, "watcher", apiServer, dispatcher, svcOperator)
+			cronScheduler, eventRing, "watcher", apiServer, dispatcher, svcOperator, opRegistry, opGateway)
 	}
 }
 
@@ -581,6 +625,8 @@ func applyReload(
 	apiServer *api.Server,
 	dispatcher *extension.Dispatcher,
 	svcOperator *api.CoreServiceOperator,
+	opRegistry *extension.OperationRegistry,
+	opGateway extension.RunGateway,
 ) {
 	slog.Info("检测到配置变更，执行热重载", "source", source)
 	oldDiscovery := result.Discovery
@@ -644,6 +690,13 @@ func applyReload(
 	}
 	if supdLifecycleTrigger != nil {
 		supdLifecycleTrigger.SetDiscovery(newDiscovery)
+	}
+	// 节点 07-2/07-3：热重载重建操作注册表（新 Execution 用新快照）；更新 RunGateway 的 Discovery 引用。
+	if opRegistry != nil {
+		opRegistry.Rebuild(newDiscovery)
+	}
+	if gw, ok := opGateway.(interface{ SetDiscovery(*watch.DiscoveryResult) }); ok {
+		gw.SetDiscovery(newDiscovery)
 	}
 	if cronScheduler != nil {
 		// 先清除所有旧 jobs（闭包可能捕获旧 discovery），再用新 discovery 重新注册

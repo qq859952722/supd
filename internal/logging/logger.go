@@ -1,7 +1,7 @@
 package logging
 
 import (
-	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +9,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/supdorg/supd/internal/notification"
+	"github.com/supdorg/supd/internal/stream"
 )
 
 // ServiceLogger 每服务一个logger goroutine
@@ -20,6 +23,18 @@ type ServiceLogger struct {
 	writer  *RotatingLogWriter // 接入轮转，替代裸 LogWriter
 	done    chan struct{}
 	wg      sync.WaitGroup
+
+	// notifySink 通知接收点（预留接线点，由节点 08 替换为真实路由；本节点为测试 Sink）。
+	notifySink notification.NotifySink
+}
+
+// notifyLineLimit 服务 stdout/stderr 单行读取字节上限（协议窗口 8KB）。
+const notifyLineLimit = 8192
+
+// SetNotifySink 注入通知接收点。服务 stdout 中合法的 ::notify:: 行将会
+// 写入日志并尝试非阻塞入队；nil 或队列满时被忽略，不影响日志与服务状态。
+func (l *ServiceLogger) SetNotifySink(sink notification.NotifySink) {
+	l.notifySink = sink
 }
 
 // NewServiceLogger 创建服务日志器
@@ -50,14 +65,15 @@ func NewServiceLogger(name string, baseDir string, maxSizeMB, maxFiles int) (*Se
 // Start 启动logger goroutine，从pipe读取日志行写入文件
 // stdout, stderr: 子进程的输出pipe
 // REQ-F-010: logger goroutine 从 pipe 读端读取行，写入 current 文件
+// 设计稿 §六.4：stdout/stderr 分流，仅 stdout 解析 ::notify:: 协议。
 func (l *ServiceLogger) Start(stdout, stderr io.Reader) {
 	if stdout != nil {
 		l.wg.Add(1)
-		go l.readPipe(stdout)
+		go l.readStdout(stdout)
 	}
 	if stderr != nil {
 		l.wg.Add(1)
-		go l.readPipe(stderr)
+		go l.readStderr(stderr)
 	}
 
 	// 当所有 pipe 读取 goroutine 退出后，关闭 done channel
@@ -106,22 +122,71 @@ func (l *ServiceLogger) LogPath() string {
 	return l.writer.Path()
 }
 
-// readPipe 从pipe读取日志行，格式化后写入文件
-// REQ-F-010: logger goroutine 从 pipe 读端读取行，写入 current 文件
-func (l *ServiceLogger) readPipe(r io.Reader) {
+// readStdout 从 stdout pipe 读取日志行写入文件，并解析 ::notify:: 协议。
+// 设计稿 §六.4：stdout 唯一 reader —— 写日志 + 解析 notify。
+// 永久排水：超长行按截断普通日志处理，不中断读取；读取错误显式记录，不改变服务状态。
+func (l *ServiceLogger) readStdout(r io.Reader) {
 	defer l.wg.Done()
 
-	scanner := bufio.NewScanner(r)
-	for scanner.Scan() {
-		line := scanner.Text()
-		formatted := formatLine(line)
-		// C-01-001 修复：写入失败仅记录到 stderr fallback，不中断读取循环
-		// （RotatingLogWriter 内部已有 DiskFullBuffer 降级处理，但此处直接调用的是 RotatingLogWriter.Write）
-		if _, err := l.writer.Write([]byte(formatted + "\n")); err != nil {
-			stderrWarn("service log readPipe write failed (ignored)", err)
+	err := stream.ReadLines(r, notifyLineLimit, func(line string) {
+		l.writeLogLine(line)
+
+		parsed, isProto := notification.ParseNotifyLine(line)
+		if !isProto {
+			return // 非协议行：仅日志
 		}
+		if parsed == nil {
+			// 协议行但格式/等级非法：仅日志 + 追加 warning
+			l.WriteLine("warn", "invalid ::notify:: line, treated as log: "+line)
+			return
+		}
+		l.enqueueNotify(parsed)
+	})
+	if err != nil && !isBenignPipeErr(err) {
+		stderrWarn(fmt.Sprintf("service %s stdout read error", l.name), err)
 	}
-	// scanner 在 EOF 时正常退出，无需处理 scanner.Err()
+}
+
+// readStderr 从 stderr pipe 读取日志行写入文件。只写日志，不解析协议。
+// 同样使用排水安全读取：超长行不中断；读取错误显式记录。
+func (l *ServiceLogger) readStderr(r io.Reader) {
+	defer l.wg.Done()
+
+	err := stream.ReadLines(r, notifyLineLimit, func(line string) {
+		l.writeLogLine(line)
+	})
+	if err != nil && !isBenignPipeErr(err) {
+		stderrWarn(fmt.Sprintf("service %s stderr read error", l.name), err)
+	}
+}
+
+// isBenignPipeErr 判断管道读取错误是否为进程正常退出时的良性终止
+// （exec.Cmd 在 Wait/进程退出时会关闭 StdoutPipe/StderrPipe 读端，正在排水的
+// Reader 可能读到 os.ErrClosed/io.ErrClosedPipe）。此类错误按正常 EOF 处理，不告警。
+func isBenignPipeErr(err error) bool {
+	return errors.Is(err, os.ErrClosed) || errors.Is(err, os.ErrInvalid)
+}
+
+// writeLogLine 格式化并写入一条日志行（写入失败仅记录到 stderr fallback，不中断读取）。
+func (l *ServiceLogger) writeLogLine(line string) {
+	formatted := formatLine(line)
+	// C-01-001 修复：写入失败仅记录到 stderr fallback，不中断读取循环
+	if _, err := l.writer.Write([]byte(formatted + "\n")); err != nil {
+		stderrWarn("service log readPipe write failed (ignored)", err)
+	}
+}
+
+// enqueueNotify 非阻塞提交通知。来源上下文（此处为服务名）由 supd 填充，脚本不可覆盖。
+// Sink 为 nil 或队列满时忽略，不影响日志与服务状态。
+func (l *ServiceLogger) enqueueNotify(parsed *notification.ParsedNotify) {
+	if l.notifySink == nil {
+		return
+	}
+	l.notifySink.TryEnqueue(notification.PendingNotification{
+		Level:       parsed.Level,
+		Content:     parsed.Content,
+		ServiceName: l.name,
+	})
 }
 
 // formatLine 格式化日志行

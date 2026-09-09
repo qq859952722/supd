@@ -15,6 +15,7 @@ import (
 	"github.com/supdorg/supd/internal/errors"
 	"github.com/supdorg/supd/internal/extension"
 	"github.com/supdorg/supd/internal/logging"
+	"github.com/supdorg/supd/internal/notification"
 	"github.com/supdorg/supd/internal/watch"
 )
 
@@ -34,6 +35,8 @@ type CoreServiceOperator struct {
 	// 服务日志器（API启动的服务进程日志捕获）
 	loggers   map[string]*logging.ServiceLogger
 	loggersMu sync.Mutex
+	// notifySink 服务 stdout ::notify:: 接收点（节点 08：API 启动的服务通知入落库路由）。
+	notifySink notification.NotifySink
 	// stateMachinesMu 保护 StateMachines map 的并发访问
 	// N-04-001 修复：热重载并发安全
 	stateMachinesMu sync.RWMutex
@@ -47,6 +50,12 @@ type CoreServiceOperator struct {
 	cancelFuncsMu         sync.Mutex
 	LifecycleLocks        *core.LifecycleLocks
 	DependencyCoordinator *core.DependencyCoordinator
+}
+
+// SetNotifySink 注入服务 stdout ::notify:: 接收点（节点 08）。在服务启动/重启创建
+// 日志器时应用到每个服务日志器；nil 时服务通知不落库（行为同节点 03 测试 Sink）。
+func (o *CoreServiceOperator) SetNotifySink(sink notification.NotifySink) {
+	o.notifySink = sink
 }
 
 // SetCancelFuncs 设置从 Bootstrap 传递的 cancel context map
@@ -258,6 +267,7 @@ func (o *CoreServiceOperator) startServiceLocked(name string) error {
 	if loggerErr != nil {
 		slog.Error("create service logger failed", "service", name, "error", loggerErr)
 	} else {
+		svcLogger.SetNotifySink(o.notifySink)
 		svcLogger.Start(proc.StdoutPipe(), proc.StderrPipe())
 		o.loggersMu.Lock()
 		// 关闭旧 logger（重启场景）
@@ -469,6 +479,7 @@ func (o *CoreServiceOperator) rebuildLogger(name string, newProc *core.Process, 
 	if loggerErr != nil {
 		slog.Error("create service logger failed on restart", "service", name, "error", loggerErr)
 	} else {
+		newLogger.SetNotifySink(o.notifySink)
 		newLogger.Start(newProc.StdoutPipe(), newProc.StderrPipe())
 		o.loggers[name] = newLogger
 	}

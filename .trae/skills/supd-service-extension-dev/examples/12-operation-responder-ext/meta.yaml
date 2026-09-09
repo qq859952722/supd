@@ -1,0 +1,21 @@
+name: operation-responder-ext
+version: "1.0.0"
+description: "操作中心服务响应扩展示例 — 在服务阶段响应全局操作并通过 notify 汇报结果"
+enabled: true
+runtime: bash
+entry: run.sh
+timeout_seconds: 30
+concurrency: replace
+ui:
+  show_logs: true
+  button_style: default
+actions:
+  - id: respond-check
+    label: "响应检查更新"
+    button_style: default
+    # 服务扩展 action 的 operations 数组用于绑定响应：不生成按钮，
+    # 仅在全局阶段结束后、该操作进入服务阶段时按所属服务执行一次。
+    operations:
+      - check-software
+triggers:
+  on_demand: true
