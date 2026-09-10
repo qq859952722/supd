@@ -229,6 +229,11 @@ export interface LastExecution {
   result?: 'success' | 'failed'
 }
 
+export interface GlobalRef {
+  extension_name: string
+  action_id: string
+}
+
 /** 操作卡片（GET /api/operations 数组元素）。 */
 export interface OperationCard {
   id: string
@@ -236,7 +241,9 @@ export interface OperationCard {
   button_style: 'primary' | 'default' | 'danger'
   description: string
   registrants: string[]
+  global_refs?: GlobalRef[]
   responder_count: number
+  responders?: ResponderRef[]
   warnings: string[]
   last_execution?: LastExecution | null
 }

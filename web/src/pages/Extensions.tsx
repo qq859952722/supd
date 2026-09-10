@@ -2,7 +2,7 @@
 // 全局扩展和服务扩展分开展示，支持多选触发条件创建
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { apiGet, apiPost, apiPut } from '@/lib/api-client'
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api-client'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
@@ -1220,7 +1220,31 @@ export default function ExtensionsPage() {
 
 // 扩展运行日志对话框 — 统一左右分栏：左侧运行列表 + 右侧日志内容
 function ExtensionLogDialog({ extName, onClose }: { extName: string; onClose: () => void }) {
+  const queryClient = useQueryClient()
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
+
+  const clearRunsMutation = useMutation({
+    mutationFn: () => apiDelete<{ deleted: number }>(`/api/extensions/runs?extension_name=${encodeURIComponent(extName)}`),
+    onSuccess: (res) => {
+      toast.success(`已清空 ${res?.deleted ?? 0} 条运行记录`)
+      setSelectedRunId(null)
+      queryClient.invalidateQueries({ queryKey: ['ext-runs', extName] })
+    },
+    onError: (err) => {
+      toast.error(getErrorMessage(err, '清空运行记录失败'))
+    },
+  })
+
+  const deleteLogsMutation = useMutation({
+    mutationFn: (runId: string) => apiDelete(`/api/extensions/runs/${encodeURIComponent(runId)}/logs`),
+    onSuccess: () => {
+      toast.success('已删除此次运行的日志')
+      queryClient.invalidateQueries({ queryKey: ['ext-run-logs', currentRunId] })
+    },
+    onError: (err) => {
+      toast.error(getErrorMessage(err, '删除日志失败'))
+    },
+  })
 
   const { data: runsData, isLoading } = useQuery({
     queryKey: ['ext-runs', extName],
@@ -1292,7 +1316,26 @@ function ExtensionLogDialog({ extName, onClose }: { extName: string; onClose: ()
         {/* 左右分栏内容 — 窄屏改纵向堆叠 */}
         <div className="flex flex-1 flex-row overflow-hidden">
           {/* 左侧：运行记录列表 */}
-          <div className="w-56 shrink-0 overflow-auto border-r border-[var(--color-border-secondary)] bg-[var(--color-bg-tertiary)]">
+          <div className="w-56 shrink-0 flex flex-col border-r border-[var(--color-border-secondary)] bg-[var(--color-bg-tertiary)] overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--color-border-secondary)] bg-[var(--color-surface-primary)] shrink-0">
+              <span className="text-xs font-medium text-[var(--color-text-secondary)]">运行记录 ({runs.length})</span>
+              {runs.length > 0 && (
+                <button
+                  type="button"
+                  disabled={clearRunsMutation.isPending}
+                  onClick={() => {
+                    if (window.confirm(`确定清空扩展 "${extName}" 的所有终态运行记录吗？`)) {
+                      clearRunsMutation.mutate()
+                    }
+                  }}
+                  className="text-[11px] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-error)] transition-colors disabled:opacity-50"
+                  title="清空终态运行记录"
+                >
+                  {clearRunsMutation.isPending ? '清空中...' : '清空'}
+                </button>
+              )}
+            </div>
+            <div className="flex-1 overflow-auto">
             {isLoading ? (
               <div className="flex items-center justify-center py-8 text-sm text-[var(--color-text-tertiary)]">
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />{t.common.loading}
@@ -1348,6 +1391,7 @@ function ExtensionLogDialog({ extName, onClose }: { extName: string; onClose: ()
                 })}
               </div>
             )}
+            </div>
           </div>
           {/* 右侧：日志内容 */}
           <div className="flex-1 flex flex-col overflow-hidden">
@@ -1380,6 +1424,20 @@ function ExtensionLogDialog({ extName, onClose }: { extName: string; onClose: ()
                     {selectedRun.result_msg}
                   </span>
                 )}
+                <button
+                  type="button"
+                  disabled={deleteLogsMutation.isPending}
+                  onClick={() => {
+                    if (window.confirm(`确定删除运行 [${selectedRun.run_id.slice(0, 8)}] 的日志文件吗？`)) {
+                      deleteLogsMutation.mutate(selectedRun.run_id)
+                    }
+                  }}
+                  className="inline-flex items-center gap-1 text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-error)] transition-colors px-2 py-1 rounded hover:bg-[var(--color-surface-hover)] ml-auto shrink-0 disabled:opacity-50"
+                  title="删除此次运行日志"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>删除日志</span>
+                </button>
               </div>
             )}
             {/* 日志文本 */}

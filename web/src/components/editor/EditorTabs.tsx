@@ -5,7 +5,7 @@
 
 import { useCallback, useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { X, FileText, History, RotateCcw } from 'lucide-react'
+import { X, FileText, History, RotateCcw, CheckSquare, Loader2 } from 'lucide-react'
 import { useEditorStore, type EditorTab } from '@/stores/editor'
 import { MonacoEditor } from './MonacoEditor'
 import { Button } from '@/components/ui/Button'
@@ -98,6 +98,25 @@ export function EditorTabs() {
       toast.success('已回滚到指定版本')
     },
     onError: (err: unknown) => { toast.error(getErrorMessage(err, '版本回滚失败')) },
+  })
+
+  // 语法校验 — 调用 POST /api/files/validate?path=...
+  const validateMutation = useMutation({
+    mutationFn: ({ path, content }: { path: string; content: string }) =>
+      apiPost<{ valid: boolean; errors?: Array<{ line?: number; column?: number; message: string }> }>(
+        '/api/files/validate?path=' + encodeURIComponent(path),
+        { content },
+        true,
+      ),
+    onSuccess: (data) => {
+      if (data.valid) {
+        toast.success('配置语法校验通过')
+      } else {
+        const errDetails = data.errors?.map((e) => (e.line ? `第 ${e.line} 行: ${e.message}` : e.message)).join('；')
+        toast.error(`语法校验未通过：${errDetails || '格式错误'}`, { duration: 6000 })
+      }
+    },
+    onError: (err: unknown) => { toast.error(getErrorMessage(err, '语法校验失败')) },
   })
 
   // E-03-002: 关闭 dirty 标签时弹出确认提示（非阻塞 toast 浮窗，不用全屏 modal）
@@ -225,18 +244,29 @@ export function EditorTabs() {
         </div>
         {/* 版本历史按钮（基于当前激活标签） */}
         {activeTab && (
-          <button
-            onClick={() => setShowVersions((prev) => !prev)}
-            className={`flex shrink-0 items-center gap-1 border-l border-[var(--color-border-primary)] px-3 py-1.5 text-xs transition-colors ${
-              showVersions
-                ? 'bg-[var(--color-surface-hover)] text-[var(--color-brand-primary)]'
-                : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-secondary)]'
-            }`}
-            title={t.files.versions}
-          >
-            <History className="h-3.5 w-3.5" />
-            <span>{t.files.versions}</span>
-          </button>
+          <>
+            <button
+              onClick={() => validateMutation.mutate({ path: activeTab.path, content: activeTab.content })}
+              disabled={validateMutation.isPending}
+              className="flex shrink-0 items-center gap-1 border-l border-[var(--color-border-primary)] px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-secondary)] transition-colors disabled:opacity-50"
+              title="校验当前文件语法"
+            >
+              {validateMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckSquare className="h-3.5 w-3.5" />}
+              <span>校验</span>
+            </button>
+            <button
+              onClick={() => setShowVersions((prev) => !prev)}
+              className={`flex shrink-0 items-center gap-1 border-l border-[var(--color-border-primary)] px-3 py-1.5 text-xs transition-colors ${
+                showVersions
+                  ? 'bg-[var(--color-surface-hover)] text-[var(--color-brand-primary)]'
+                  : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-secondary)]'
+              }`}
+              title={t.files.versions}
+            >
+              <History className="h-3.5 w-3.5" />
+              <span>{t.files.versions}</span>
+            </button>
+          </>
         )}
         {/* E-04-001: 标签数量指示器，接近上限时高亮提示 */}
         <span

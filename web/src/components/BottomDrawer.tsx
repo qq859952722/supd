@@ -157,17 +157,30 @@ export function BottomDrawer({ tasks = [], onCancelTask }: BottomDrawerProps) {
           </div>
         </div>
       )}
-      <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className="flex w-full items-center justify-between border-t border-[var(--color-border-primary)] bg-[var(--color-surface-primary)] px-4 py-2 text-sm text-[var(--color-brand-primary)] hover:bg-[var(--color-surface-secondary)] transition-colors"
-      >
-        <span>
-          {runningCount > 0
-            ? `${runningCount} ${t.drawer.tasksRunning}`
-            : t.drawer.tasksCompleted}
-        </span>
-        <ChevronUp className={`h-4 w-4 transition-transform ${isExpanded ? '' : 'rotate-180'}`} />
-      </button>
+      <div className="flex w-full items-center justify-between border-t border-[var(--color-border-primary)] bg-[var(--color-surface-primary)] px-4 py-2 text-sm text-[var(--color-brand-primary)]">
+        <button
+          type="button"
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="flex flex-1 items-center justify-between text-left hover:text-[var(--color-brand-hover)] transition-colors"
+        >
+          <span>
+            {runningCount > 0
+              ? `${runningCount} ${t.drawer.tasksRunning}`
+              : t.drawer.tasksCompleted}
+          </span>
+          <ChevronUp className={`h-4 w-4 transition-transform ${isExpanded ? '' : 'rotate-180'}`} />
+        </button>
+        {runningCount === 0 && (
+          <button
+            type="button"
+            onClick={() => setVisibleTasks([])}
+            className="ml-3 rounded p-1 text-[var(--color-text-tertiary)] hover:bg-[var(--color-surface-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
+            title="关闭状态栏"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
     </div>
   )
 }

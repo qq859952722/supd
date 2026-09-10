@@ -320,8 +320,8 @@ function AppLayout() {
         </div>
       )}
 
-      {/* 主内容区 */}
-      <main className="flex-1 overflow-auto bg-[var(--color-bg-primary)] p-4">
+      {/* 主内容区（底部预留安全距离 pb-20 防止被底部悬浮状态栏遮挡） */}
+      <main className="flex-1 overflow-auto bg-[var(--color-bg-primary)] p-4 pb-20">
         <RouteAwareErrorBoundary>
           <Outlet />
         </RouteAwareErrorBoundary>

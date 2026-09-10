@@ -298,3 +298,112 @@ actions:
 		}
 	})
 }
+
+// TestServiceLifecycleTriggerWithCustomRuntime 验证生命周期扩展使用自定义配置运行时
+// 在 pre_start 阶段提前调用 dispatcher.SetRuntimes 能够正确解析并执行，未注入时报错 RUNTIME_NOT_FOUND
+func TestServiceLifecycleTriggerWithCustomRuntime(t *testing.T) {
+	baseDir := t.TempDir()
+	logDir := filepath.Join(baseDir, "logs")
+	markerFile := filepath.Join(t.TempDir(), "custom_rt.marker")
+
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	svcDir := filepath.Join(baseDir, "services", "rt-service")
+	extDir := filepath.Join(svcDir, "extensions", "custom-rt-ext")
+	if err := os.MkdirAll(extDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(svcDir, "service.yaml"), []byte(`name: rt-service
+version: "1.0"
+command:
+  - sleep
+  - "10"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// meta.yaml 配置自定义运行时 custom-sh
+	metaYAML := `name: custom-rt-ext
+version: "1.0.0"
+enabled: true
+runtime: custom-sh
+entry: run.sh
+triggers:
+  service_lifecycle:
+    - event: pre_start
+      action: init
+actions:
+  - id: init
+    label: "Init"
+`
+	if err := os.WriteFile(filepath.Join(extDir, "meta.yaml"), []byte(metaYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	scriptContent := `#!/bin/sh
+echo "executed by custom runtime" > "` + markerFile + `"
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(extDir, "run.sh"), []byte(scriptContent), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	disc := watch.NewDiscovery(baseDir, logDir).Scan()
+
+	// 1. 未注入自定义运行时时：执行 OnPreStart 应当失败并报错 RUNTIME_NOT_FOUND
+	{
+		executor := NewExecutor(logDir, baseDir)
+		dispatcher := NewDispatcher(executor, baseDir, logDir, 60)
+		trigger := NewServiceLifecycleTrigger(dispatcher, disc)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		results := trigger.OnPreStart(ctx, "rt-service")
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(results))
+		}
+		if results[0].State != TaskFailed {
+			t.Fatalf("expected failure when runtime not registered, got state=%s", results[0].State)
+		}
+		if !strings.Contains(results[0].ResultMsg, "RUNTIME_NOT_FOUND") {
+			t.Errorf("expected error message to contain RUNTIME_NOT_FOUND, got: %s", results[0].ResultMsg)
+		}
+	}
+
+	// 2. 注入自定义运行时（如启动期 preDiscovery 阶段 SetRuntimes）：执行 OnPreStart 应当成功
+	{
+		executor := NewExecutor(logDir, baseDir)
+		dispatcher := NewDispatcher(executor, baseDir, logDir, 60)
+		// 提前注册自定义运行时别名 custom-sh -> /bin/sh
+		dispatcher.SetRuntimes(map[string]string{
+			"custom-sh": "/bin/sh",
+		}, nil)
+		trigger := NewServiceLifecycleTrigger(dispatcher, disc)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		results := trigger.OnPreStart(ctx, "rt-service")
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(results))
+		}
+		if results[0].State != TaskSuccess {
+			t.Fatalf("expected success with custom-sh, got state=%s, exit_code=%d, msg=%s",
+				results[0].State, results[0].ExitCode, results[0].ResultMsg)
+		}
+
+		// 验证 marker 文件被正确写入
+		data, err := os.ReadFile(markerFile)
+		if err != nil {
+			t.Fatalf("marker file not created: %v", err)
+		}
+		if !strings.Contains(string(data), "executed by custom runtime") {
+			t.Errorf("unexpected marker file content: %s", string(data))
+		}
+	}
+}
+

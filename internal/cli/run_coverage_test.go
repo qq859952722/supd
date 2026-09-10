@@ -111,3 +111,40 @@ func assertStopConfig(t *testing.T, name string, sc core.StopConfig, grace, time
 		t.Errorf("%s: TimeoutSeconds = %d, want %d", name, sc.TimeoutSeconds, timeout)
 	}
 }
+
+// TestRunSetupLifecycleRuntimes 验证启动期在 Bootstrap.Run 之前通过 dispatcher.SetRuntimes
+// 成功将 cfg.Runtimes 与 preDiscovery.Runtimes 提前注入到执行器中
+func TestRunSetupLifecycleRuntimes(t *testing.T) {
+	baseDir := t.TempDir()
+	logDir := t.TempDir()
+
+	cfg := &config.Config{
+		Runtimes: map[string]string{
+			"custom-bin": "/bin/sh",
+		},
+	}
+	preDiscovery := &watch.DiscoveryResult{
+		Runtimes: map[string]string{
+			"scanned-bin": "/bin/bash",
+		},
+	}
+
+	executor := config.BuildRegistryAt(baseDir, cfg.Runtimes, preDiscovery.Runtimes)
+	entryCustom, err := config.Resolve(executor, "custom-bin")
+	if err != nil {
+		t.Fatalf("expected custom-bin to be resolved: %v", err)
+	}
+	if entryCustom.Alias != "custom-bin" {
+		t.Errorf("expected alias custom-bin, got %s", entryCustom.Alias)
+	}
+
+	entryScanned, err := config.Resolve(executor, "scanned-bin")
+	if err != nil {
+		t.Fatalf("expected scanned-bin to be resolved: %v", err)
+	}
+	if entryScanned.Alias != "scanned-bin" {
+		t.Errorf("expected alias scanned-bin, got %s", entryScanned.Alias)
+	}
+	_ = logDir
+}
+

@@ -58,14 +58,14 @@ function getMessageFromPayload(payload: Record<string, unknown>): string {
 }
 
 export function RecentEvents() {
-  // E-01-001: silent=true 避免轮询错误时弹出 toast
+  // E-01-001: silent=true 避免轮询错误时弹出 toast；使用轻量快速端点 /api/system/events/recent
   const { data, isLoading, isError } = useQuery({
     queryKey: ['recent-events'],
-    queryFn: () => apiGet<EventsResponse>('/api/events', { limit: 10 }, true),
+    queryFn: () => apiGet<EventData[]>('/api/system/events/recent', { limit: 10 }, true),
     refetchInterval: 5_000, // G-03: 短轮询 5s（降低高频请求压力）
   })
 
-  const events = data?.data ?? []
+  const events = Array.isArray(data) ? data : (data as unknown as EventsResponse)?.data ?? []
 
   return (
     <Card>

@@ -39,20 +39,21 @@ type LastExecution struct {
 // OperationCard 操作卡片（列表项，§九.1）：OperationInfo + 上次执行摘要。
 // 字段契约与本项目前端固定一致（snake_case）。
 type OperationCard struct {
-	ID             string         `json:"id"`
-	Label          string         `json:"label"`
-	ButtonStyle    string         `json:"button_style"`
-	Description    string         `json:"description"`
-	Registrants    []string       `json:"registrants"`
-	ResponderCount int            `json:"responder_count"`
-	Warnings       []string       `json:"warnings"`
-	LastExecution  *LastExecution `json:"last_execution,omitempty"`
+	ID             string                  `json:"id"`
+	Label          string                  `json:"label"`
+	ButtonStyle    string                  `json:"button_style"`
+	Description    string                  `json:"description"`
+	Registrants    []string                `json:"registrants"`
+	GlobalRefs     []extension.GlobalRef   `json:"global_refs"`
+	ResponderCount int                     `json:"responder_count"`
+	Responders     []extension.ResponderRef `json:"responders"`
+	Warnings       []string                `json:"warnings"`
+	LastExecution  *LastExecution          `json:"last_execution,omitempty"`
 }
 
 // OperationDetail 单操作详情（含注册者/响应者/配置 warning）。
 type OperationDetail struct {
 	OperationCard
-	Responders []extension.ResponderRef `json:"responders"`
 }
 
 func cardFromInfo(info extension.OperationInfo, warnings []string) OperationCard {
@@ -64,13 +65,23 @@ func cardFromInfo(info extension.OperationInfo, warnings []string) OperationCard
 	if info.Registrants == nil {
 		info.Registrants = []string{}
 	}
+	globalRefs := info.GlobalRefs
+	if globalRefs == nil {
+		globalRefs = []extension.GlobalRef{}
+	}
+	responders := info.Responders
+	if responders == nil {
+		responders = []extension.ResponderRef{}
+	}
 	return OperationCard{
 		ID:             info.ID,
 		Label:          info.Label,
 		ButtonStyle:    info.ButtonStyle,
 		Description:    info.Description,
 		Registrants:    info.Registrants,
+		GlobalRefs:     globalRefs,
 		ResponderCount: len(info.Responders),
+		Responders:     responders,
 		Warnings:       warnings,
 	}
 }
@@ -185,7 +196,6 @@ func (p *CoreOperationProvider) GetOperation(ctx context.Context, id string) (*O
 	}
 	return &OperationDetail{
 		OperationCard: cardFromInfo(*info, p.registry.Warnings(id)),
-		Responders:    responders,
 	}, true
 }
 

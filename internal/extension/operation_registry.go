@@ -33,6 +33,8 @@ type OperationInfo struct {
 	Description string `json:"description,omitempty"`
 	// Registrants 全局注册者 extension_name 列表（稳定序）。
 	Registrants []string `json:"registrants"`
+	// GlobalRefs 全局注册者详细引用（extension_name + action_id，稳定序）。
+	GlobalRefs []GlobalRef `json:"global_refs,omitempty"`
 	// Responders 服务扩展响应者（service_name/extension_name/action_id，稳定序）。
 	Responders []ResponderRef `json:"responders,omitempty"`
 }
@@ -155,6 +157,7 @@ func (r *OperationRegistry) Rebuild(discovery *watch.DiscoveryResult) {
 			}
 		}
 		info.Registrants = deduped
+		info.GlobalRefs = globalRefs
 		ops[opID] = info
 		globals[opID] = globalRefs
 	}

@@ -17,8 +17,30 @@ function useDialog(): DialogContextValue {
   return ctx
 }
 
-function Dialog({ children, defaultOpen = false }: { children: ReactNode; defaultOpen?: boolean }) {
-  const [open, setOpen] = useState(defaultOpen)
+function Dialog({
+  children,
+  defaultOpen = false,
+  open: controlledOpen,
+  onOpenChange,
+}: {
+  children: ReactNode
+  defaultOpen?: boolean
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+}) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen)
+  const isControlled = controlledOpen !== undefined
+  const open = isControlled ? controlledOpen : uncontrolledOpen
+
+  const setOpen = useCallback(
+    (val: boolean) => {
+      if (!isControlled) {
+        setUncontrolledOpen(val)
+      }
+      onOpenChange?.(val)
+    },
+    [isControlled, onOpenChange],
+  )
 
   return (
     <DialogContext.Provider value={{ open, setOpen }}>

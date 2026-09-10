@@ -8,7 +8,7 @@ import { useNavigate, useSearchParams } from 'react-router'
 import {
   PlaySquare, Settings2, Loader2, CheckCircle, XCircle, AlertTriangle,
   ChevronRight, ChevronDown, FileText, ExternalLink, Inbox, AlertOctagon,
-  Trash2, Plus,
+  Trash2, Plus, Puzzle, SlidersHorizontal,
 } from 'lucide-react'
 import {
   getOperations, runOperation, getOperationExecutions, getOperationExecution,
@@ -19,6 +19,9 @@ import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Drawer } from '@/components/ui/Drawer'
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from '@/components/ui/Dialog'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/Table'
 import { SkeletonTable } from '@/components/ui/Skeleton'
 import { toast } from '@/components/ui/Toast'
@@ -93,6 +96,17 @@ export default function OperationsPage() {
   const [paramsKV, setParamsKV] = useState<Record<string, Array<{ k: string; v: string }>>>({})
   const [paramsText, setParamsText] = useState<Record<string, string>>({})
   const [paramsOpen, setParamsOpen] = useState<Record<string, boolean>>({})
+
+  // 响应者弹窗（查看绑定列表并跳转服务扩展）
+  const [respondersDialogOp, setRespondersDialogOp] = useState<OperationCard | null>(null)
+
+  // 检查是否配置了有效参数
+  const hasConfiguredParams = (id: string): boolean => {
+    if ((paramsMode[id] ?? 'kv') === 'json') {
+      return !!(paramsText[id] ?? '').trim()
+    }
+    return (paramsKV[id] ?? []).some((r) => r.k.trim() !== '')
+  }
 
   // 由当前参数状态组装运行参数；JSON 非法时返回 null
   const buildParams = (id: string): Record<string, unknown> | null => {
@@ -222,69 +236,133 @@ export default function OperationsPage() {
             <span>{t.operations.empty}</span>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {cards.map((card) => (
-              <Card key={card.id} className="flex flex-col">
-                <CardContent className="flex flex-1 flex-col gap-3 p-4">
-                  {/* 头部：名称 + 上次执行 */}
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-[var(--color-text-primary)]">
-                      <Settings2 className="h-4 w-4 shrink-0 text-[var(--color-brand-primary)]" />
-                      <span className="truncate">{card.label}</span>
-                    </h3>
-                  </div>
-
-                  {/* 说明 */}
-                  <p className="text-xs text-[var(--color-text-secondary)]">
-                    {card.description || t.operations.descEmpty}
-                  </p>
-
-                  {/* 注册者 / 响应者 */}
-                  <div className="flex flex-col gap-1 text-xs text-[var(--color-text-tertiary)]">
-                    <div className="flex flex-wrap items-center gap-1">
-                      <span>{t.operations.registrants}:</span>
-                      {(card.registrants ?? []).length > 0 ? (
-                        (card.registrants ?? []).map((r, i) => (
-                          <Badge key={i} variant="secondary" className="font-mono">{r}</Badge>
-                        ))
-                      ) : (
-                        <span className="text-[var(--color-text-tertiary)]">-</span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span>{t.operations.responders}:</span>
-                      <span className="font-mono text-[var(--color-text-secondary)]">{card.responder_count}</span>
-                    </div>
-                  </div>
-
-                  {/* 配置警告（null 防护：Go nil slice 序列化为 null） */}
-                  {(card.warnings ?? []).length > 0 && (
-                    <div className="flex items-start gap-1.5 rounded-md border border-[var(--color-border-secondary)] bg-[var(--color-surface-warning)] px-2.5 py-1.5 text-xs text-[var(--color-text-warning)]">
-                      <AlertOctagon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                      <div>
-                        <div className="font-medium">{t.operations.warnings}</div>
-                        {(card.warnings ?? []).map((w, i) => <div key={i} className="break-all">{w}</div>)}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {cards.map((card) => {
+              const hasParams = hasConfiguredParams(card.id)
+              const primaryRegistrant = (card.registrants ?? [])[0]
+              return (
+                <Card
+                  key={card.id}
+                  className="flex flex-col border border-[var(--color-border-primary)] bg-[var(--color-surface-secondary)] transition-all hover:border-[var(--color-border-focus)] shadow-sm"
+                >
+                  <CardContent className="flex flex-1 flex-col space-y-2 p-3">
+                    {/* 头部：名称 + 危险标识 + 跳转全局扩展编辑页按钮 */}
+                    <div className="flex items-start justify-between gap-1.5">
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <Settings2 className="h-4 w-4 shrink-0 text-[var(--color-brand-primary)]" />
+                        <h3 className="truncate text-sm font-semibold text-[var(--color-text-primary)]" title={card.label}>
+                          {card.label}
+                        </h3>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        {card.button_style === 'danger' && (
+                          <Badge variant="danger" className="px-1 py-0 text-[10px]">
+                            高危
+                          </Badge>
+                        )}
+                        {primaryRegistrant && (
+                          <button
+                            type="button"
+                            className="flex h-6 w-6 items-center justify-center rounded text-[var(--color-text-tertiary)] hover:bg-[var(--color-surface-primary)] hover:text-[var(--color-brand-primary)] transition-colors"
+                            title={`跳转到全局扩展「${primaryRegistrant}」编辑页`}
+                            onClick={() => navigate(`/extensions/${encodeURIComponent(primaryRegistrant)}`)}
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
-                  )}
 
-                  {/* 上次执行摘要 */}
-                  <div className="mt-auto pt-1">
-                    <LastExecutionBadge card={card} />
-                  </div>
+                    {/* 说明（单行截断，节省纵向高度） */}
+                    <p className="line-clamp-1 text-[11px] text-[var(--color-text-secondary)]" title={card.description || t.operations.descEmpty}>
+                      {card.description || t.operations.descEmpty}
+                    </p>
 
-                  {/* 运行参数（可选）：默认键值对编辑，可切换 JSON 高级模式 */}
-                  <div className="rounded-md border border-[var(--color-border-secondary)] bg-[var(--color-surface-primary)]">
-                    <button
-                      type="button"
-                      onClick={() => setParamsOpen((p) => ({ ...p, [card.id]: !p[card.id] }))}
-                      className="flex w-full items-center justify-between px-2.5 py-1.5 text-left text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
-                    >
-                      <span>{t.operations.paramTitle}</span>
-                      {paramsOpen[card.id] ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                    </button>
+                    {/* 绑定信息：操作 ID + 注册者 + 响应者 */}
+                    <div className="space-y-1 rounded-md border border-[var(--color-border-secondary)] bg-[var(--color-surface-primary)] p-1.5 text-xs">
+                      {/* 绑定操作 ID（显式明确展示，满足用户需求 3） */}
+                      <div className="flex items-center justify-between font-mono text-[11px]">
+                        <span className="text-[var(--color-text-tertiary)]">绑定操作 ID:</span>
+                        <code className="rounded bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 font-semibold text-[var(--color-brand-primary)]">
+                          {card.id}
+                        </code>
+                      </div>
+
+                      {/* 注册者（满足用户需求 2 / 3：带 action 标注，并可直接点击跳转） */}
+                      <div className="flex flex-wrap items-center justify-between gap-1 text-[11px]">
+                        <span className="text-[var(--color-text-tertiary)]">{t.operations.registrants}:</span>
+                        <div className="flex flex-wrap items-center gap-1">
+                          {(card.registrants ?? []).length > 0 ? (
+                            (card.registrants ?? []).map((r, i) => {
+                              const matchingRef = (card.global_refs ?? []).find((g) => g.extension_name === r)
+                              return (
+                                <button
+                                  key={i}
+                                  type="button"
+                                  onClick={() => navigate(`/extensions/${encodeURIComponent(r)}`)}
+                                  title={`点击编辑全局扩展「${r}」`}
+                                  className="inline-flex items-center gap-1 rounded bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--color-brand-primary)] hover:underline"
+                                >
+                                  <span>{r}</span>
+                                  {matchingRef?.action_id && (
+                                    <span className="text-[10px] text-[var(--color-text-tertiary)]">
+                                      ({matchingRef.action_id})
+                                    </span>
+                                  )}
+                                  <ExternalLink className="h-2.5 w-2.5 opacity-60" />
+                                </button>
+                              )
+                            })
+                          ) : (
+                            <span className="text-[var(--color-text-tertiary)]">-</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* 响应者（满足用户需求 4：点击弹出完整绑定列表） */}
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-[var(--color-text-tertiary)]">{t.operations.responders}:</span>
+                        {card.responder_count > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => setRespondersDialogOp(card)}
+                            className="inline-flex items-center gap-1 rounded bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--color-text-primary)] hover:text-[var(--color-brand-primary)] hover:underline"
+                            title="点击查看所有绑定的服务响应者列表"
+                          >
+                            <span className="font-semibold text-[var(--color-brand-primary)]">
+                              {card.responder_count}
+                            </span>
+                            <span className="text-[10px] text-[var(--color-text-secondary)]">个响应者</span>
+                            <ChevronRight className="h-3 w-3 text-[var(--color-text-tertiary)]" />
+                          </button>
+                        ) : (
+                          <span className="font-mono text-[var(--color-text-tertiary)]">0</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 配置警告 */}
+                    {(card.warnings ?? []).length > 0 && (
+                      <div className="flex items-start gap-1 rounded border border-[var(--color-border-secondary)] bg-[var(--color-surface-warning)] px-2 py-1 text-[11px] text-[var(--color-text-warning)]">
+                        <AlertOctagon className="mt-0.5 h-3 w-3 shrink-0" />
+                        <div className="min-w-0">
+                          {(card.warnings ?? []).map((w, i) => (
+                            <div key={i} className="truncate" title={w}>
+                              {w}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 上次执行摘要 */}
+                    <div className="pt-0.5">
+                      <LastExecutionBadge card={card} />
+                    </div>
+
+                    {/* 展开的参数面板 */}
                     {paramsOpen[card.id] && (
-                      <div className="space-y-2 border-t border-[var(--color-border-secondary)] px-2.5 py-2">
+                      <div className="space-y-2 rounded-md border border-[var(--color-border-secondary)] bg-[var(--color-surface-primary)] p-2">
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] text-[var(--color-text-tertiary)]">{t.operations.paramHint}</span>
                           <button
@@ -298,30 +376,30 @@ export default function OperationsPage() {
                         {(paramsMode[card.id] ?? 'kv') === 'kv' ? (
                           <>
                             {(paramsKV[card.id] ?? []).map((row, ri) => (
-                              <div key={ri} className="flex items-center gap-1.5">
+                              <div key={ri} className="flex items-center gap-1">
                                 <input
                                   value={row.k}
                                   placeholder={t.operations.paramKey}
                                   spellCheck={false}
                                   disabled={runMutation.isPending && runningId === card.id}
                                   onChange={(e) => setParamsKV((p) => ({ ...p, [card.id]: (p[card.id] ?? []).map((r, i) => (i === ri ? { ...r, k: e.target.value } : r)) }))}
-                                  className="h-7 w-2/5 rounded border border-[var(--color-border-secondary)] bg-[var(--color-bg-tertiary)] px-1.5 font-mono text-xs text-[var(--color-text-primary)] outline-none focus:border-[var(--color-border-focus)]"
+                                  className="h-6 w-2/5 rounded border border-[var(--color-border-secondary)] bg-[var(--color-bg-tertiary)] px-1.5 font-mono text-[11px] text-[var(--color-text-primary)] outline-none focus:border-[var(--color-border-focus)]"
                                 />
                                 <input
                                   value={row.v}
                                   placeholder={t.operations.paramValue}
                                   disabled={runMutation.isPending && runningId === card.id}
                                   onChange={(e) => setParamsKV((p) => ({ ...p, [card.id]: (p[card.id] ?? []).map((r, i) => (i === ri ? { ...r, v: e.target.value } : r)) }))}
-                                  className="h-7 min-w-0 flex-1 rounded border border-[var(--color-border-secondary)] bg-[var(--color-bg-tertiary)] px-1.5 text-xs text-[var(--color-text-primary)] outline-none focus:border-[var(--color-border-focus)]"
+                                  className="h-6 min-w-0 flex-1 rounded border border-[var(--color-border-secondary)] bg-[var(--color-bg-tertiary)] px-1.5 text-[11px] text-[var(--color-text-primary)] outline-none focus:border-[var(--color-border-focus)]"
                                 />
                                 <button
                                   type="button"
                                   title={t.operations.paramRemove}
                                   disabled={runMutation.isPending && runningId === card.id}
                                   onClick={() => setParamsKV((p) => ({ ...p, [card.id]: (p[card.id] ?? []).filter((_, i) => i !== ri) }))}
-                                  className="rounded p-1 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-error)] disabled:opacity-50"
+                                  className="rounded p-0.5 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-error)] disabled:opacity-50"
                                 >
-                                  <Trash2 className="h-3 w-3" />
+                                  <Trash2 className="h-2.5 w-2.5" />
                                 </button>
                               </div>
                             ))}
@@ -329,7 +407,7 @@ export default function OperationsPage() {
                               type="button"
                               disabled={runMutation.isPending && runningId === card.id}
                               onClick={() => setParamsKV((p) => ({ ...p, [card.id]: [...(p[card.id] ?? []), { k: '', v: '' }] }))}
-                              className="flex items-center gap-1 text-xs text-[var(--color-brand-primary)] hover:underline disabled:opacity-50"
+                              className="flex items-center gap-1 text-[11px] text-[var(--color-brand-primary)] hover:underline disabled:opacity-50"
                             >
                               <Plus className="h-3 w-3" /> {t.operations.paramAdd}
                             </button>
@@ -341,28 +419,85 @@ export default function OperationsPage() {
                             spellCheck={false}
                             disabled={runMutation.isPending && runningId === card.id}
                             onChange={(e) => setParamsText((p) => ({ ...p, [card.id]: e.target.value }))}
-                            className="w-full resize-y rounded border border-[var(--color-border-secondary)] bg-[var(--color-bg-tertiary)] px-2 py-1.5 font-mono text-xs text-[var(--color-text-primary)] outline-none focus:border-[var(--color-border-focus)]"
-                            rows={3}
+                            className="w-full resize-y rounded border border-[var(--color-border-secondary)] bg-[var(--color-bg-tertiary)] px-2 py-1 font-mono text-[11px] text-[var(--color-text-primary)] outline-none focus:border-[var(--color-border-focus)]"
+                            rows={2}
                           />
                         )}
                       </div>
                     )}
-                  </div>
 
-                  <Button
-                    variant={card.button_style}
-                    size="md"
-                    onClick={() => handleRun(card)}
-                    disabled={runMutation.isPending && runningId === card.id}
-                  >
-                    {runMutation.isPending && runningId === card.id
-                      ? <Loader2 className="h-4 w-4 animate-spin" />
-                      : <PlaySquare className="h-4 w-4" />}
-                    {t.operations.run}
-                  </Button>
-                </CardContent>
-              </Card>
-            ))}
+                    {/* 底部控制条：参数开关 + 运行按钮 */}
+                    <div className="mt-auto flex items-center justify-between gap-2 border-t border-[var(--color-border-secondary)] pt-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setParamsOpen((p) => ({ ...p, [card.id]: !p[card.id] }))}
+                        className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors ${
+                          hasParams
+                            ? 'bg-[var(--color-brand-primary)]/10 text-[var(--color-brand-primary)] font-medium'
+                            : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-primary)] hover:text-[var(--color-text-primary)]'
+                        }`}
+                        title="配置运行参数"
+                      >
+                        <SlidersHorizontal className="h-3 w-3" />
+                        <span>{t.operations.paramTitle}</span>
+                        {hasParams && (
+                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-brand-primary)]" />
+                        )}
+                        {paramsOpen[card.id] ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                      </button>
+
+                      {confirming === card.id ? (
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            data-action="run-operation"
+                            className="h-7 px-2.5 text-xs font-semibold"
+                            onClick={() => {
+                              setConfirming(null)
+                              const p = buildParams(card.id)
+                              if (p !== null) doRun(card.id, p)
+                            }}
+                            disabled={runMutation.isPending && runningId === card.id}
+                          >
+                            {runMutation.isPending && runningId === card.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              '确认运行'
+                            )}
+                          </Button>
+                          <Button
+                            variant="default"
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            onClick={() => setConfirming(null)}
+                            disabled={runMutation.isPending && runningId === card.id}
+                          >
+                            取消
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          variant={card.button_style}
+                          size="sm"
+                          data-action="run-operation"
+                          className="h-7 px-3 text-xs"
+                          onClick={() => handleRun(card)}
+                          disabled={runMutation.isPending && runningId === card.id}
+                        >
+                          {runMutation.isPending && runningId === card.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <PlaySquare className="h-3.5 w-3.5 mr-1" />
+                          )}
+                          {t.operations.run}
+                        </Button>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              )
+            })}
           </div>
         )}
       </section>
@@ -558,6 +693,76 @@ export default function OperationsPage() {
           </div>
         )
       })()}
+
+      {/* 响应者列表弹窗（REQ-4：弹出绑定的响应者列表，点击能够跳到对应服务扩展页面） */}
+      <Dialog
+        open={!!respondersDialogOp}
+        onOpenChange={(open) => { if (!open) setRespondersDialogOp(null) }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Puzzle className="h-4 w-4 text-[var(--color-brand-primary)]" />
+              <span>操作响应者绑定列表</span>
+            </DialogTitle>
+            <DialogDescription>
+              操作「{respondersDialogOp?.label}」（绑定操作 ID: <code className="font-mono font-semibold text-[var(--color-brand-primary)]">{respondersDialogOp?.id}</code>）共绑定了 {respondersDialogOp?.responders?.length ?? respondersDialogOp?.responder_count ?? 0} 个服务扩展响应者。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="mt-2 max-h-[60vh] overflow-y-auto space-y-2">
+            {(!respondersDialogOp?.responders || respondersDialogOp.responders.length === 0) ? (
+              <div className="py-8 text-center text-xs text-[var(--color-text-secondary)]">
+                暂无服务扩展响应此操作
+              </div>
+            ) : (
+              <div className="divide-y divide-[var(--color-border-secondary)] rounded-md border border-[var(--color-border-secondary)] bg-[var(--color-surface-primary)]">
+                {respondersDialogOp.responders.map((resp, idx) => (
+                  <div key={idx} className="flex items-center justify-between p-3 text-xs">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[var(--color-text-tertiary)]">服务:</span>
+                        <span className="font-semibold text-[var(--color-text-primary)]">{resp.service_name}</span>
+                      </div>
+                      <div className="flex items-center gap-2 font-mono text-[11px]">
+                        <span className="text-[var(--color-text-tertiary)]">扩展:</span>
+                        <span className="text-[var(--color-brand-primary)]">{resp.extension_name}</span>
+                        <span className="text-[var(--color-text-tertiary)]">·</span>
+                        <span className="text-[var(--color-text-tertiary)]">Action:</span>
+                        <span className="text-[var(--color-text-secondary)]">{resp.action_id}</span>
+                      </div>
+                    </div>
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="h-7 text-xs flex items-center gap-1 shrink-0"
+                      onClick={() => {
+                        const svc = resp.service_name
+                        setRespondersDialogOp(null)
+                        navigate(`/services/${encodeURIComponent(svc)}?tab=extensions`)
+                      }}
+                      title={`前往服务「${resp.service_name}」扩展页面`}
+                    >
+                      <span>前往服务扩展</span>
+                      <ExternalLink className="h-3 w-3" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => setRespondersDialogOp(null)}
+            >
+              关闭
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

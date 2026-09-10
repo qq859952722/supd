@@ -24,8 +24,8 @@ const stateVariantMap: Record<ServiceState, 'default' | 'info' | 'success' | 'wa
   failed: 'danger',
 }
 
-function formatUptime(seconds: number): string {
-  if (seconds <= 0) return '-'
+function formatUptime(seconds?: number): string {
+  if (seconds == null || seconds <= 0 || isNaN(seconds)) return '-'
   const d = Math.floor(seconds / 86400)
   const h = Math.floor((seconds % 86400) / 3600)
   const m = Math.floor((seconds % 3600) / 60)

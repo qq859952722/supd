@@ -162,6 +162,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 
 	// 预扫描 Discovery，供 LifecycleTrigger 在 Bootstrap 期间使用
 	preDiscovery := watch.NewDiscovery(dir, logDir, cfg.ExtensionDirs...).Scan()
+	// REQ-F-028: 提前设置运行时配置，确保 Bootstrap 启动期间的 pre_start 生命周期扩展能解析自定义运行时
+	dispatcher.SetRuntimes(cfg.Runtimes, preDiscovery.Runtimes)
 	serviceLifecycleTrigger := extension.NewServiceLifecycleTrigger(dispatcher, preDiscovery)
 	supdLifecycleTrigger := extension.NewSupdLifecycleTrigger(dispatcher, preDiscovery)
 

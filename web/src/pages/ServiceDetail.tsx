@@ -2,7 +2,7 @@
 // 概览/日志/进程/配置/环境变量/扩展/历史
 // 11种边界操作 (REQ-F-040)
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useParams, Link, useSearchParams, useNavigate } from 'react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api-client'
@@ -195,8 +195,8 @@ const stateVariantMap: Record<ServiceState, 'default' | 'info' | 'success' | 'wa
   failed: 'danger',
 }
 
-function formatUptime(seconds: number): string {
-  if (seconds <= 0) return '-'
+function formatUptime(seconds?: number): string {
+  if (seconds == null || seconds <= 0 || isNaN(seconds)) return '-'
   const d = Math.floor(seconds / 86400)
   const h = Math.floor((seconds % 86400) / 3600)
   const m = Math.floor((seconds % 3600) / 60)
@@ -216,10 +216,14 @@ export function ServiceDetail() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const { runExtension: runExtensionToast } = useTaskToast()
-  // 读取 URL 查询参数 ?tab=logs 以支持从服务列表「日志」按钮直接跳转到日志页签
+  // 读取 URL 查询参数 ?tab=... 支持跳转特定页签（如 ?tab=logs / ?tab=extensions）
   const [searchParams] = useSearchParams()
   const initialTab = searchParams.get('tab') || 'overview'
   const [activeTab, setActiveTab] = useState(initialTab)
+  useEffect(() => {
+    const tab = searchParams.get('tab')
+    if (tab) setActiveTab(tab)
+  }, [searchParams])
   const [configContent, setConfigContent] = useState('')
   const [configInitialized, setConfigInitialized] = useState(false)
   const [configEditMode, setConfigEditMode] = useState<'visual' | 'yaml'>('yaml')

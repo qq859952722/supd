@@ -10,7 +10,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：⭐ 优秀，1000+ 单元测试通过（Go + 前端），零竞态；go vet 零警告
-- **当前版本**：v0.1.1（操作中心 + 通知中心全面审计修复；版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.1.2（修复启动期生命周期扩展运行时提前注册缺陷；版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -88,21 +88,47 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run  # 服务启动（
 | 09-10 | 第五轮全面审计与全矩阵实测 | 修复 pruneExecutions 排序致逆向淘汰最新执行、显式级联删除 operation_run、前端 URL query 双向联动与判空兜底；15 项全矩阵运行状态测试全绿；服务持续运行 | [notes/2026-09-10.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-09-10.md) |
 | 09-10 | 第六轮全面审计与实例运行状态实测 | 修复操作历史表格失败展示误显"成功"（Issue 1）、通知中心 URL 参数残留（Issue 2）、OperationsTagInput 重复 key 警告（Issue 3）；制定运行状态测试方案并实机验收 7 项全 PASS；测试服务保持运行 | [notes/2026-09-10.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-09-10.md) |
 | 09-10 | 最终审计 + 测试 + v0.1.1 发布 | 全量质量门禁通过（build/vet/test-race/pnpm build/version 注入/validate_dev.py 12 示例 0 err 0 warn）；抽查关键修复断言属实；README/升级指南/session-notes 升 v0.1.1；提交 + tag v0.1.1 | [notes/2026-09-10.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-09-10.md) |
+| 09-10 | 第七轮全量后端钳口（92端点）审计与UX交互深测 | 全量排查 92 后端端点在前端的覆盖与 UX 美学；补齐 EditorTabs 校验、ExtensionLogDialog 清空/删日志、RecentEvents 长轮询滥用修复、formatUptime 杜绝 NaN；92 接口运行测试 100% 通过（92/92 PASS）；Playwright 截取 11 张页面与交互截图 | [notes/2026-09-10.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-09-10.md) |
+| 09-10 | 第八轮操作中心UX深度优化、扩展跳转、响应者弹窗与底部防遮挡 | 卡片紧凑重构（高减近40%/4列网格）、直达全局扩展编辑页、透出操作ID与Action、响应者弹窗+直达服务扩展Tab（自动激活页签）、pb-20彻底解决底部遮挡；Playwright 23项端到端测试100% PASS | [notes/2026-09-10.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-09-10.md) |
+| 09-10 | 第九轮修复启动期生命周期扩展运行时注册缺陷 + v0.1.2 发布 | 修复 `run.go` 在 `bootstrap.Run` 之前未向调度器提前注册配置与扫描运行时的缺陷，解决 pre_start 阶段自定义运行时 RUNTIME_NOT_FOUND；补充集成回归测试；升级发布 v0.1.2 | [notes/2026-09-10.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-09-10.md) |
 
 ---
 
-## 七、最近会话重点（2026-09-10：最终审计 + 测试 + v0.1.1 发布）
+## 七、最近会话重点（2026-09-10：修复启动期生命周期扩展运行时注册缺陷与 v0.1.2 发布）
 
-- **最终质量门禁（全绿）**：
-  - `go build ./...` ✅、`go vet ./...` ✅（零警告）、`go test ./... -count=1` ✅（14 个包，含 extension 134s/core 42s/api 8s）。
-  - `go test -race ./internal/api ./internal/store ./internal/extension ./internal/notification ./internal/stream ./internal/logging` ✅（零竞态）。
-  - `cd web && pnpm build` ✅（TS 严格编译 + Vite 构建，生成 Operations/Notifications/octagon-alert chunk）。
-  - 版本注入：`go build -ldflags "-X main.version=0.1.1"` → `supd 0.1.1` ✅。
-  - `validate_dev.py`：skill 下 12 个示例逐一校验，0 error 0 warning（含示例 11/12 operations 解析）。
-- **最终审计抽查**：确认关键修复已在代码中落地——`MarkReadToLast` 原子推进命令（commands.go:393）、幂等 `idempotentPut`（互斥锁+清理）、`pruneExecutions` 改 `ORDER BY created_at DESC`（retention.go:95）、execution 查询 `ORDER BY created_at DESC`、responders 空值序列化。
-- **版本升级 v0.1.1（PATCH，本次所有缺陷修复）**：README 3 处版本号、`version-upgrade-guide.md` 变更记录追加 v0.1.1 行。
-- **发布动作**：提交全部变更 + annotated tag `v0.1.1` + `git push origin main` 与 `git push origin v0.1.1`（含此前待推送的 v0.1.0 提交与 tag）。
-- 详细证据见 `docs/devlog/notes/2026-09-10.md`「最终审计与 v0.1.1 发布」章节。
+- **启动期生命周期扩展运行时未注册缺陷修复（治本修复）**：
+  - **缺陷根因**：在 `internal/cli/run.go` 启动流程编排中，`executor.SetRuntimes` 被误置于 `bootstrap.Run(ctx)` 之后。在 `bootstrap.Run` 执行期间（Step 9 `supd_lifecycle: pre_start` 及 Step 10 服务 `service_lifecycle: pre_start`），扩展执行器因未加载配置/扫描运行时，注册表中仅有 4 个内置默认运行时（`bash/sh/python3/node`，`source=builtin`），导致在服务启动前运行的生命周期扩展只要使用了 `tjs` 等自定义运行时即报错 `RUNTIME_NOT_FOUND: runtime "tjs" not found in registry (details: map[alias:tjs])`。
+  - **修复实现**：在 `run.go` 预扫描 `preDiscovery := watch.NewDiscovery(...).Scan()` 完成后，立即调用 `dispatcher.SetRuntimes(cfg.Runtimes, preDiscovery.Runtimes)`，将自定义与扫描运行时提前注入执行调度器；`bootstrap.Run` 结束后保留最终 Discovery 更新。
+- **集成回归测试与质量门禁闭环**：
+  - `internal/extension/lifecycle_trigger_integration_test.go` 新增 `TestServiceLifecycleTriggerWithCustomRuntime`，双向验证未注册时精确拦截、提前注入后成功执行（`TaskSuccess`）。
+  - `internal/cli/run_coverage_test.go` 新增 `TestRunSetupLifecycleRuntimes`，验证配置运行时与扫描运行时的精确解析。
+  - `go build ./...`、`go vet ./...` 零警告；`go test ./... -count=1` 14 个包 100% 通过；`go test -race` 0 竞态；`cd web && pnpm build` 通过；`go build -ldflags "-X main.version=v0.1.2" -o ./supd ./cmd/supd` 验证版本注入输出 `supd v0.1.2`。
+- **v0.1.2 版本升级**：
+  - `README.md`、`version-upgrade-guide.md`、`session-notes.md` 同步升级至 `v0.1.2`。
+  - 弹窗中提供直达按钮，点击跳转至 `/services/{service}?tab=extensions`。
+  - `ServiceDetail.tsx` 增加 `useSearchParams` 动态监听，精准识别 `?tab=extensions` 并自动切换至「扩展」Tab 页。
+- **底部状态栏遮挡根治**：
+  - 主容器 `<main>` 增加安全下边距 `pb-20`（80px 留白），实测最底部元素距离固定底部栏保持 187.4px 超安全间距，彻底解决视口遮挡。
+  - `BottomDrawer.tsx` 已完成状态栏右侧增加快捷关闭按钮（`X`），支持用户一键主动收起。
+- **详细审计与自动化测试（零缺陷闭环）**：
+  - 静态编译与代码规范：`go build ./...`、`go vet ./...` 零告警；`cd web && pnpm build` 0 错误；`go build -o supd ./cmd/supd` 重新嵌入最新前端。
+  - 单元测试与高并发竞态：`go test -race ./... -count=1`（14 个包 100% 全部通过，0 race）。
+  - 真实运行实例测试：启动测试守护进程，接口验证 4 个操作数据结构完整，`global_refs` 与 `responders` 数组完备。
+  - Playwright 真实无头浏览器端到端自动化测试（`tmp/test_operations_ux.js`）：
+    - 覆盖卡片尺寸、全局扩展跳转、操作 ID 渲染、响应者弹窗展示、服务扩展 Tab 自动激活、底部安全距离等 23 项检查。
+    - **测试结果：23 / 23 全部通过（通过率 100%），0 失败，0 控制台错误**。
+    - 捕获 5 张实测证据截图归档于 `test_screenshots/`。
+
+### 更早会话重点：第七轮全量后端钳口（92端点）审计与UX交互深测
+
+- **后端全量 92 端点覆盖与运行测试（100% PASS，`tmp/test_all_apis.py`）**：
+  - 11 个功能组全部 92 个 API 端点逐一在真实运行实例进行实测，无模拟打桩（系统认证6/服务管理25/服务扩展7/全局扩展11/任务运行6/定时2/事件1/文件11/设置9/操作7/通知7 全部通过）。
+- **前端钳口补齐与 UX 打磨**：
+  - 文件编辑器语法校验（`EditorTabs.tsx` 引入校验按钮）。
+  - 扩展运行任务与日志清理（`ExtensionLogDialog` 引入清空与删除日志）。
+  - 事件流资源治理（`RecentEvents.tsx` 切换为轻量 `/api/system/events/recent` 端点）。
+  - 服务运行时长防 NaN 保护（`formatUptime` 统一非空与 NaN 保护）。
+- **Playwright 无头浏览器 E2E 交互与美学视觉验收**：10 大页面 11 张高精度截图归档。
 
 ### 更早会话重点：第六轮全面审计、3处缺陷修复与实例运行状态实测
 

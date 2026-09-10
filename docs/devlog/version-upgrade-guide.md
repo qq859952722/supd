@@ -200,6 +200,7 @@ git push origin vX.Y.Z
 | 2026-08-31 | v0.0.54 | 无代码变更的验证性发布，用于确认 tjs Release 缓存复用链路生效（tag 触发后应命中 `tjs-cache` 资产并跳过编译）；未执行本地构建 |
 | 2026-09-10 | v0.1.0 | 操作中心 + 通知中心（MINOR）：SQLite 持久化（`modernc.org/sqlite` 纯 Go，`<baseDir>/data/supd.db`）、`::notify::` stdout 通知协议、两阶段 OperationRunner（全局顺序→服务有界并行 4）、操作注册/触发/执行历史 API、通知 Topic/已读/删除/changes 长轮询 API、并发 tracker 服务维度隔离、stdout 排水安全读取、8 Tab + 操作中心/通知中心页面 + 铃铛红点；DB 迁移 v2（默认 Topic 唯一索引）；示例扩展 11/12 |
 | 2026-09-10 | v0.1.1 | 操作中心/通知中心全面审计缺陷修复（PATCH）：幂等 get/put 合并临界区（TOCTOU）、并发幂等唯一 execution、MarkReadToLast 原子推进游标、retention 排序改正（保留最新 200 条）+ 软删 Topic 物理清理、执行中强杀重启 `interrupted_at` 落库、responders 空值 `[]`、操作历史失败状态正确展示、铃铛红点即时消除/无滞留、danger 确认参数防丢、前端 URL query 双向联动、长轮询超限 503 保护、服务阶段 `SUPD_SERVICE/SUPD_SERVICE_DIR` 注入、Topic 按 closed_at 保留；Skill 示例 11/12 与 validate_dev.py 校验修复 |
+| 2026-09-10 | v0.1.2 | 修复启动阶段生命周期扩展运行时未提前注册缺陷（PATCH）：修复 `run.go` 在 `bootstrap.Run` 之前未向执行调度器注入 `cfg.Runtimes` 与 `preDiscovery.Runtimes` 的时序倒置 Bug，解决服务与系统启动前（`pre_start` 阶段）执行的生命周期扩展无法识别 `tjs` 等配置/扫描运行时的缺陷；补充自定义运行时生命周期钩子集成回归测试；构建产物嵌入最新前端 |
 
 
 
