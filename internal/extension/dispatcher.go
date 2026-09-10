@@ -422,12 +422,25 @@ func (d *Dispatcher) executeForService(ctx context.Context, serviceName string, 
 		// 即使被 service_lifecycle 触发，全局扩展的 ServiceSpec 也必须为空，
 		// 让 ResolveRunAs 走全局分支继承 supd 用户。
 		// 服务级扩展的 serviceSpec 在 findMatchingExtensions 中已填充为 svcEntry.Config 的身份配置。
+		var serviceDir string
+		if ext.extEntry.ServiceName != "" {
+			if req.Discovery != nil && req.Discovery.Services != nil {
+				if se, ok := req.Discovery.Services[ext.extEntry.ServiceName]; ok && se.ConfigPath != "" {
+					serviceDir = filepath.Dir(se.ConfigPath)
+				}
+			}
+			if serviceDir == "" && d.baseDir != "" {
+				serviceDir = filepath.Join(d.baseDir, "services", ext.extEntry.ServiceName)
+			}
+		}
+
 		tc := TriggerContext{
 			EventType:        req.EventType,
 			TriggerSource:    req.EventType,
 			TriggerUser:      req.TriggerUser,
 			Phase:            req.Phase,
 			ServiceName:      svcName,
+			ServiceDir:       serviceDir,
 			ServiceSpec:      ext.serviceSpec,
 			ServicePID:       req.ServicePID,
 			ServiceExitCode:  req.ServiceExitCode,

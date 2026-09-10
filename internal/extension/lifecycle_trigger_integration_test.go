@@ -88,6 +88,7 @@ cat > "$MARKER_FILE" <<EOF
 phase=$PHASE
 timestamp=$TIMESTAMP
 service=$SERVICE
+service_dir=${SUPD_SERVICE_DIR:-}
 event=$EVENT
 service_pid=$PID
 EOF
@@ -214,6 +215,11 @@ actions:
 		// 验证 service=my-service
 		if !strings.Contains(content, "service=my-service") {
 			t.Errorf("marker content should contain 'service=my-service', got:\n%s", content)
+		}
+
+		// 验证 SUPD_SERVICE_DIR 注入正确
+		if !strings.Contains(content, "service_dir="+svcDir) {
+			t.Errorf("marker content should contain 'service_dir=%s', got:\n%s", svcDir, content)
 		}
 
 		// 验证 event=service_lifecycle

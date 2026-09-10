@@ -10,7 +10,7 @@
 
 - **阶段**：维护/修复/测试阶段（57 Task 全部完成，8 阶段任务执行计划闭合）
 - **质量水位**：⭐ 优秀，1000+ 单元测试通过（Go + 前端），零竞态；go vet 零警告
-- **当前版本**：v0.1.2（修复启动期生命周期扩展运行时提前注册缺陷；版本升级见 `version-upgrade-guide.md`）
+- **当前版本**：v0.1.3（补充服务级扩展 SUPD_SERVICE_DIR 注入增强；版本升级见 `version-upgrade-guide.md`）
 
 ### 验证命令（每次改动后必跑）
 ```bash
@@ -91,33 +91,22 @@ SUPD_LOG_DIR=/tmp/supd-logs ./supd --workdir test_workdir run  # 服务启动（
 | 09-10 | 第七轮全量后端钳口（92端点）审计与UX交互深测 | 全量排查 92 后端端点在前端的覆盖与 UX 美学；补齐 EditorTabs 校验、ExtensionLogDialog 清空/删日志、RecentEvents 长轮询滥用修复、formatUptime 杜绝 NaN；92 接口运行测试 100% 通过（92/92 PASS）；Playwright 截取 11 张页面与交互截图 | [notes/2026-09-10.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-09-10.md) |
 | 09-10 | 第八轮操作中心UX深度优化、扩展跳转、响应者弹窗与底部防遮挡 | 卡片紧凑重构（高减近40%/4列网格）、直达全局扩展编辑页、透出操作ID与Action、响应者弹窗+直达服务扩展Tab（自动激活页签）、pb-20彻底解决底部遮挡；Playwright 23项端到端测试100% PASS | [notes/2026-09-10.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-09-10.md) |
 | 09-10 | 第九轮修复启动期生命周期扩展运行时注册缺陷 + v0.1.2 发布 | 修复 `run.go` 在 `bootstrap.Run` 之前未向调度器提前注册配置与扫描运行时的缺陷，解决 pre_start 阶段自定义运行时 RUNTIME_NOT_FOUND；补充集成回归测试；升级发布 v0.1.2 | [notes/2026-09-10.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-09-10.md) |
+| 09-10 | 第十轮服务级扩展 SUPD_SERVICE_DIR 注入增强与服务环境适配 + v0.1.3 发布 | 修复 Dispatcher 在调度服务生命周期事件扩展时未计算并注入 `SUPD_SERVICE_DIR` 环境变量的缺陷（对齐规格 §2.2.5 与 Skill 文档）；补充环境变量集成回归测试；构建产物嵌入最新前端；升级发布 v0.1.3 | [notes/2026-09-10.md](file:///home/qq/Documents/trae_projects/supd/docs/devlog/notes/2026-09-10.md) |
 
 ---
 
-## 七、最近会话重点（2026-09-10：修复启动期生命周期扩展运行时注册缺陷与 v0.1.2 发布）
+## 七、最近会话重点（2026-09-10：服务级扩展 SUPD_SERVICE_DIR 注入增强与 v0.1.3 发布）
 
-- **启动期生命周期扩展运行时未注册缺陷修复（治本修复）**：
-  - **缺陷根因**：在 `internal/cli/run.go` 启动流程编排中，`executor.SetRuntimes` 被误置于 `bootstrap.Run(ctx)` 之后。在 `bootstrap.Run` 执行期间（Step 9 `supd_lifecycle: pre_start` 及 Step 10 服务 `service_lifecycle: pre_start`），扩展执行器因未加载配置/扫描运行时，注册表中仅有 4 个内置默认运行时（`bash/sh/python3/node`，`source=builtin`），导致在服务启动前运行的生命周期扩展只要使用了 `tjs` 等自定义运行时即报错 `RUNTIME_NOT_FOUND: runtime "tjs" not found in registry (details: map[alias:tjs])`。
-  - **修复实现**：在 `run.go` 预扫描 `preDiscovery := watch.NewDiscovery(...).Scan()` 完成后，立即调用 `dispatcher.SetRuntimes(cfg.Runtimes, preDiscovery.Runtimes)`，将自定义与扫描运行时提前注入执行调度器；`bootstrap.Run` 结束后保留最终 Discovery 更新。
-- **集成回归测试与质量门禁闭环**：
-  - `internal/extension/lifecycle_trigger_integration_test.go` 新增 `TestServiceLifecycleTriggerWithCustomRuntime`，双向验证未注册时精确拦截、提前注入后成功执行（`TaskSuccess`）。
-  - `internal/cli/run_coverage_test.go` 新增 `TestRunSetupLifecycleRuntimes`，验证配置运行时与扫描运行时的精确解析。
-  - `go build ./...`、`go vet ./...` 零警告；`go test ./... -count=1` 14 个包 100% 通过；`go test -race` 0 竞态；`cd web && pnpm build` 通过；`go build -ldflags "-X main.version=v0.1.2" -o ./supd ./cmd/supd` 验证版本注入输出 `supd v0.1.2`。
-- **v0.1.2 版本升级**：
-  - `README.md`、`version-upgrade-guide.md`、`session-notes.md` 同步升级至 `v0.1.2`。
-  - 弹窗中提供直达按钮，点击跳转至 `/services/{service}?tab=extensions`。
-  - `ServiceDetail.tsx` 增加 `useSearchParams` 动态监听，精准识别 `?tab=extensions` 并自动切换至「扩展」Tab 页。
-- **底部状态栏遮挡根治**：
-  - 主容器 `<main>` 增加安全下边距 `pb-20`（80px 留白），实测最底部元素距离固定底部栏保持 187.4px 超安全间距，彻底解决视口遮挡。
-  - `BottomDrawer.tsx` 已完成状态栏右侧增加快捷关闭按钮（`X`），支持用户一键主动收起。
-- **详细审计与自动化测试（零缺陷闭环）**：
-  - 静态编译与代码规范：`go build ./...`、`go vet ./...` 零告警；`cd web && pnpm build` 0 错误；`go build -o supd ./cmd/supd` 重新嵌入最新前端。
-  - 单元测试与高并发竞态：`go test -race ./... -count=1`（14 个包 100% 全部通过，0 race）。
-  - 真实运行实例测试：启动测试守护进程，接口验证 4 个操作数据结构完整，`global_refs` 与 `responders` 数组完备。
-  - Playwright 真实无头浏览器端到端自动化测试（`tmp/test_operations_ux.js`）：
-    - 覆盖卡片尺寸、全局扩展跳转、操作 ID 渲染、响应者弹窗展示、服务扩展 Tab 自动激活、底部安全距离等 23 项检查。
-    - **测试结果：23 / 23 全部通过（通过率 100%），0 失败，0 控制台错误**。
-    - 捕获 5 张实测证据截图归档于 `test_screenshots/`。
+- **服务级扩展 SUPD_SERVICE_DIR 环境变量注入增强（规格与契约闭环）**：
+  - **背景与根因**：根据《需求规格说明书 v1.6》§2.2.5 与 Skill 扩展开发规范，服务级扩展在被 `service_lifecycle` 事件触发执行时，引擎应当为其注入 `SUPD_SERVICE_DIR` 环境变量（指向关联服务的工作目录绝对路径）。此前 `internal/extension/dispatcher.go` 的 `executeForService` 函数在构造 `TriggerContext` 时遗漏了对 `ServiceDir` 的提取赋值，导致部分依赖该环境变量的服务级钩子在生命周期触发时读取为空。
+  - **引擎增强落地**：在 `dispatcher.go` 中通过 `req.Discovery.Services[ext.ServiceName].ConfigPath` 的目录路径安全提取 `serviceDir`（并以 `filepath.Join(d.baseDir, "services", ext.ServiceName)` 兜底），赋值给 `TriggerContext.ServiceDir`，实现 `SUPD_SERVICE_DIR` 的自动化注入。
+  - **集成回归验证**：在 `internal/extension/lifecycle_trigger_integration_test.go` 中补充断言，验证 `pre_start` 阶段扩展执行捕获的 `SUPD_SERVICE_DIR` 严格等于目标服务的绝对路径，测试全部 PASS。
+- **全量测试门禁与质量闭环**：
+  - **代码验证命令**：`go build ./...`、`go vet ./...` 0 警告；`go test ./... -count=1` 14 个测试包全部通过（PASS）；`go test -race ./internal/extension/...` 0 竞态。
+  - **前端与二进制验证**：`cd web && pnpm build` 顺利通过；`go build ./...` 重新嵌入最新前端静态资源；本地 `ldflags` 版本注入测试输出 `supd 0.1.3`。
+  - **Skill 扩展规范校验**：执行 `validate_dev.py` 遍历全部 12 个扩展示例，0 错误、0 警告。
+- **v0.1.3 版本升级与发布**：
+  - `README.md`、`docs/devlog/version-upgrade-guide.md`、`docs/devlog/session-notes.md` 同步升级至 `v0.1.3`。
 
 ### 更早会话重点：第七轮全量后端钳口（92端点）审计与UX交互深测
 
