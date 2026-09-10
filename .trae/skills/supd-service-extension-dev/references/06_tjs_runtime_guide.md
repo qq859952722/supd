@@ -26,7 +26,7 @@ supd 执行器通过 `BuildCommand` 构造命令：`[/usr/local/bin/tjs, run.js]
 - `tjs run run.js` → `tjs-bin run run.js`（显式 `run`）
 - `tjs --version` → `tjs-bin --version`
 
-> **tjs 不是内置运行时**：supd 内置运行时只有 `bash`/`sh`/`python3`/`node`（PATH 查找）。`tjs` 通过 `config.yaml` 的 `runtimes` 映射注册（`supd init` 生成的默认配置已包含 `tjs: /usr/local/bin/tjs`），来源标记为 `config`。可通过 `supd runtimes list` 查看、`supd runtimes install tjs /path/to/tjs` 注册、`supd runtimes remove tjs` 移除。
+> **tjs 不是内置运行时**：supd 内置运行时只有 `bash`/`sh`/`python3`/`node`（PATH 查找）。`tjs` 通过 `config.yaml` 的 `runtimes` 映射注册（`supd init` 生成的默认配置已包含 `tjs: /usr/local/bin/tjs`），来源标记为 `config`。可通过 `supd runtimes list` 查看、`supd runtimes install tjs /path/to/tjs` 注册、`supd runtimes remove tjs` 移除。自 v0.1.2 起，系统在启动流程（`bootstrap.Run` 之前）已提前注入配置与扫描运行时的映射，因此 `pre_start` 阶段的生命周期钩子扩展即可安全使用 `tjs`。
 
 ---
 
@@ -731,6 +731,21 @@ async function copyDir(src, dst) {
     } else {
       await tjs.copyFile(srcPath, dstPath);
     }
+  }
+}
+
+// --- 5.5 跨文件系统安全移动（规避 EXDEV: cross-device link not permitted） ---
+// tjs.tmpDir（通常位于根文件系统或 tmpfs）与服务目录（通常为 Volume 挂载卷）跨文件系统时，
+// 直接 tjs.rename 会抛错 EXDEV；safeMove 优先原子 rename，失败则回退为 cp -f + rm
+async function safeMove(src, dst) {
+  try {
+    await tjs.rename(src, dst);
+  } catch (err) {
+    const r = await runCmd(['cp', '-f', src, dst]);
+    if (r.exitCode !== 0) {
+      throw new Error(`safeMove cp ${src} -> ${dst} 失败: ${r.stderr}`);
+    }
+    try { await tjs.remove(src); } catch {}
   }
 }
 

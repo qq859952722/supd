@@ -53,6 +53,8 @@ README 应维护当前有效结论，不堆积已完成待办或冗长尝试过�
 | `description` | string | `""` | 扩展功能描述 |
 | `enabled` | bool | `true` | 是否启用该扩展 |
 | `runtime` | string | `""` | 可选运行时别名（如 `bash`, `sh`, `python3`, `node`, `tjs`）；非空时由解释器执行 entry |
+
+> **启动期运行时保障（自 v0.1.2）**：系统在服务与扩展启动前已完成 `config.yaml` 声明运行时及扫描运行时的预加载，因此在 `pre_start` 阶段（`supd_lifecycle` 与 `service_lifecycle`）即可直接使用 `runtime: tjs` 等配置运行时。
 | `entry` | string | 必填 | 入口文件相对扩展自身目录（`meta.yaml` 所在目录）的路径（如 `run.sh` / `run.js`）；也支持绝对路径；`runtime` 为空时须具备执行权限，非空时只要求文件可读 |
 | `timeout_seconds` | int | `600` | 单次运行超时时限；省略/`0` 时加载器填充 600，生效值须 > 0 且不超过 `settings.extension_hard_limit_seconds`（默认 1800） |
 | `run_as` | string | `""` | 运行身份（User 模式）：`root` / `<用户名>` / 空（服务级扩展继承服务身份，全局扩展继承 supd 用户）。与 `run_as_uid` 互斥 |
@@ -129,6 +131,11 @@ triggers:
 > **on_demand 默认值**：当 `actions` 非空且未显式设置 `triggers.on_demand` 时，`on_demand` 默认为 `true`。
 >
 > **提示**：服务级扩展自动由目录位置关联到所属服务，`meta.yaml` 中无需也不解析 `service` 字段（YAML 解析器静默忽略）。
+>
+> **supd_lifecycle 触发时序区别**：
+> - `pre_start`：在启动流程 Step 9 触发，**严格早于**任何 `autostart: true` 服务的拉起（Step 10）。系统初始化类扩展（如根据 `ALLID` 自动创建用户/组、全局目录与初始权限治理等）**必须监听 `pre_start`**，若误设为 `post_ready` 则自启服务拉起时依赖的用户或初始状态尚未就绪，会导致服务因用户不存在而启动失败（`RUNTIME_USER_NOT_FOUND`）。
+> - `post_ready`：在所有 `autostart: true` 服务进入终态（ready 或 failed）后触发。适合就绪通知、系统健康广播等后续处理。
+> - `pre_shutdown`：在关机流程最开始触发，用于执行关闭前数据同步或外部资源清理。
 
 ---
 
@@ -170,7 +177,7 @@ triggers:
 | `SUPD_PHASE` | string | 仅 lifecycle 触发 | 执行阶段：`pre_start` / `post_ready` / `on_failure` / `pre_stop` / `pre_shutdown` |
 | `SUPD_SERVICE` | string | 仅 service_lifecycle | 触发生命周期事件的服务名；全局扩展在 service_lifecycle 触发时也注入 |
 | `SUPD_SERVICE_PID` | string | 仅 service_lifecycle | 关联服务的当前进程 PID；`pre_start` 阶段为空字符串（进程尚未启动），`on_failure` 时为退出前 PID |
-| `SUPD_SERVICE_DIR` | string | 仅服务级扩展 | 关联服务的工作目录绝对路径；当 ServiceName 和 ServiceDir 均非空时注入 |
+| `SUPD_SERVICE_DIR` | string | 仅服务级扩展 | 关联服务的工作目录绝对路径；自 v0.1.3 起引擎保证在所有生命周期阶段（`pre_start` / `post_ready` / `on_failure` / `pre_stop`）均自动提取注入 |
 | `SUPD_SERVICE_EXIT_CODE` | int | 仅 on_failure | 关联服务退出码（数字） |
 | `SUPD_SERVICE_SIGNAL` | int | 仅 on_failure | 关联服务退出信号（数字，0 表示正常退出而非信号致死） |
 | `SUPD_SERVICE_RESTART_COUNT` | int | 仅 on_failure | 关联服务的当前已重启次数（数字） |

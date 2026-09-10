@@ -154,6 +154,7 @@ musl 链接的二进制**并非不能用于 Debian 底包**：Debian 默认不�
 | 症状 | 根因 | 判定 |
 |---|---|---|
 | `fork/exec /etc/supd/services/.../bin/<bin>: no such file or directory` | ELF 解释器 `/lib/ld-musl-*.so.1` 缺失，`execve` 返回 ENOENT（经典假象：文件明明存在） | `file ./bin/<bin>` 显示 `interpreter /lib/ld-musl-...`，但底包内无该文件 |
+| `fork/exec .../bin/<bin>: permission denied` (EACCES) | 二进制虽有 `+x`，但其指定的动态链接解释器（PT_INTERP，如私有 musl `ld-musl-*.so.1` 或 `libc.so`）缺少可执行权限（仅 `0644`） | Linux 内核要求主程序与其动态解释器均必须具备 `+x`；对解释器执行 `chmod 755` 即可修复 |
 | `Error relocating .../bin/<bin>: SSL_CTX_ctrl: symbol not found`（大量 `*_not_found`） | 解释器已通，但 musl loader 误加载了 glibc 版同名共享库（如系统 `libssl.so.3`），符号布局不匹配 | 错误行前缀是 `Error relocating` 而非 `Error loading shared library` |
 
 处理规则（按优先级）：
@@ -224,6 +225,7 @@ musl 链接的二进制**并非不能用于 Debian 底包**：Debian 默认不�
 > - **UID 模式**（`uid`/`gid`/`groups`）：直接指定数字，不查 `/etc/passwd`，适用于 NAS 固定 uid 等场景。`gid=0` 表示等于 `uid`。
 > - **互斥**：两种模式不能同时指定，配置校验报错。
 > - **非 root 语义（严格拒绝）**：supd 非 root 启动时，`user`/`uid` 必须等于当前用户或留空，否则**服务拒绝启动**（返回 `ErrRuntimeUserNotFound` / HTTP 422）。
+> - **跨发行版身份最佳实践（推荐 UID 模式）**：在多容器或跨底包（Alpine / Debian）运行服务时，若使用 User 模式指定系统用户（如 `nobody`），易因底层组名差异（Debian 的 nobody 组名为 `nogroup`，Alpine 为 `nobody`）导致 `chown` 抛错 `invalid group`。此时强烈推荐使用 **UID 模式**（如 `uid: 10000`, `gid: 10000`），不依赖任何系统 `/etc/passwd` 和 `/etc/group`，权限修复脚本中统一使用数字 `chown -R 10000:10000`，具备天然的跨发行版一致性。
 
 ---
 
