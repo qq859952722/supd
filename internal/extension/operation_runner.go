@@ -244,7 +244,15 @@ func (r *OperationRunner) finishNoResponders(data *opExec, outcome *TriggerOutco
 func (r *OperationRunner) runTwoPhase(ctx context.Context, data *opExec) {
 	// 方案 A 失败隔离：全局失败不阻止后续全局与服务阶段（逐个处理，不提前中断）。
 	r.runGlobalPhase(ctx, data)
-	r.runServicePhase(ctx, data)
+	if !r.runServicePhase(ctx, data) {
+		// 服务阶段 planned Run 未持久化成功时禁止执行真实扩展，避免执行历史与实际运行脱节。
+		now := time.Now().UnixMilli()
+		if r.store != nil {
+			_ = r.store.FinishExecution(ctx, data.executionID, now)
+			_ = r.store.CloseTopic(ctx, data.topicID, now)
+		}
+		return
+	}
 
 	now := time.Now().UnixMilli()
 	if r.store != nil {
@@ -266,9 +274,9 @@ func (r *OperationRunner) runGlobalPhase(ctx context.Context, data *opExec) {
 
 // runServicePhase 服务阶段：创建服务 planned Run（第二事务），跨服务有界并行（≤4），
 // 同服务内稳定序串行（§四.3）。每个 Run 复用既有 action concurrency。
-func (r *OperationRunner) runServicePhase(ctx context.Context, data *opExec) {
+func (r *OperationRunner) runServicePhase(ctx context.Context, data *opExec) bool {
 	if len(data.serviceGroups) == 0 {
-		return
+		return true
 	}
 	// 第二事务：创建服务阶段 planned run 行。
 	var planned []store.PlannedRun
@@ -284,6 +292,7 @@ func (r *OperationRunner) runServicePhase(ctx context.Context, data *opExec) {
 	if r.store != nil {
 		if err := r.store.AddPlannedRuns(context.Background(), data.executionID, planned); err != nil {
 			r.logger.Warn("create service planned runs failed", "execution_id", data.executionID, "error", err)
+			return false
 		}
 	}
 
@@ -303,6 +312,7 @@ func (r *OperationRunner) runServicePhase(ctx context.Context, data *opExec) {
 		}()
 	}
 	wg.Wait()
+	return true
 }
 
 // submitOne 提交单个 Run（复用 RunGateway）并等待其终态回调。
@@ -311,6 +321,8 @@ func (r *OperationRunner) submitOne(ctx context.Context, data *opExec, s opSubmi
 		return
 	}
 	done := make(chan struct{})
+	var terminalOnce sync.Once
+	finish := func() { terminalOnce.Do(func() { close(done) }) }
 	r.gateway.OnRunTerminal(s.runID, func(tr TerminalResult) {
 		// §5.1 状态权威性：终态回调更新 operation_run 快照（幂等，level=store 保证只前进）。
 		if r.store != nil {
@@ -325,7 +337,7 @@ func (r *OperationRunner) submitOne(ctx context.Context, data *opExec, s opSubmi
 			}
 			_ = r.store.UpdateRunState(context.Background(), s.runID, string(tr.State), sa, fa)
 		}
-		close(done)
+		finish()
 	})
 
 	spec := RunSpec{
@@ -345,7 +357,16 @@ func (r *OperationRunner) submitOne(ctx context.Context, data *opExec, s opSubmi
 			OperationPhase:       s.phase,
 		},
 	}
-	r.gateway.SubmitRun(spec, s.runID)
+	accepted, _ := r.gateway.SubmitRun(spec, s.runID)
+	if !accepted {
+		if r.store != nil {
+			now := time.Now().UnixMilli()
+			_ = r.store.UpdateRunState(context.Background(), s.runID, string(TaskFailed), nil, &now)
+		}
+		// 用 finish()（sync.Once）而非直接 close：SubmitRun 拒绝路径若已同步
+		// 触发过终态回调（recordPlannedFailed 收口），close 会 double-close panic。
+		finish()
+	}
 
 	select {
 	case <-done:

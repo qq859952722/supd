@@ -20,6 +20,10 @@ type OperationProvider interface {
 	RunOperation(ctx context.Context, id string, params []byte, idemKey string) (*RunOperationResult, error)
 	ListExecutions(ctx context.Context, limit, offset int) ([]store.ExecutionDetail, error)
 	GetExecution(ctx context.Context, id string) (*store.ExecutionDetail, bool)
+	// DeleteExecution 删除单条执行记录（run 级联）；返回是否存在。
+	DeleteExecution(ctx context.Context, id string) (bool, error)
+	// DeleteAllExecutions 清空全部执行记录。
+	DeleteAllExecutions(ctx context.Context) error
 }
 
 // LastExecution 操作卡片上次执行摘要（§九.1）。
@@ -35,14 +39,14 @@ type LastExecution struct {
 // OperationCard 操作卡片（列表项，§九.1）：OperationInfo + 上次执行摘要。
 // 字段契约与本项目前端固定一致（snake_case）。
 type OperationCard struct {
-	ID             string          `json:"id"`
-	Label          string          `json:"label"`
-	ButtonStyle    string          `json:"button_style"`
-	Description    string          `json:"description"`
-	Registrants    []string        `json:"registrants"`
-	ResponderCount int             `json:"responder_count"`
-	Warnings       []string        `json:"warnings"`
-	LastExecution  *LastExecution  `json:"last_execution,omitempty"`
+	ID             string         `json:"id"`
+	Label          string         `json:"label"`
+	ButtonStyle    string         `json:"button_style"`
+	Description    string         `json:"description"`
+	Registrants    []string       `json:"registrants"`
+	ResponderCount int            `json:"responder_count"`
+	Warnings       []string       `json:"warnings"`
+	LastExecution  *LastExecution `json:"last_execution,omitempty"`
 }
 
 // OperationDetail 单操作详情（含注册者/响应者/配置 warning）。
@@ -52,6 +56,14 @@ type OperationDetail struct {
 }
 
 func cardFromInfo(info extension.OperationInfo, warnings []string) OperationCard {
+	// nil 切片 JSON 序列化为 null，前端直接读 .length 会崩溃（运行测试 T3-1 实测）；
+	// 统一兜底为空数组，registrants/warnings 同。
+	if warnings == nil {
+		warnings = []string{}
+	}
+	if info.Registrants == nil {
+		info.Registrants = []string{}
+	}
 	return OperationCard{
 		ID:             info.ID,
 		Label:          info.Label,
@@ -105,7 +117,7 @@ func NewCoreOperationProvider(registry *extension.OperationRegistry, runner oper
 
 // ListOperations 列出操作卡片（含上次执行摘要）。
 func (p *CoreOperationProvider) ListOperations(ctx context.Context) ([]OperationCard, error) {
-	var cards []OperationCard
+	cards := []OperationCard{} // 非 nil：避免空列表 JSON 序列化为 null
 	for _, info := range p.registry.List() {
 		card := cardFromInfo(info, p.registry.Warnings(info.ID))
 		if p.store != nil && info.ID != "" {
@@ -166,9 +178,14 @@ func (p *CoreOperationProvider) GetOperation(ctx context.Context, id string) (*O
 	if !ok {
 		return nil, false
 	}
+	responders := info.Responders
+	if responders == nil {
+		// nil 切片序列化为 null，与 R2-17 同理统一兜底为空数组。
+		responders = []extension.ResponderRef{}
+	}
 	return &OperationDetail{
 		OperationCard: cardFromInfo(*info, p.registry.Warnings(id)),
-		Responders:    info.Responders,
+		Responders:    responders,
 	}, true
 }
 
@@ -177,9 +194,16 @@ func (p *CoreOperationProvider) GetOperation(ctx context.Context, id string) (*O
 //   - 未知操作 → svcerr.ErrServiceNotFound（404）；
 //   - 参数非法 → svcerr.ErrInvalidRequest（400）；
 //   - 其余执行错误 → svcerr.ErrInternal。
+//
+// 幂等查重与创建必须在同一 idemMu 临界区内：StartExecution 毫秒级本地事务，
+// 持锁执行代价可接受；若 get/put 分离，并发同 key 请求会在窗口内全部未命中
+// 而重复创建 Execution（运行状态测试 T1-1 实测 30 并发产生 21 个 Execution）。
 func (p *CoreOperationProvider) RunOperation(_ context.Context, id string, params []byte, idemKey string) (*RunOperationResult, error) {
+	p.idemMu.Lock()
+	defer p.idemMu.Unlock()
 	if idemKey != "" {
-		if entry, ok := p.idempotentGet(idemKey); ok {
+		p.purgeExpiredLocked()
+		if entry, ok := p.idem[idemKey]; ok {
 			return &RunOperationResult{ExecutionID: entry.executionID, TopicID: entry.topicID}, nil
 		}
 	}
@@ -197,11 +221,11 @@ func (p *CoreOperationProvider) RunOperation(_ context.Context, id string, param
 	}
 
 	if idemKey != "" {
-		p.idempotentPut(idemKey, idemEntry{
+		p.idem[idemKey] = idemEntry{
 			executionID: outcome.ExecutionID,
 			topicID:     outcome.TopicID,
 			createdAt:   time.Now(),
-		})
+		}
 	}
 	return &RunOperationResult{ExecutionID: outcome.ExecutionID, TopicID: outcome.TopicID}, nil
 }
@@ -229,24 +253,23 @@ func (p *CoreOperationProvider) GetExecution(ctx context.Context, id string) (*s
 	return det, true
 }
 
-// idempotentGet 查询幂等 key；同时清理过期条目。
-func (p *CoreOperationProvider) idempotentGet(key string) (idemEntry, bool) {
-	p.idemMu.Lock()
-	defer p.idemMu.Unlock()
-	p.purgeExpiredLocked()
-	entry, ok := p.idem[key]
-	return entry, ok
+// DeleteExecution 删除单条执行记录；不存在返回 (false, nil)。
+func (p *CoreOperationProvider) DeleteExecution(ctx context.Context, id string) (bool, error) {
+	if p.store == nil {
+		return false, nil
+	}
+	return p.store.DeleteExecution(ctx, id)
 }
 
-// idempotentPut 写入幂等 key。
-func (p *CoreOperationProvider) idempotentPut(key string, entry idemEntry) {
-	p.idemMu.Lock()
-	defer p.idemMu.Unlock()
-	p.purgeExpiredLocked()
-	p.idem[key] = entry
+// DeleteAllExecutions 清空全部执行记录。
+func (p *CoreOperationProvider) DeleteAllExecutions(ctx context.Context) error {
+	if p.store == nil {
+		return nil
+	}
+	return p.store.DeleteAllExecutions(ctx)
 }
 
-// purgeExpiredLocked 清理超时幂等条目（调用方持锁）。
+// purgeExpiredLocked 清理超时幂等条目（调用方持 idemMu 锁）。
 func (p *CoreOperationProvider) purgeExpiredLocked() {
 	now := time.Now()
 	for k, e := range p.idem {

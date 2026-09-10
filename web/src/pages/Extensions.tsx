@@ -71,11 +71,14 @@ const supdLifecycleEvents = [
   { value: 'pre_shutdown', label: 'pre_shutdown — supd关闭前' },
 ]
 
+import { OperationsTagInput } from '@/components/extension/OperationsTagInput'
+
 interface ActionFormItem {
   id: string
   label: string
   button_style: 'primary' | 'default' | 'danger'
   args: string
+  operations: string[]
 }
 
 interface CronScheduleItem {
@@ -262,6 +265,7 @@ export default function ExtensionsPage() {
           label: a.label,
           button_style: a.button_style,
           args: a.args.trim() ? a.args.trim().split(/\s+/).filter(Boolean) : [],
+          operations: a.operations,
         })),
         triggers,
       }
@@ -390,7 +394,7 @@ export default function ExtensionsPage() {
   const addAction = () => {
     setCreateForm((f) => ({
       ...f,
-      actions: [...f.actions, { id: '', label: '', button_style: 'default', args: '' }],
+      actions: [...f.actions, { id: '', label: '', button_style: 'default', args: '', operations: [] }],
     }))
   }
   const removeAction = (idx: number) => {
@@ -1005,6 +1009,16 @@ export default function ExtensionsPage() {
                       onChange={(e) => updateAction(idx, 'args', e.target.value)}
                       placeholder="参数（空格分隔）"
                     />
+                    <div>
+                      <label className="mb-1 block text-[10px] text-[var(--color-text-tertiary)]">{t.extension.operationsLabel}</label>
+                      <OperationsTagInput
+                        value={action.operations}
+                        onChange={(ops) => setCreateForm((f) => ({
+                          ...f,
+                          actions: f.actions.map((a, i) => (i === idx ? { ...a, operations: ops } : a)),
+                        }))}
+                      />
+                    </div>
                   </div>
                 ))}
               </div>

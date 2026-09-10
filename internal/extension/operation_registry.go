@@ -44,8 +44,8 @@ type OperationSnapshot struct {
 	Label       string
 	ButtonStyle string
 	Description string
-	GlobalRuns  []GlobalRef     // 全局阶段执行者（稳定序）
-	ServiceRuns []ResponderRef  // 服务阶段响应者（稳定序）
+	GlobalRuns  []GlobalRef    // 全局阶段执行者（稳定序）
+	ServiceRuns []ResponderRef // 服务阶段响应者（稳定序）
 	Warnings    []string
 }
 
@@ -146,9 +146,15 @@ func (r *OperationRegistry) Rebuild(discovery *watch.DiscoveryResult) {
 					"operation "+opID+": 全局扩展 "+g.ref.ExtensionName+" 与首个注册者名称/样式不一致，已采用首个注册者")
 			}
 		}
-		// 排序并去重注册者名（同 ID 在同一扩展内已由配置校验唯一，但防御性去重）。
+		// 排序并去重注册者名（同 ID 在同一扩展内已由配置校验唯一，此处防御性去重）。
 		sort.Strings(regNames)
-		info.Registrants = regNames
+		deduped := regNames[:0]
+		for i, name := range regNames {
+			if i == 0 || name != regNames[i-1] {
+				deduped = append(deduped, name)
+			}
+		}
+		info.Registrants = deduped
 		ops[opID] = info
 		globals[opID] = globalRefs
 	}

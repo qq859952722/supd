@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -298,6 +299,52 @@ func TestMarkReadForwardOnly(t *testing.T) {
 	}
 }
 
+// TestMarkReadToLastAtomic 验证原子推进：seq 在 writer 命令内读取（消除
+// API 层 get-then-mark 与新通知落库的竞态窗口），幂等且 404 语义正确。
+func TestMarkReadToLastAtomic(t *testing.T) {
+	s := mustOpen(t, t.TempDir())
+	defer s.Close(5 * time.Second)
+	topicID := mustCreateOperationTopic(t, s, "op", nowMillis())
+	mustAppend(t, s, topicID, "info", "a", SrcTypeService) // last_seq=1
+	mustAppend(t, s, topicID, "info", "b", SrcTypeService) // last_seq=2
+
+	seq, err := s.MarkReadToLast(testCtx(), topicID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seq != 2 {
+		t.Errorf("returned seq = %d, want 2", seq)
+	}
+	d, _ := s.GetTopic(testCtx(), topicID)
+	if d.ReadSeq != 2 || d.UnreadCount != 0 {
+		t.Errorf("read_seq = %d unread = %d, want 2/0", d.ReadSeq, d.UnreadCount)
+	}
+
+	// 新通知落库后再调用：推进到新 last_seq（而非旧值）。
+	mustAppend(t, s, topicID, "info", "c", SrcTypeService) // last_seq=3
+	seq, err = s.MarkReadToLast(testCtx(), topicID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seq != 3 {
+		t.Errorf("returned seq = %d, want 3", seq)
+	}
+
+	// 幂等：连续调用无错误、游标不回退。
+	if _, err := s.MarkReadToLast(testCtx(), topicID); err != nil {
+		t.Fatal(err)
+	}
+	d, _ = s.GetTopic(testCtx(), topicID)
+	if d.ReadSeq != 3 {
+		t.Errorf("read_seq = %d, want 3 (idempotent)", d.ReadSeq)
+	}
+
+	// 不存在的 Topic → ErrTopicNotFound。
+	if _, err := s.MarkReadToLast(testCtx(), "no-such-topic"); !errors.Is(err, ErrTopicNotFound) {
+		t.Errorf("err = %v, want ErrTopicNotFound", err)
+	}
+}
+
 func TestDeleteTopicSoft(t *testing.T) {
 	s := mustOpen(t, t.TempDir())
 	defer s.Close(5 * time.Second)
@@ -357,8 +404,8 @@ func TestRetention(t *testing.T) {
 	if err := s.CloseTopic(testCtx(), closedNow, now); err != nil {
 		t.Fatal(err)
 	}
-	// 老的 closed Topic（40 天前）。
-	oldTopic := mustCreateOperationTopic(t, s, "old-closed", old)
+	// 旧的 closed Topic（40 天前）。
+	oldTopic := mustCreateOperationTopic(t, s, "old-closed", now)
 	if err := s.CloseTopic(testCtx(), oldTopic, old); err != nil {
 		t.Fatal(err)
 	}
@@ -369,7 +416,7 @@ func TestRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 30 天前 closed 的 Topic 被清理。
+	// 关闭时间超过 30 天的 Topic 被清理，即使创建时间较新。
 	if d, _ := s.GetTopic(testCtx(), oldTopic); d != nil {
 		t.Fatal("old closed topic should be deleted by retention")
 	}
@@ -384,6 +431,118 @@ func TestRetention(t *testing.T) {
 	// 删除 execution 不删关联 topic。
 	if _, err := s.GetTopic(testCtx(), rel); err != nil {
 		t.Errorf("topic should be independent of execution retention: %v", err)
+	}
+}
+
+// TestRetentionPruneOldestExecutions 验证容量超限时严格淘汰最老的执行记录，保留最新的执行记录。
+func TestRetentionPruneOldestExecutions(t *testing.T) {
+	s := mustOpen(t, t.TempDir())
+	defer s.Close(5 * time.Second)
+
+	now := nowMillis()
+	// 创建 10 个较老的执行记录（时间戳较小）
+	oldIDs := make([]string, 10)
+	for i := 0; i < 10; i++ {
+		execID := fmt.Sprintf("old-exec-%02d", i)
+		oldIDs[i] = execID
+		if _, err := s.CreateExecution(testCtx(), CreateExecutionInput{
+			ExecutionID: execID, OperationID: "op", OperationLabel: "op",
+			CreatedAt: now - 100000 + int64(i),
+			Runs:      []PlannedRun{{RunID: "run-" + execID, Phase: "global", ExtensionName: "e", ActionID: "a"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 创建 200 个较新的执行记录（时间戳较大）
+	newIDs := make([]string, 200)
+	for i := 0; i < 200; i++ {
+		execID := fmt.Sprintf("new-exec-%03d", i)
+		newIDs[i] = execID
+		if _, err := s.CreateExecution(testCtx(), CreateExecutionInput{
+			ExecutionID: execID, OperationID: "op", OperationLabel: "op",
+			CreatedAt: now - 1000 + int64(i),
+			Runs:      []PlannedRun{{RunID: "run-" + execID, Phase: "global", ExtensionName: "e", ActionID: "a"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	total, _ := countExecutions(s)
+	if total != 210 {
+		t.Fatalf("total executions before retention = %d, want 210", total)
+	}
+
+	if err := s.RunRetention(testCtx(), now); err != nil {
+		t.Fatal(err)
+	}
+
+	totalAfter, _ := countExecutions(s)
+	if totalAfter != 200 {
+		t.Fatalf("total executions after retention = %d, want 200", totalAfter)
+	}
+
+	// 验证最老的 10 条全部被清理
+	for _, id := range oldIDs {
+		if ex, _ := s.GetExecution(testCtx(), id); ex != nil {
+			t.Errorf("old execution %s should be pruned by retention, but still exists", id)
+		}
+	}
+
+	// 验证最新的 200 条全部被保留
+	for _, id := range newIDs {
+		if ex, _ := s.GetExecution(testCtx(), id); ex == nil {
+			t.Errorf("new execution %s should be retained, but was pruned", id)
+		}
+	}
+}
+
+
+// 软删除超过 30 天的 Topic 由 retention 物理清理（含其通知行），防止数据无限增长。
+func TestRetentionDeletedTopicPurge(t *testing.T) {
+	s := mustOpen(t, t.TempDir())
+	defer s.Close(5 * time.Second)
+
+	now := nowMillis()
+	old := now - 40*24*60*60*1000
+
+	// 旧软删 Topic（40 天前删除）：retention 后应物理清除。
+	oldDeleted := mustCreateOperationTopic(t, s, "old-deleted", old)
+	mustAppend(t, s, oldDeleted, "info", "n1", SrcTypeSystem)
+	mustAppend(t, s, oldDeleted, "error", "n2", SrcTypeSystem)
+	if err := s.DeleteTopic(testCtx(), oldDeleted, old); err != nil {
+		t.Fatal(err)
+	}
+	// 新软删 Topic（刚删除）：retention 后保留软删状态。
+	freshDeleted := mustCreateOperationTopic(t, s, "fresh-deleted", now)
+	mustAppend(t, s, freshDeleted, "info", "n", SrcTypeSystem)
+	if err := s.DeleteTopic(testCtx(), freshDeleted, now); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.RunRetention(testCtx(), now); err != nil {
+		t.Fatal(err)
+	}
+
+	var cnt int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM notification_topic WHERE id = ?", oldDeleted).Scan(&cnt); err != nil {
+		t.Fatal(err)
+	}
+	if cnt != 0 {
+		t.Fatal("old soft-deleted topic should be physically purged by retention")
+	}
+	var notifCnt int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM notification WHERE topic_id = ?", oldDeleted).Scan(&notifCnt); err != nil {
+		t.Fatal(err)
+	}
+	if notifCnt != 0 {
+		t.Fatal("notifications of purged topic should be removed")
+	}
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM notification_topic WHERE id = ?", freshDeleted).Scan(&cnt); err != nil {
+		t.Fatal(err)
+	}
+	if cnt != 1 {
+		t.Fatal("recently soft-deleted topic should be retained (soft state)")
 	}
 }
 

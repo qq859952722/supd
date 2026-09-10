@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -31,17 +30,17 @@ const (
 
 // topicsResponse GET /api/notifications/topics 响应。
 type topicsResponse struct {
-	Topics     []store.TopicItem     `json:"topics"`
-	StoreError *store.StoreError     `json:"store_error"`
+	Topics     []store.TopicItem `json:"topics"`
+	StoreError *store.StoreError `json:"store_error"`
 }
 
 // topicDetailResponse GET /api/notifications/topics/{id} 响应。
 type topicDetailResponse struct {
-	Topic         *store.TopicDetail     `json:"topic"`
-	Notifications []store.Notification   `json:"notifications"`
-	StoreError    *store.StoreError      `json:"store_error"`
-	NextSeq       int64                  `json:"next_seq"`
-	HasMore       bool                   `json:"has_more"`
+	Topic         *store.TopicDetail   `json:"topic"`
+	Notifications []store.Notification `json:"notifications"`
+	StoreError    *store.StoreError    `json:"store_error"`
+	NextSeq       int64                `json:"next_seq"`
+	HasMore       bool                 `json:"has_more"`
 }
 
 // mutResult 变更类端点成功响应。
@@ -216,7 +215,7 @@ func (s *Server) handleDeleteAllTopics(w http.ResponseWriter, r *http.Request) {
 //   - since >= GlobalSeq → 阻塞等待新写事件（内存广播，不持有 DB 连接）或超时后返回。
 //
 // 复用 s.longPollLimiter（与 /api/events 共用全局 50 / 单客户端 5 额度），
-// 超限返回 429（与 changes 契约一致，见 Task 08-3）。
+// 超限返回 503/SERVICE_BUSY（规格 §2.6.5，2026-09-10 审计决策）。
 func (s *Server) handleChanges(w http.ResponseWriter, r *http.Request) {
 	prov := s.notifProvider()
 	if prov == nil {
@@ -225,7 +224,7 @@ func (s *Server) handleChanges(w http.ResponseWriter, r *http.Request) {
 	}
 	clientIP := extractClientIP(r).String()
 	if !s.longPollLimiter.Acquire(clientIP) {
-		respondRateLimited(w, "too many concurrent long-poll requests")
+		respondError(w, svcerr.ErrServiceBusy, "too many concurrent long-poll requests")
 		return
 	}
 	defer s.longPollLimiter.Release(clientIP)
@@ -277,15 +276,4 @@ func (s *Server) handleChanges(w http.ResponseWriter, r *http.Request) {
 	case <-ctx.Done():
 	}
 	respondJSON(w, http.StatusOK, changesResponse{Reload: false, Epoch: cur, Seq: prov.GlobalSeq()})
-}
-
-// respondRateLimited 写入 429 结构化错误体（与项目错误响应格式一致；RATE_LIMIT 非 22 标准码之一，
-// 故直接按 changes 契约内联返回，不新增错误码枚举）。
-func respondRateLimited(w http.ResponseWriter, message string) {
-	body, _ := json.Marshal(map[string]any{
-		"error": map[string]any{"code": "RATE_LIMIT", "message": message},
-	})
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusTooManyRequests)
-	_, _ = w.Write(body)
 }

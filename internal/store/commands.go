@@ -385,6 +385,34 @@ func (s *Store) MarkRead(ctx context.Context, topicID string, seq int64) error {
 	return s.writer.submit(ctx, cmd)
 }
 
+// MarkReadToLast 将已读游标原子推进到当前 last_seq（read_seq=last_seq），返回推进到的 seq。
+// SELECT 与 UPDATE 在同一 writer 命令闭包内执行（writer 单 goroutine 串行提交，无并发
+// 命令交错），消除 API 层 get-then-mark 与新通知落库的竞态窗口——否则收起详情瞬间
+// 新通知到达时 read_seq 落后于 last_seq，该 Topic 仍被判未读（红点不消）。
+// Topic 不存在/已软删返回 ErrTopicNotFound（供 API 层映射 404）。
+func (s *Store) MarkReadToLast(ctx context.Context, topicID string) (int64, error) {
+	var lastSeq int64
+	cmd := newAuthoritativeCommand(func(db *sql.DB) error {
+		var deletedAt sql.NullInt64
+		err := db.QueryRow(`SELECT last_seq, deleted_at FROM notification_topic WHERE id = ?`, topicID).Scan(&lastSeq, &deletedAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrTopicNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if deletedAt.Valid {
+			return ErrTopicNotFound
+		}
+		_, err = db.Exec(`UPDATE notification_topic SET read_seq = ? WHERE id = ? AND read_seq < ?`, lastSeq, topicID, lastSeq)
+		return err
+	})
+	if err := s.writer.submit(ctx, cmd); err != nil {
+		return 0, err
+	}
+	return lastSeq, nil
+}
+
 // DeleteTopic 软删除 Topic。
 func (s *Store) DeleteTopic(ctx context.Context, topicID string, deletedAt int64) error {
 	cmd := newAuthoritativeCommand(func(db *sql.DB) error {
@@ -399,6 +427,72 @@ func (s *Store) DeleteAllTopics(ctx context.Context, deletedAt int64) error {
 	cmd := newAuthoritativeCommand(func(db *sql.DB) error {
 		_, err := db.Exec(`UPDATE notification_topic SET deleted_at = ? WHERE deleted_at IS NULL`, deletedAt)
 		return err
+	})
+	return s.writer.submit(ctx, cmd)
+}
+
+// DeleteExecution 删除单条操作执行记录（同时删除关联 operation_run 快照）。
+// 关联的 notification_topic 不受影响（通知中心独立管理）。返回是否存在。
+func (s *Store) DeleteExecution(ctx context.Context, execID string) (bool, error) {
+	var exists bool
+	cmd := newAuthoritativeCommand(func(db *sql.DB) error {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		ok := false
+		defer func() {
+			if !ok {
+				_ = tx.Rollback()
+			}
+		}()
+		res, err := tx.Exec(`DELETE FROM operation_execution WHERE id = ?`, execID)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		exists = n > 0
+		if exists {
+			if _, err := tx.Exec(`DELETE FROM operation_run WHERE execution_id = ?`, execID); err != nil {
+				return err
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		ok = true
+		return nil
+	})
+	if err := s.writer.submit(ctx, cmd); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+// DeleteAllExecutions 清空全部操作执行记录（同时清空 operation_run 快照；不删关联 Topic）。
+func (s *Store) DeleteAllExecutions(ctx context.Context) error {
+	cmd := newAuthoritativeCommand(func(db *sql.DB) error {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		ok := false
+		defer func() {
+			if !ok {
+				_ = tx.Rollback()
+			}
+		}()
+		if _, err := tx.Exec(`DELETE FROM operation_run`); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM operation_execution`); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		ok = true
+		return nil
 	})
 	return s.writer.submit(ctx, cmd)
 }

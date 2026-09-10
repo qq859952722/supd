@@ -1,0 +1,13 @@
+name: op-responder
+version: 1.0.0
+description: 服务阶段操作响应者（运行测试用）
+enabled: true
+runtime: bash
+entry: run.sh
+timeout_seconds: 30
+concurrency: replace
+actions:
+  - id: respond-check
+    label: 响应检查
+    operations:
+      - check-software

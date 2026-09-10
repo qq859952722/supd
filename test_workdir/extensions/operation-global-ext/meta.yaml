@@ -1,0 +1,34 @@
+name: operation-global-ext
+version: 1.0.0
+description: 操作中心全局扩展示例 — 注册多个操作、演示读取操作参数并在执行中输出通知
+enabled: true
+runtime: bash
+entry: run.sh
+timeout_seconds: 30
+concurrency: replace
+ui:
+  show_logs: true
+  button_style: default
+actions:
+  - id: check-update
+    label: 检查更新
+    button_style: default
+    operations:
+      - check-software
+  - id: update-software
+    label: 安装更新
+    button_style: danger
+    operations:
+      - update-software
+  - id: slow-demo
+    label: 慢操作（测试）
+    button_style: default
+    operations:
+      - slow-demo
+  - id: fail-demo
+    label: 失败测试操作
+    button_style: danger
+    operations:
+      - fail-demo
+triggers:
+  on_demand: true

@@ -28,7 +28,8 @@ export function useNotificationChanges(): { hasUnread: boolean } {
 
   useEffect(() => {
     if (!topicsData) return
-    setHasUnread(topicsData.topics.some((tm) => tm.last_seq > tm.read_seq))
+    // topics 可能为 null（Go nil slice JSON 序列化），判空防止整页崩溃
+    setHasUnread((topicsData.topics ?? []).some((tm) => tm.last_seq > tm.read_seq))
   }, [topicsData])
 
   useEffect(() => {
@@ -55,9 +56,15 @@ export function useNotificationChanges(): { hasUnread: boolean } {
         if (res.epoch) setEpoch(res.epoch)
         setSeq(res.seq)
         if (res.reload || res.seq > seqRef.current) {
-          // epoch 不符或新写 → 刷新铃铛红点并推动通知中心列表刷新
+          // epoch 不符或新写 → 刷新铃铛红点、通知中心列表与操作中心状态
           setTopicVersion((v) => v + 1)
           queryClient.invalidateQueries({ queryKey: ['notification-topics'] })
+          // 操作执行产生通知/关闭 Topic 都会推进 GlobalSeq；一并刷新
+          // 操作卡片（含上次执行摘要）、执行历史与已打开的执行详情抽屉
+          // （UpdateRunState 同样推进 GlobalSeq，页面停留期间保持更新）。
+          queryClient.invalidateQueries({ queryKey: ['operations'] })
+          queryClient.invalidateQueries({ queryKey: ['operation-executions'] })
+          queryClient.invalidateQueries({ queryKey: ['operation-execution'] })
         }
         clearTimer()
         timer = setTimeout(run, 0)

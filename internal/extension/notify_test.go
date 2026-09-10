@@ -14,8 +14,8 @@ import (
 
 // extSink 记录通知的测试 Sink，可选择丢弃模式。
 type extSink struct {
-	mu     sync.Mutex
-	got    []notification.PendingNotification
+	mu         sync.Mutex
+	got        []notification.PendingNotification
 	alwaysDrop bool
 }
 

@@ -201,12 +201,14 @@ export async function apiLongPoll<T>(path: string, params?: Record<string, strin
       }
     })
   }
+  // 长轮询静默模式：挂起期间服务重启/网络抖动/503 超限属预期场景，
+  // 由调用方（轮询 hook）自行退避重试，不走全局 toast（否则形成错误风暴）。
   const response = await safeFetch(url.pathname + url.search, {
     method: 'GET',
     headers: buildHeaders(),
     signal,
-  })
-  return handleResponse<T>(response)
+  }, true)
+  return handleResponse<T>(response, true)
 }
 
 // ---------------------------------------------------------------
@@ -314,6 +316,16 @@ export async function getOperationExecutions(limit?: number, offset?: number): P
 
 export async function getOperationExecution(id: string): Promise<ExecutionDetail> {
   return apiGet<ExecutionDetail>(`/api/operation-executions/${encodeURIComponent(id)}`)
+}
+
+/** 删除单条执行记录（run 级联；关联通知 Topic 不受影响）。 */
+export async function deleteOperationExecution(id: string): Promise<{ ok: boolean }> {
+  return apiDelete<{ ok: boolean }>(`/api/operation-executions/${encodeURIComponent(id)}`)
+}
+
+/** 清空全部执行记录。 */
+export async function deleteAllOperationExecutions(): Promise<{ ok: boolean }> {
+  return apiDelete<{ ok: boolean }>('/api/operation-executions')
 }
 
 /** 通知主题行（GET /api/notifications/topics 数组元素）。 */

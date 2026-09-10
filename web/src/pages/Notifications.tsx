@@ -2,9 +2,9 @@
 // 混排单一 Topic 列表，按后端返回（最近活动倒序）；顶部筛选；打开详情即 markTopicRead；
 // 长轮询刷新由全局 changes 通道（铃铛）驱动，本页不另建轮询通道。
 
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useSearchParams } from 'react-router'
+import { useSearchParams, useNavigate } from 'react-router'
 import {
   Settings2, Server, Puzzle, AlertOctagon, ChevronDown, ChevronRight, Bell,
   Loader2, Trash2, CheckCheck, Eraser, AlertTriangle,
@@ -67,11 +67,17 @@ const EMPTY_FILTER: NotificationFilter = { unreadOnly: false, level: '', kind: '
 
 export default function NotificationsPage() {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const urlTopic = searchParams.get('topic')
 
   const [filter, setFilter] = useState<NotificationFilter>(EMPTY_FILTER)
   const [selectedId, setSelectedId] = useState<string | null>(urlTopic)
+  useEffect(() => {
+    if (urlTopic) {
+      setSelectedId(urlTopic)
+    }
+  }, [urlTopic])
 
   // 服务下拉复用 GET /api/services（与全局导航同一 queryKey）
   const { data: servicesData } = useQuery({
@@ -83,7 +89,7 @@ export default function NotificationsPage() {
 
   // 混排 Topic 列表（server 已按最近活动倒序）
   const listQueryKey = ['notification-topics', 'list', filter]
-  const { data: listData, refetch, isFetching } = useQuery<TopicListResponse>({
+  const { data: listData, refetch, isFetching, isPending: listLoading, isError: listError } = useQuery<TopicListResponse>({
     queryKey: listQueryKey,
     queryFn: () => getNotificationTopics({
       unread: filter.unreadOnly || undefined,
@@ -105,15 +111,44 @@ export default function NotificationsPage() {
     enabled: !!selectedId,
   })
 
-  // 打开详情即 markTopicRead
+  // 标记已读时机：收起详情或切换到另一条时（handleExpand 内），
+  // 未读筛选下打开消息时列表项保留，避免"点击后消息立即消失而看不到内容"。
+  const invalidateAll = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['notification-topics'] })
+    queryClient.invalidateQueries({ queryKey: ['notification-topics-bell'] })
+  }, [queryClient])
+
+  const handleExpand = useCallback((id: string) => {
+    // 副作用不放进 setState updater（StrictMode 下 updater 会双调用，产生重复请求）。
+    if (selectedId === id) {
+      // 收起详情：内容已读，此时才标已读并刷新列表与红点
+      markTopicRead(id).then(invalidateAll).catch(() => { /* 静默 */ })
+      setSelectedId(null)
+      if (urlTopic) {
+        navigate('/notifications', { replace: true })
+      }
+      return
+    }
+    if (selectedId) {
+      // 直接切换到另一条：前一条视为已读
+      markTopicRead(selectedId).then(invalidateAll).catch(() => { /* 静默 */ })
+    }
+    setSelectedId(id)
+  }, [selectedId, invalidateAll])
+
+  // 卸载兜底：展开详情后直接离开页面/路由切换时补标已读，避免红点滞留。
+  const selectedIdRef = useRef(selectedId)
+  useEffect(() => { selectedIdRef.current = selectedId }, [selectedId])
   useEffect(() => {
-    if (!selectedId) return
-    let active = true
-    markTopicRead(selectedId).then(() => {
-      if (active) queryClient.invalidateQueries({ queryKey: ['notification-topics'] })
-    }).catch(() => { /* 静默 */ })
-    return () => { active = false }
-  }, [selectedId, queryClient])
+    return () => {
+      const cur = selectedIdRef.current
+      if (cur) {
+        markTopicRead(cur).then(invalidateAll).catch(() => { /* 静默 */ })
+      }
+    }
+    // 仅卸载时执行；invalidateAll/queryClient 引用稳定
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // 分页累加 + 切换主题/筛选变更时重置
   useEffect(() => {
@@ -132,21 +167,13 @@ export default function NotificationsPage() {
   const hasMore = detailData?.has_more ?? false
   const effectiveNextSeq = detailData?.next_seq ?? 0
 
-  const handleExpand = useCallback((id: string) => {
-    setSelectedId((cur) => (cur === id ? null : id))
-  }, [])
-
-  const invalidate = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ['notification-topics'] })
-  }, [queryClient])
-
   // 全部已读
   const [markingAll, setMarkingAll] = useState(false)
   const handleMarkAllRead = async () => {
     setMarkingAll(true)
     try {
       await markAllRead()
-      invalidate()
+      invalidateAll()
     } catch (err) {
       toast.error(getErrorMessage(err, t.notifications.title))
     } finally {
@@ -159,8 +186,11 @@ export default function NotificationsPage() {
   const handleDelete = async (item: TopicItem) => {
     try {
       await deleteTopic(item.id)
-      if (selectedId === item.id) setSelectedId(null)
-      invalidate()
+      if (selectedId === item.id) {
+        setSelectedId(null)
+        if (urlTopic) navigate('/notifications', { replace: true })
+      }
+      invalidateAll()
     } catch (err) {
       toast.error(getErrorMessage(err, t.notifications.delete))
     }
@@ -173,7 +203,8 @@ export default function NotificationsPage() {
     try {
       await clearAllTopics()
       setSelectedId(null)
-      invalidate()
+      if (urlTopic) navigate('/notifications', { replace: true })
+      invalidateAll()
     } catch (err) {
       toast.error(getErrorMessage(err, t.notifications.clearAll))
     }
@@ -270,7 +301,17 @@ export default function NotificationsPage() {
 
       {/* 混排列表 + 页内详情 */}
       <div className="rounded-lg border border-[var(--color-border-primary)] bg-[var(--color-surface-secondary)]">
-        {topics.length === 0 ? (
+        {listLoading ? (
+          <div className="flex items-center justify-center gap-2 py-10 text-sm text-[var(--color-text-secondary)]">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            {t.common.loading}
+          </div>
+        ) : listError ? (
+          <div className="flex flex-col items-center py-10 text-sm text-[var(--color-text-error)]">
+            <AlertTriangle className="mb-2 h-8 w-8" />
+            <span>{t.notifications.loadFailed}</span>
+          </div>
+        ) : topics.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-10 text-[var(--color-text-secondary)]">
             <Bell className="mb-2 h-8 w-8 text-[var(--color-text-tertiary)]" />
             <span>{t.notifications.empty}</span>
@@ -307,7 +348,11 @@ export default function NotificationsPage() {
                         <button
                           title={t.operations.topicLink}
                           className="rounded p-1 text-[var(--color-text-tertiary)] hover:text-[var(--color-brand-primary)]"
-                          onClick={(e) => { e.stopPropagation(); setSelectedId(item.id) }}
+                          onClick={(e) => {
+                            // 跳转操作中心并打开该 Topic 对应的执行详情（与执行抽屉的"关联通知"链接对称）
+                            e.stopPropagation()
+                            navigate(`/operations?execution=${encodeURIComponent(item.execution_id!)}`)
+                          }}
                         >
                           <AlertOctagon className="h-3 w-3" />
                         </button>

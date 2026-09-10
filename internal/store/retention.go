@@ -4,14 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
 // 保留策略硬编码数值（设计稿 §七.6，不新增配置字段）。
 const (
-	retentionDays          = 30
-	executionMaxRows       = 200
-	retentionInterval      = 10 * time.Minute
+	retentionDays                    = 30
+	executionMaxRows                 = 200
+	retentionInterval                = 10 * time.Minute
 	maxNotificationsPerTopicFallback = maxNotificationsPerTopic
 )
 
@@ -36,19 +37,36 @@ func runRetentionTx(db *sql.DB, now int64) error {
 		return err
 	}
 	ok := false
-	defer func() { if !ok { _ = tx.Rollback() } }()
+	defer func() {
+		if !ok {
+			_ = tx.Rollback()
+		}
+	}()
 
 	cutoff := now - retentionDays*24*60*60*1000
 
-	// 1) 30 天前 closed 的 Topic 及其通知。
+	// 0) 软删除超过 30 天的 Topic 物理清理：软删后 UI 不可见且无保留价值，
+	//    若不清理则 topic/notification 行永久滞留导致数据库无限增长。
 	if _, err := tx.Exec(
 		`DELETE FROM notification WHERE topic_id IN (
-		   SELECT id FROM notification_topic WHERE closed_at IS NOT NULL AND created_at < ? AND deleted_at IS NULL
+		   SELECT id FROM notification_topic WHERE deleted_at IS NOT NULL AND deleted_at < ?
+		 )`, cutoff); err != nil {
+		return fmt.Errorf("retention delete notifications for deleted topics: %w", err)
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM notification_topic WHERE deleted_at IS NOT NULL AND deleted_at < ?`, cutoff); err != nil {
+		return fmt.Errorf("retention delete deleted topics: %w", err)
+	}
+
+	// 1) 关闭超过 30 天的 Topic 及其通知；长期存在的默认 Topic 不因创建时间过旧而清理。
+	if _, err := tx.Exec(
+		`DELETE FROM notification WHERE topic_id IN (
+		   SELECT id FROM notification_topic WHERE closed_at IS NOT NULL AND closed_at < ? AND deleted_at IS NULL
 		 )`, cutoff); err != nil {
 		return fmt.Errorf("retention delete notifications for closed topics: %w", err)
 	}
 	if _, err := tx.Exec(
-		`DELETE FROM notification_topic WHERE closed_at IS NOT NULL AND created_at < ? AND deleted_at IS NULL`, cutoff); err != nil {
+		`DELETE FROM notification_topic WHERE closed_at IS NOT NULL AND closed_at < ? AND deleted_at IS NULL`, cutoff); err != nil {
 		return fmt.Errorf("retention delete closed topics: %w", err)
 	}
 
@@ -71,8 +89,10 @@ func runRetentionTx(db *sql.DB, now int64) error {
 }
 
 // pruneExecutions 删除超期/超量的 execution 及其 operation_run。
+// 必须按 created_at DESC 排序（最新在前、最老在后），如此 i >= executionMaxRows
+// 精确指向超出上限的最老执行记录，同时 r.createdAt < cutoff 清理超过 30 天的老记录。
 func pruneExecutions(tx *sql.Tx, cutoff int64) error {
-	rows, err := tx.Query(`SELECT id, created_at FROM operation_execution ORDER BY created_at ASC, id`)
+	rows, err := tx.Query(`SELECT id, created_at FROM operation_execution ORDER BY created_at DESC, id`)
 	if err != nil {
 		return err
 	}
@@ -125,23 +145,19 @@ func pruneExecutions(tx *sql.Tx, cutoff int64) error {
 // pruneAllTopicOverflows 对所有超过 500 条的 Topic 淘汰最旧通知。
 func pruneAllTopicOverflows(tx *sql.Tx) error {
 	rows, err := tx.Query(
-		`SELECT topic_id, COUNT(*) FROM notification GROUP BY topic_id HAVING COUNT(*) > ? ORDER BY topic_id`,
+		`SELECT topic_id FROM notification GROUP BY topic_id HAVING COUNT(*) > ? ORDER BY topic_id`,
 		maxNotificationsPerTopicFallback)
 	if err != nil {
 		return err
 	}
-	type overflow struct {
-		topicID string
-		count   int64
-	}
-	var overs []overflow
+	var overs []string
 	for rows.Next() {
-		var o overflow
-		if err := rows.Scan(&o.topicID, &o.count); err != nil {
+		var topicID string
+		if err := rows.Scan(&topicID); err != nil {
 			rows.Close()
 			return err
 		}
-		overs = append(overs, o)
+		overs = append(overs, topicID)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -149,12 +165,10 @@ func pruneAllTopicOverflows(tx *sql.Tx) error {
 	}
 	rows.Close()
 
-	for _, o := range overs {
-		excess := o.count - maxNotificationsPerTopicFallback
-		if err := pruneTopicNotifications(tx, o.topicID, maxNotificationsPerTopicFallback); err != nil {
-			return fmt.Errorf("retention prune topic %s: %w", o.topicID, err)
+	for _, topicID := range overs {
+		if err := pruneTopicNotifications(tx, topicID, maxNotificationsPerTopicFallback); err != nil {
+			return fmt.Errorf("retention prune topic %s: %w", topicID, err)
 		}
-		_ = excess
 	}
 	return nil
 }
@@ -169,7 +183,7 @@ func (s *Store) StartRetentionLoop(ctx context.Context) {
 func (s *Store) retentionLoop(ctx context.Context) {
 	// 启动时立即执行一次。
 	if err := s.RunRetention(ctx, nowMillis()); err != nil {
-		_ = err
+		slog.Warn("retention cleanup failed", "error", err)
 	}
 	ticker := time.NewTicker(retentionInterval)
 	defer ticker.Stop()
@@ -179,7 +193,7 @@ func (s *Store) retentionLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := s.RunRetention(ctx, nowMillis()); err != nil {
-				_ = err
+				slog.Warn("retention cleanup failed", "error", err)
 			}
 		}
 	}

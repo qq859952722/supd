@@ -67,17 +67,10 @@ func (p *CoreNotificationProvider) MarkRead(ctx context.Context, topicID string)
 	if p.store == nil {
 		return 0, nil
 	}
-	d, err := p.store.GetTopic(ctx, topicID)
-	if err != nil {
-		return 0, err
-	}
-	if d == nil {
-		return 0, store.ErrTopicNotFound
-	}
-	if err := p.store.MarkRead(ctx, topicID, d.LastSeq); err != nil {
-		return 0, err
-	}
-	return d.LastSeq, nil
+	// 原子推进：SELECT+UPDATE 在同一 writer 命令内执行，避免 get-then-mark
+	// 与新通知落库的竞态窗口（收起瞬间新通知到达导致红点不消）。
+	// Topic 不存在/已软删由 store 返回 ErrTopicNotFound（映射 404）。
+	return p.store.MarkReadToLast(ctx, topicID)
 }
 
 func (p *CoreNotificationProvider) MarkAllRead(ctx context.Context) error {

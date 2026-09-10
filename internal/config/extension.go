@@ -18,9 +18,9 @@ type ExtensionMeta struct {
 	Entry          string   `yaml:"entry" json:"entry"`
 	TimeoutSeconds int      `yaml:"timeout_seconds" json:"timeout_seconds"`
 	RunAs          string   `yaml:"run_as" json:"run_as,omitempty"`
-	RunAsUID       int      `yaml:"run_as_uid" json:"run_as_uid,omitempty"`          // UID 模式：直接指定 uid（与 run_as 互斥）
-	RunAsGID       int      `yaml:"run_as_gid" json:"run_as_gid,omitempty"`          // UID 模式：直接指定 gid（0 表示 = run_as_uid）
-	RunAsGroups    []int    `yaml:"run_as_groups" json:"run_as_groups,omitempty"`    // UID 模式：补充组 gid 列表
+	RunAsUID       int      `yaml:"run_as_uid" json:"run_as_uid,omitempty"`       // UID 模式：直接指定 uid（与 run_as 互斥）
+	RunAsGID       int      `yaml:"run_as_gid" json:"run_as_gid,omitempty"`       // UID 模式：直接指定 gid（0 表示 = run_as_uid）
+	RunAsGroups    []int    `yaml:"run_as_groups" json:"run_as_groups,omitempty"` // UID 模式：补充组 gid 列表
 	Concurrency    string   `yaml:"concurrency" json:"concurrency"`
 	UI             UIConfig `yaml:"ui" json:"ui"`
 	Actions        []Action `yaml:"actions" json:"actions,omitempty"`
@@ -39,9 +39,9 @@ type UIConfig struct {
 // REQ-2.2.3: actions 段
 // args 字段已删除：统一用 SUPD_ACTION 环境变量区分 action，避免死代码
 type Action struct {
-	ID          string   `yaml:"id" json:"id"`
-	Label       string   `yaml:"label" json:"label,omitempty"`
-	ButtonStyle string   `yaml:"button_style" json:"button_style,omitempty"`
+	ID          string `yaml:"id" json:"id"`
+	Label       string `yaml:"label" json:"label,omitempty"`
+	ButtonStyle string `yaml:"button_style" json:"button_style,omitempty"`
 	// Operations 操作中心声明的操作 ID 列表（§三：操作注册模型）。
 	// 全局扩展 action 据此自动注册操作；服务扩展 action 据此响应操作。
 	// 可选项：未声明（零值 nil）的旧 action 行为完全不变。

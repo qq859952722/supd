@@ -364,18 +364,20 @@ func (s *Server) setupRoutes() {
 		// N-04-002 修复：POST /api/reload 手动触发配置热重载
 		r.Post("/reload", s.handleReload)
 
-		// 操作中心（节点 07-5 新增 5 个端点）
+		// 操作中心（节点 07-5 新增 5 个端点 + 2026-09-10 审计后补充 2 个删除端点）
 		r.Route("/operations", func(r chi.Router) {
 			r.Get("/", s.handleListOperations) // GET /api/operations
 			r.Route("/{id}", func(r chi.Router) {
-				r.Get("/", s.handleGetOperation)       // GET /api/operations/{id}
-				r.Post("/run", s.handleRunOperation)   // POST /api/operations/{id}/run
+				r.Get("/", s.handleGetOperation)     // GET /api/operations/{id}
+				r.Post("/run", s.handleRunOperation) // POST /api/operations/{id}/run
 			})
 		})
 		r.Route("/operation-executions", func(r chi.Router) {
-			r.Get("/", s.handleListOperationExecutions) // GET /api/operation-executions
+			r.Get("/", s.handleListOperationExecutions)     // GET    /api/operation-executions
+			r.Delete("/", s.handleDeleteAllOperationExecutions) // DELETE /api/operation-executions（清空）
 			r.Route("/{id}", func(r chi.Router) {
-				r.Get("/", s.handleGetOperationExecution) // GET /api/operation-executions/{id}
+				r.Get("/", s.handleGetOperationExecution)    // GET    /api/operation-executions/{id}
+				r.Delete("/", s.handleDeleteOperationExecution) // DELETE /api/operation-executions/{id}
 			})
 		})
 
@@ -387,13 +389,13 @@ func (s *Server) setupRoutes() {
 				r.Get("/", s.handleListTopics)         // GET    /api/notifications/topics
 				r.Delete("/", s.handleDeleteAllTopics) // DELETE /api/notifications/topics （清空软删）
 				r.Route("/{id}", func(r chi.Router) {
-					r.Get("/", s.handleGetTopic)          // GET    /api/notifications/topics/{id}
-					r.Delete("/", s.handleDeleteTopic)    // DELETE /api/notifications/topics/{id} （软删）
-					r.Post("/read", s.handleReadTopic)    // POST   /api/notifications/topics/{id}/read
+					r.Get("/", s.handleGetTopic)       // GET    /api/notifications/topics/{id}
+					r.Delete("/", s.handleDeleteTopic) // DELETE /api/notifications/topics/{id} （软删）
+					r.Post("/read", s.handleReadTopic) // POST   /api/notifications/topics/{id}/read
 				})
 			})
 			r.Post("/read-all", s.handleReadAll) // POST /api/notifications/read-all
-			// changes 长轮询：复用 s.longPollLimiter（与 /api/events 共用全局50/单客户端5，超限429）。
+			// changes 长轮询：复用 s.longPollLimiter（与 /api/events 共用全局50/单客户端5，超限503/SERVICE_BUSY）。
 			r.Get("/changes", s.handleChanges) // GET /api/notifications/changes?epoch=&since=&wait=
 		})
 	})

@@ -82,8 +82,8 @@ type runGateway struct {
 
 	mu        sync.Mutex
 	callbacks map[string]func(TerminalResult) // runID -> 尚未触发的回调
-	cached    map[string]TerminalResult        // runID -> 终态先于注册时缓存的结果
-	fired     map[string]bool                  // runID -> 终态回调已投递
+	cached    map[string]TerminalResult       // runID -> 终态先于注册时缓存的结果
+	fired     map[string]bool                 // runID -> 终态回调已投递
 }
 
 // NewRunGateway 创建 RunGateway。
@@ -138,11 +138,7 @@ func (g *runGateway) SubmitRun(spec RunSpec, runID string) (bool, error) {
 			}
 		}
 		if extEntry == nil {
-			// 服务内未找到：回退全局/任意服务查找（保持与全局阶段一致的行为）。
-			extEntry, svcName, err = findExtensionByName(g.discovery, spec.ExtensionName)
-			if err != nil {
-				return g.failSubmit(spec, runID, err)
-			}
+			return g.failSubmit(spec, runID, fmt.Errorf("service %s: extension %s not found", spec.ServiceName, spec.ExtensionName))
 		}
 	} else {
 		extEntry, svcName, err = findExtensionByName(g.discovery, spec.ExtensionName)

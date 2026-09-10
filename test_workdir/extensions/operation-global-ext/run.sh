@@ -36,6 +36,17 @@ case "${SUPD_OPERATION:-}" in
         printf '::notify:: warning "开始安装更新"\n'
         printf '::notify:: success "更新完成"\n'
         ;;
+    slow-demo)
+        # 运行状态测试专用：长执行窗口，用于验证"执行中重启 → interrupted_at"
+        echo "慢操作执行中..."
+        sleep 6
+        printf '::notify:: success "慢操作完成"\n'
+        ;;
+    fail-demo)
+        echo "模拟操作失败..."
+        printf '::notify:: error "模拟操作执行异常中断"\n'
+        exit 2
+        ;;
     *)
         echo "Unknown operation: ${SUPD_OPERATION:-}"
         exit 1

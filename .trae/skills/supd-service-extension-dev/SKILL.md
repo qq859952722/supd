@@ -27,7 +27,7 @@ description: "supd服务与扩展开发指南。当用户要求开发、修改�
 | 编写/修改 `service.yaml` | `references/01_service_spec.md` | 4 种 Readiness 配置、状态机 11 条转移规则、restart 策略、signals、stop/logging、检查清单 |
 | 编写/修改 `meta.yaml` | `references/02_extension_spec.md` | 4 种触发器、stdout 通信协议（含 `::notify::`）、14 个 SUPD_* 环境变量（操作中心另追加 5 个 `SUPD_OPERATION_*`，见 `05_env_spec.md` §4）、retry_on_failure、entry 路径安全 |
 | 修改配置后问"何时生效" | `references/03_modification_matrix.md` | 热重载行为矩阵（哪些字段热生效、哪些需重启服务、哪些需重启 supd） |
-| 在线开发/SSH/HTTP API | `references/04_online_dev_guide.md` | Dropbear SSH 配置、CLI 命令、HTTP API 端点对照表（含操作/通知中心 12 个新增端点）、导入导出流程 |
+| 在线开发/SSH/HTTP API | `references/04_online_dev_guide.md` | Dropbear SSH 配置、CLI 命令、HTTP API 端点对照表（含操作/通知中心 14 个新增端点）、导入导出流程 |
 | 编写/修改 `env.yaml` | `references/05_env_spec.md` | 4 层环境变量合并规则、env.yaml 结构体格式、密码字段处理 (**必读**，极易出错) |
 | `runtime: tjs` 时 | `references/06_tjs_runtime_guide.md` | tjs API 速查、run.js 模板、fetch 流式下载、WASM 工具调用、常见坑点排查 |
 

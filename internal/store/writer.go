@@ -84,17 +84,24 @@ func (w *writer) execute(c *command) {
 }
 
 // tryEnqueue 非阻塞入队。满时返回 false（丢弃 + 计数），不阻塞调用方。
+// Close 竞态说明：发送成功后复查 closed——若 writer 已进入关停排空，命令可能
+// 滞留队列不被执行，按 false 上报避免"假成功"。残余窗口（复查通过后 writer
+// 恰好退出）仅存在于 Close 与 TryEnqueue 精确重叠的微秒级瞬间，关机时最多
+// 影响 1 条通知，家用场景可接受。
 func (w *writer) tryEnqueue(c *command) bool {
 	if w.closed.Load() {
 		return false
 	}
 	select {
 	case w.queue <- c:
-		return true
 	default:
 		w.dropped.Add(1)
 		return false
 	}
+	if w.closed.Load() {
+		return false
+	}
+	return true
 }
 
 // submit 将权威写命令送入队列并等待执行结果。

@@ -125,3 +125,37 @@ func (s *Server) handleGetOperationExecution(w http.ResponseWriter, r *http.Requ
 	}
 	respondJSON(w, http.StatusOK, det)
 }
+
+// handleDeleteOperationExecution DELETE /api/operation-executions/{id}
+// 删除单条执行记录（run 级联；关联通知 Topic 不受影响）。
+func (s *Server) handleDeleteOperationExecution(w http.ResponseWriter, r *http.Request) {
+	if s.operationProvider == nil {
+		respondError(w, errors.ErrInternal, "operation provider not configured")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	exists, err := s.operationProvider.DeleteExecution(r.Context(), id)
+	if err != nil {
+		respondProviderError(w, err)
+		return
+	}
+	if !exists {
+		respondError(w, errors.ErrRunNotFound, "operation execution "+id+" not found")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleDeleteAllOperationExecutions DELETE /api/operation-executions
+// 清空全部执行记录。
+func (s *Server) handleDeleteAllOperationExecutions(w http.ResponseWriter, r *http.Request) {
+	if s.operationProvider == nil {
+		respondError(w, errors.ErrInternal, "operation provider not configured")
+		return
+	}
+	if err := s.operationProvider.DeleteAllExecutions(r.Context()); err != nil {
+		respondProviderError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"ok": true})
+}

@@ -185,6 +185,40 @@ func TestOperationRunIdempotencyKey(t *testing.T) {
 	}
 }
 
+// 并发同 key 触发只允许创建一个 Execution（查重与创建在同一临界区；
+// 运行状态测试 T1-1 发现 get/put 分离时 30 并发产生 21 个 Execution）。
+func TestOperationRunIdempotencyConcurrent(t *testing.T) {
+	srv, fake := newOperationTestServer(t)
+	const n = 30
+	results := make(chan RunOperationResult, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			w := doReq(srv, "POST", "/api/operations/op1/run", `{}`, map[string]string{"Idempotency-Key": "conc-001"})
+			var r RunOperationResult
+			decodeBody(t, w, &r)
+			results <- r
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	seen := make(map[string]bool)
+	for r := range results {
+		seen[r.ExecutionID] = true
+	}
+	if len(seen) != 1 {
+		t.Errorf("concurrent same-key runs produced %d distinct execution_ids, want 1", len(seen))
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.calls != 1 {
+		t.Errorf("runner triggered %d times, want 1", fake.calls)
+	}
+}
+
 func TestOperationExecutionsListAndDetail404(t *testing.T) {
 	srv, _ := newOperationTestServer(t)
 	w := doReq(srv, "GET", "/api/operation-executions", "", nil)

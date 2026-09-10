@@ -104,13 +104,15 @@ func TestNotifTopicDetailPaging(t *testing.T) {
 		seedServiceNotify(router, "srv", "m")
 	}
 	var id string
-	pollCond(t, "topic persisted", 3*time.Second, func() bool {
+	pollCond(t, "topic and 5 notifications persisted", 3*time.Second, func() bool {
 		l, _ := st.ListTopics(context.Background(), store.TopicFilter{})
 		if len(l) == 0 {
 			return false
 		}
 		id = l[0].ID
-		return true
+		// 种子通知经 TryEnqueue 异步逐条落库，须等全部 5 条持久化后再断言详情。
+		ns, _ := st.ListNotifications(context.Background(), id, 0, 10)
+		return len(ns) >= 5
 	})
 
 	resp := doNotifReq(srv, "GET", "/api/notifications/topics/"+id, "")
@@ -303,7 +305,7 @@ func TestNotifChangesSignalOnWrite(t *testing.T) {
 }
 
 func TestNotifChangesRateLimit(t *testing.T) {
-	// 单客户端第 6 个并发 changes → 429（复用 longPollLimiter 单客户端 5）。
+	// 单客户端第 6 个并发 changes → 503 SERVICE_BUSY（复用 longPollLimiter 单客户端 5）。
 	srv, st, _ := newNotifTestServer(t)
 	epoch := st.Epoch()
 
@@ -330,7 +332,7 @@ func TestNotifChangesRateLimit(t *testing.T) {
 		switch s {
 		case http.StatusOK:
 			okCount++
-		case http.StatusTooManyRequests:
+		case http.StatusServiceUnavailable:
 			rlCount++
 		}
 	}
@@ -338,7 +340,7 @@ func TestNotifChangesRateLimit(t *testing.T) {
 		t.Errorf("changes accepted %d (want 5), statuses=%v", okCount, statuses)
 	}
 	if rlCount < 1 {
-		t.Errorf("expected at least one 429 rate-limited change, statuses=%v", statuses)
+		t.Errorf("expected at least one 503 rate-limited change, statuses=%v", statuses)
 	}
 }
 

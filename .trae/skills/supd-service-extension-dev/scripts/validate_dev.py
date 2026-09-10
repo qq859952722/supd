@@ -142,6 +142,7 @@ def validate_actions_block(content, kind):
         return
     seen_ids = set()
     dup_found = False
+    all_ops = []  # (idx, aid, [op...]) 跨 action 展平，用于扩展级操作 ID 查重
     for idx, entry in enumerate(action_entries):
         m_id = re.search(r'^\s*id:\s*["\']?([^"\'#\s]+)["\']?', entry, re.MULTILINE)
         m_label = re.search(r'^\s*label:\s*(.+)$', entry, re.MULTILINE)
@@ -161,14 +162,29 @@ def validate_actions_block(content, kind):
         if bs and bs not in VALID_BUTTON_STYLES:
             log_fail(f"{kind} actions[{idx}].button_style: '{bs}' 不在 {VALID_BUTTON_STYLES} 中")
         # operations 可选字段校验（节点 07 实现；全局扩展注册操作、服务扩展响应绑定）
-        ops_ids = re.findall(r'^\s*operations:\s*\n((?:[ \t]+[-][ \t]*[^\s#]+\n?)+)', entry, re.MULTILINE)
-        if ops_ids and aid:
-            op_list = re.findall(r'[ \t]*[-][ \t]*["\']?([a-z0-9-]+)["\']?', ops_ids[0], re.MULTILINE)
-            for op in op_list:
-                if not NAME_REGEX.match(op):
-                    log_fail(f"{kind} actions[{idx}].operations 元素 '{op}' 不匹配 ^[a-z][a-z0-9-]*$（id='{aid}'）")
-            if len(set(op_list)) != len(op_list):
-                log_fail(f"{kind} actions[{idx}].operations: 重复操作 ID（id='{aid}'）")
+        # 支持块列表（每行 "- id"）与 flow 形式（[a, b]）两种写法。
+        # 提取用宽匹配 [A-Za-z0-9_-]+，不合规元素不会静默漏过，由 NAME_REGEX 全量报错。
+        m_block = re.findall(r'^\s*operations:\s*\n((?:[ \t]+[-][ \t]*[^\s#]+\n?)+)', entry, re.MULTILINE)
+        m_flow = re.search(r'^\s*operations:\s*\[([^\]]*)\]', entry, re.MULTILINE)
+        op_list = []
+        if m_block:
+            op_list = re.findall(r'[ \t]*[-][ \t]*["\']?([A-Za-z0-9_-]+)["\']?', m_block[0], re.MULTILINE)
+        elif m_flow:
+            op_list = [v.strip().strip('"\'') for v in m_flow.group(1).split(',') if v.strip()]
+        for op in op_list:
+            if not NAME_REGEX.match(op):
+                log_fail(f"{kind} actions[{idx}].operations 元素 '{op}' 不匹配 ^[a-z][a-z0-9-]*$（id='{aid}'）")
+        if len(set(op_list)) != len(op_list):
+            log_fail(f"{kind} actions[{idx}].operations: 重复操作 ID（id='{aid}'）")
+        all_ops.append((idx, aid, op_list))
+    # 扩展级（跨 action）重复操作 ID 查重：与 Go 端展平语义一致（同一扩展内操作 ID 必须唯一）。
+    first_seen = {}
+    for idx, aid, ops in all_ops:
+        for op in ops:
+            if op in first_seen:
+                log_fail(f"{kind} actions[{idx}].operations: 操作 ID '{op}' 与 actions[{first_seen[op][0]}]（id='{first_seen[op][1]}'）重复（同一扩展内操作 ID 必须唯一）")
+            else:
+                first_seen[op] = (idx, aid)
     if seen_ids and not dup_found:
         log_pass(f"{kind} actions: {len(seen_ids)} 个，id 唯一性通过")
 

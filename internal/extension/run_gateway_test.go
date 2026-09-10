@@ -319,6 +319,49 @@ func TestRunGateway_CallbackRegisterAfterTerminal(t *testing.T) {
 	}
 }
 
+func TestRunGateway_ServiceScopeDoesNotFallbackToOtherService(t *testing.T) {
+	tmpDir := t.TempDir()
+	meta := makeMeta(t, nil)
+	discovery := &watch.DiscoveryResult{
+		Services: map[string]*watch.ServiceEntry{
+			"other": {
+				Name: "other",
+				Extensions: map[string]*watch.ExtensionEntry{
+					"gw-ext": {
+						Name:        "gw-ext",
+						Meta:        meta,
+						ConfigPath:  "/fake/other/gw-ext/meta.yaml",
+						ServiceName: "other",
+					},
+				},
+			},
+		},
+		GlobalExts: map[string]*watch.ExtensionEntry{},
+		Runtimes:   map[string]string{},
+	}
+	executor := NewExecutor(tmpDir, tmpDir)
+	dispatcher := NewDispatcher(executor, tmpDir, tmpDir, 1800)
+	taskMgr := NewTaskManager(7)
+	gw := NewRunGateway(dispatcher, taskMgr, discovery)
+
+	runID := "service-scope-001"
+	taskMgr.RecordRun(&RunResult{RunID: runID, ExtensionName: "gw-ext", ActionID: "run", State: TaskPending, StartedAt: time.Now()})
+	ch := newTerminalRecv(gw, runID)
+	spec := testSubmit("gw-ext", "run", tmpDir)
+	spec.ServiceName = "target"
+	accepted, err := gw.SubmitRun(spec, runID)
+	if err == nil {
+		t.Fatal("expected missing service extension error, got nil")
+	}
+	if accepted {
+		t.Fatal("expected accepted=false for missing service extension")
+	}
+	awaitTerminal(t, ch, runID, TaskFailed)
+	if got := taskMgr.GetRun(runID); got == nil || got.State != TaskFailed {
+		t.Fatalf("taskMgr record = %+v, want failed", got)
+	}
+}
+
 // TestRunGateway_ConcurrentSubmit 并发提交+注册+终态；配合 -race 验证无竞态。
 func TestRunGateway_ConcurrentSubmit(t *testing.T) {
 	gw, _, workDir := newGatewaySetup(t, "gw-ext", makeMeta(t, nil))

@@ -83,13 +83,13 @@ func ParseNotifyLine(line string) (*ParsedNotify, bool) {
 // PendingNotification 一条待处理通知，含 level/content 与来源上下文。
 // 来源字段由 supd 侧填充，脚本不可覆盖。
 type PendingNotification struct {
-	Level        NotifyLevel
-	Content      string
-	ServiceName  string
+	Level         NotifyLevel
+	Content       string
+	ServiceName   string
 	ExtensionName string
-	ActionID     string
-	RunID        string
-	ExecutionID  string
+	ActionID      string
+	RunID         string
+	ExecutionID   string
 }
 
 // NotifySink 通知接收点。实现方以有界队列/持久化写入为底层。

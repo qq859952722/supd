@@ -2,11 +2,12 @@
 //
 // 路由决策（设计稿 §六.2）：本层实现 NotificationSink，对来自服务/扩展 stdout 的
 // ::notify:: 行补充来源上下文并决定目标 Topic：
-//   a. 操作扩展 Run（ExecutionID 非空且其 Topic 未关闭）→ 操作 Topic；
-//   b1. 非操作服务级扩展 Run → 所属服务默认 Topic（kind=service, source=service_name）；
-//   b2. 非操作全局扩展 Run → 该扩展默认 Topic（kind=extension, source=extension_name）；
-//   c. 普通服务进程 stdout → 该服务默认 Topic（kind=service）；
-//   d. 默认 Topic 不存在 → 首条通知在同一事务内自动创建（writer 内保证）。
+//
+//	a. 操作扩展 Run（ExecutionID 非空且其 Topic 未关闭）→ 操作 Topic；
+//	b1. 非操作服务级扩展 Run → 所属服务默认 Topic（kind=service, source=service_name）；
+//	b2. 非操作全局扩展 Run → 该扩展默认 Topic（kind=extension, source=extension_name）；
+//	c. 普通服务进程 stdout → 该服务默认 Topic（kind=service）；
+//	d. 默认 Topic 不存在 → 首条通知在同一事务内自动创建（writer 内保证）。
 //
 // 来源字段只来自 supd 侧闭包（脚本不可伪造）；全部经 Store 有界 TryEnqueue（满则丢弃并计数）。
 // 本包依赖 store；store 不反向依赖本包（唯一方向）。本层只能写 store，不得反向依赖

@@ -20,11 +20,11 @@ const consecutiveFailThreshold = 10
 
 // Store SQLite 存储层。
 type Store struct {
-	db      *sql.DB
-	dbPath  string
-	writer  *writer
-	epoch   string
-	seq     atomic.Int64
+	db     *sql.DB
+	dbPath string
+	writer *writer
+	epoch  string
+	seq    atomic.Int64
 
 	// changeCh 写命令成功（GlobalSeq 推进）时的内存广播信号。等待期不持有数据库连接。
 	changeMu sync.Mutex

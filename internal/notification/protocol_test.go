@@ -7,10 +7,10 @@ import (
 
 func TestParseNotifyLine(t *testing.T) {
 	tests := []struct {
-		name    string
-		line    string
-		want    *ParsedNotify
-		wantOK  bool // true = 协议行（无论合法与否）
+		name   string
+		line   string
+		want   *ParsedNotify
+		wantOK bool // true = 协议行（无论合法与否）
 	}{
 		{name: "info 正例", line: `::notify:: info "开始检查"`, want: &ParsedNotify{Level: NotifyInfo, Content: "开始检查"}, wantOK: true},
 		{name: "success 正例", line: `::notify:: success "all good"`, want: &ParsedNotify{Level: NotifySuccess, Content: "all good"}, wantOK: true},

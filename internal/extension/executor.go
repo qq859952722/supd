@@ -25,11 +25,11 @@ const maxRunResults = 500
 // Executor 扩展执行器
 // REQ-F-016: 11步执行流程编排
 type Executor struct {
-	logDir     string
-	baseDir    string
-	runResults map[string]*RunResult // key=runID
-	insertOrder []string             // runID 插入序（用于有界淘汰，最旧在前）
-	mu         sync.RWMutex          // REQ-C-003: runResults 读写互斥
+	logDir      string
+	baseDir     string
+	runResults  map[string]*RunResult // key=runID
+	insertOrder []string              // runID 插入序（用于有界淘汰，最旧在前）
+	mu          sync.RWMutex          // REQ-C-003: runResults 读写互斥
 
 	// REQ-F-028, REQ-F-029: runtime 别名解析
 	runtimes           map[string]string // config.yaml 声明的运行时
@@ -193,9 +193,17 @@ func (e *Executor) startOutputGoroutines(meta *config.ExtensionMeta, tc TriggerC
 				}
 			}
 
-			// 新增 ::notify:: 协议：非阻塞提交，不阻塞 reader
-			if pn, isProto := notification.ParseNotifyLine(line); isProto && pn != nil {
-				e.enqueueNotify(pn, meta, tc, runID)
+			// 新增 ::notify:: 协议：非阻塞提交，不阻塞 reader。
+			// 协议行但格式/等级非法（isProto && pn==nil）时记一条 warning，
+			// 与服务侧 ServiceLogger 行为一致（否则脚本引号写错无任何提示）。
+			if pn, isProto := notification.ParseNotifyLine(line); isProto {
+				if pn != nil {
+					e.enqueueNotify(pn, meta, tc, runID)
+				} else if extLogger != nil {
+					// Write 内部含时间戳/级别格式化（"[warn]" 触发 detectLevel→warn）；
+					// 写失败不告警：磁盘满场景 extLogger 主路径已 slog.Warn，避免重复告警。
+					_, _ = extLogger.Write([]byte("[warn] invalid ::notify:: line, treated as log: " + line))
+				}
 			}
 
 			// 所有行（含协议行）都写日志

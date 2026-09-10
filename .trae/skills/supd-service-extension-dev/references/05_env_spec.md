@@ -130,4 +130,4 @@ KEY
 | `SUPD_OPERATION_EXECUTION_ID` | 操作执行 Execution ID（该操作所有 Run 共享） |
 | `SUPD_OPERATION_PHASE` | 操作执行阶段：`global` 或 `service` |
 
-> **阶段语义**：`global` 阶段全局扩展的注册操作执行（每次操作只执行一次）；`service` 阶段各服务的响应扩展按所属服务各执行一次。操作通知经 stdout `::notify::` 协议自动进入该操作关联的 Topic（见 §2.2.6 与 `02_extension_spec.md` §5）。示例见 `examples/11-operation-global-ext/`、`examples/12-operation-responder-ext/`。
+> **阶段语义**：`global` 阶段全局扩展的注册操作执行（每次操作只执行一次）；`service` 阶段各服务的响应扩展按所属服务各执行一次。操作通知经 stdout `::notify::` 协议自动进入该操作关联的 Topic（见 §2.2.6 与 `02_extension_spec.md` §4）。示例见 `examples/11-operation-global-ext/`、`examples/12-operation-responder-ext/`。

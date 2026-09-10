@@ -7,13 +7,13 @@ import (
 func validOpMeta(actions ...Action) *ExtensionMeta {
 	enabled := true
 	return &ExtensionMeta{
-		Name:            "op-ext",
-		Version:         "1.0.0",
-		Entry:           "run.sh",
-		Enabled:         &enabled,
-		TimeoutSeconds:  600,
-		Concurrency:     "parallel",
-		Actions:         actions,
+		Name:           "op-ext",
+		Version:        "1.0.0",
+		Entry:          "run.sh",
+		Enabled:        &enabled,
+		TimeoutSeconds: 600,
+		Concurrency:    "parallel",
+		Actions:        actions,
 	}
 }
 

@@ -19,7 +19,7 @@ import (
 // N-G-01 修复：接入 RotatingLogWriter，使 logging.max_size_mb / max_files 配置生效
 type ServiceLogger struct {
 	name    string
-	baseDir string // e.g. /var/log/supd/services/<svc>/
+	baseDir string             // e.g. /var/log/supd/services/<svc>/
 	writer  *RotatingLogWriter // 接入轮转，替代裸 LogWriter
 	done    chan struct{}
 	wg      sync.WaitGroup

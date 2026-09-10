@@ -347,7 +347,7 @@ smartdns `domain-set -type list` 文件**每行一个裸域名即可，裸域名
 | GET | `/api/system/events/recent` | 最近 200 条事件 |
 | POST | `/api/reload` | 触发热重载 |
 
-### 4.8 操作中心 API（v0.1.0 新增，5 个）
+### 4.8 操作中心 API（v0.1.0 新增 5 个 + 2026-09-10 补充删除 2 个）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -356,6 +356,8 @@ smartdns `domain-set -type list` 文件**每行一个裸域名即可，裸域名
 | POST | `/api/operations/{id}/run` | 触发操作（body `{"params": <object>}`，可选 `Idempotency-Key` 请求头，10 分钟内幂等） |
 | GET | `/api/operation-executions` | 操作执行历史（分页） |
 | GET | `/api/operation-executions/{id}` | 执行详情（runs 快照 + 关联 Topic） |
+| DELETE | `/api/operation-executions/{id}` | 删除单条执行记录（run 级联；关联通知 Topic 不受影响） |
+| DELETE | `/api/operation-executions` | 清空全部执行记录 |
 
 ### 4.9 通知中心 API（v0.1.0 新增，7 个）
 

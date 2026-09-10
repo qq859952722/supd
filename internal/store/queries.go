@@ -114,7 +114,7 @@ func (s *Store) ListUnfinishedExecutions(ctx context.Context) ([]Execution, erro
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Execution
+	out := []Execution{} // 非 nil：保持与包内其他列表查询一致（null 序列化防护）
 	for rows.Next() {
 		e, err := scanExecutionRow(rows)
 		if err != nil {
@@ -171,7 +171,7 @@ func (s *Store) ListTopics(ctx context.Context, f TopicFilter) ([]TopicItem, err
 		return nil, err
 	}
 	defer rows.Close()
-	var out []TopicItem
+	out := []TopicItem{} // 非 nil：避免空列表 JSON 序列化为 null（前端 .some() 崩溃）
 	for rows.Next() {
 		var t Topic
 		var eid, sv sql.NullString
@@ -277,7 +277,7 @@ func (s *Store) ListNotifications(ctx context.Context, topicID string, sinceSeq 
 }
 
 func scanNotifications(rows *sql.Rows) ([]Notification, error) {
-	var out []Notification
+	out := []Notification{} // 非 nil：避免空列表 JSON 序列化为 null
 	for rows.Next() {
 		var n Notification
 		if err := scanNotificationRow(rows, &n); err != nil {

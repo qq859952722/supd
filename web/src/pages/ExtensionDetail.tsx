@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/Table'
+import { OperationsTagInput } from '@/components/extension/OperationsTagInput'
 import { SkeletonCard, SkeletonTable } from '@/components/ui/Skeleton'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
@@ -354,7 +355,7 @@ interface ExtConfigForm {
   concurrency: string
   ui_show_logs: boolean
   ui_button_style: string
-  actions: Array<{ id: string; label: string; button_style: string }>
+  actions: Array<{ id: string; label: string; button_style: string; operations: string[] }>
   triggers_on_demand: boolean
   triggers_on_schedule: Array<{ cron: string; action: string }>
   triggers_service_lifecycle: Array<{ event: string; action: string }>
@@ -442,12 +443,26 @@ function parseExtConfig(yaml: string): ExtConfigForm {
           }
           if (gids.length) form.run_as_groups = gids.join(', ')
         } else if (currentSection === 'actions') {
-          // 解析 actions 列表
-          let curAction: { id: string; label: string; button_style: string } | null = null
+          // 解析 actions 列表（含 operations 操作 ID 子列表）。
+          // 必须用原始缩进区分：顶层 action 项缩进 2（`  - id:`），operations 子项
+          // 缩进更深（`      - op-id`）。若仅按 "- " 前缀判断，operations 子项与
+          // 后续 action 会被吞并错配，保存时覆盖丢失其余 actions（T6-2 实测）。
+          let curAction: { id: string; label: string; button_style: string; operations: string[] } | null = null
+          let collectingOps = false
+          let opsIndent = 0
           for (const bl of blockLines) {
             const bt = bl.trim()
-            if (bt.startsWith('- ')) {
-              curAction = { id: '', label: '', button_style: '' }
+            if (!bt) continue
+            const indent = bl.length - bt.length
+            if (collectingOps) {
+              if (indent > opsIndent && bt.startsWith('- ')) {
+                curAction?.operations.push(String(parseYamlValue(bt.slice(2).trim())))
+                continue
+              }
+              collectingOps = false
+            }
+            if (indent <= 2 && bt.startsWith('- ')) {
+              curAction = { id: '', label: '', button_style: '', operations: [] }
               form.actions.push(curAction)
               const rest = bt.slice(2).trim()
               if (rest.startsWith('id:')) curAction.id = String(parseYamlValue(rest.slice(3).trim()))
@@ -458,6 +473,21 @@ function parseExtConfig(yaml: string): ExtConfigForm {
               if (k === 'id') curAction.id = String(parseYamlValue(v))
               else if (k === 'label') curAction.label = String(parseYamlValue(v))
               else if (k === 'button_style') curAction.button_style = String(parseYamlValue(v))
+              else if (k === 'operations') {
+                curAction.operations = []
+                if (v) {
+                  // flow 形式（operations: [a, b]）
+                  const inner = v.replace(/^\[/, '').replace(/\]$/, '')
+                  for (const item of inner.split(',')) {
+                    const s = item.trim()
+                    if (s) curAction.operations.push(String(parseYamlValue(s)))
+                  }
+                } else {
+                  // 块列表形式，子项为缩进更深的 "- op-id" 行
+                  opsIndent = indent
+                  collectingOps = true
+                }
+              }
             }
           }
         } else if (currentSection === 'triggers') {
@@ -553,6 +583,10 @@ function serializeExtConfig(form: ExtConfigForm): string {
       lines.push(`  - id: ${yamlStr(act.id)}`)
       if (act.label) lines.push(`    label: ${yamlStr(act.label)}`)
       if (act.button_style) lines.push(`    button_style: ${yamlStr(act.button_style)}`)
+      if (act.operations.length > 0) {
+        lines.push('    operations:')
+        for (const op of act.operations) lines.push(`      - ${yamlStr(op)}`)
+      }
     }
   }
 
@@ -906,7 +940,7 @@ function ConfigTab({ name, configPath }: { name: string; configPath?: string }) 
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle>Actions (动作按钮)</CardTitle>
-                <Button variant="default" size="sm" onClick={() => updateForm({ actions: [...form.actions, { id: '', label: '', button_style: 'default' }] })}>
+                <Button variant="default" size="sm" onClick={() => updateForm({ actions: [...form.actions, { id: '', label: '', button_style: 'default', operations: [] }] })}>
                   <Plus className="h-3.5 w-3.5" /> 添加
                 </Button>
               </div>
@@ -935,6 +969,13 @@ function ConfigTab({ name, configPath }: { name: string; configPath?: string }) 
                         <Button variant="danger" size="sm" onClick={() => updateForm({ actions: form.actions.filter((_, i) => i !== idx) })}>
                           <Trash2 className="h-3 w-3" />
                         </Button>
+                      </div>
+                      <div className="col-span-12">
+                        <label className="mb-1 block text-[10px] text-[var(--color-text-tertiary)]">{t.extension.operationsLabel}</label>
+                        <OperationsTagInput
+                          value={act.operations}
+                          onChange={(ops) => { const a = [...form.actions]; a[idx] = { ...act, operations: ops }; updateForm({ actions: a }) }}
+                        />
                       </div>
                     </div>
                   ))}

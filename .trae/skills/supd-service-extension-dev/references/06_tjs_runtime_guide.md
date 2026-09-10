@@ -198,6 +198,9 @@ hash.update('hello');
 const hexDigest = hash.digest();  // ⚠️ 返回 16 进制字符串（如 "2cf24dba..."），非 Uint8Array
 
 // 3. SQLite 数据库（tjs:sqlite）
+// ⚠️ 边界约束（规格 §1.9 D1）：脚本/扩展禁止读写 supd 自身的持久化数据库
+// `<baseDir>/data/supd.db`——脚本唯一的通知与操作入口是 stdout 协议（::notify::）。
+// tjs:sqlite 仅可用于扩展自己的独立数据文件。
 import { Database } from 'tjs:sqlite';
 const db = new Database(':memory:');
 db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)');
